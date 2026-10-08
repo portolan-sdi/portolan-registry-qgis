@@ -34,6 +34,12 @@ jobs:
           # A publish job must not restore a cache that another run wrote.
           enable-cache: false
 
+      - name: Install locked dependencies
+        run: uv sync --locked
+
+      - name: Include portolan-python in the plugin
+        run: uv run python scripts/package_plugin.py --vendor-into portolan_registry_qgis
+
       - name: Check that the tag matches metadata.txt
         env:
           TAG: ${{ github.event.release.tag_name }}
@@ -54,5 +60,6 @@ jobs:
         run: >-
           uvx qgis-plugin-ci@2.10.0 release "$VERSION"
           --release-tag "$TAG"
+          --asset-path portolan_registry_qgis/portolan
           --github-token "$GH_TOKEN"
           --qgis-token "$QGIS_TOKEN"

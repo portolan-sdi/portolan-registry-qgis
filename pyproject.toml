@@ -1,6 +1,6 @@
 [project]
 name = "portolan-registry-qgis"
-version = "0.1.0"
+version = "0.1.1"
 description = "QGIS plugin to browse, load, and download data from the Portolan registry"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -9,11 +9,11 @@ authors = [
     { name = "Nissim Lebovits", email = "nlebovits@pm.me" },
 ]
 keywords = ["qgis", "stac", "portolan", "cloud-native", "geospatial"]
-# The plugin runs inside QGIS, which supplies qgis, PyQt, and osgeo. None of
-# them install from PyPI, so the plugin declares no runtime dependencies. The
-# stdlib-only core (portolan_registry_qgis.core) is what the uv environment
-# tests; tests/qgis runs inside a QGIS container (.github/workflows/qgis.yml).
-dependencies = []
+# QGIS supplies qgis, PyQt, and osgeo. The release ZIP includes portolan-python
+# because QGIS does not install Python dependencies from plugin metadata.
+dependencies = [
+    "portolan-python==0.1.8",
+]
 
 [project.urls]
 "Homepage" = "https://github.com/portolan-sdi/portolan-registry-qgis"
@@ -60,7 +60,7 @@ package = false
 
 [tool.commitizen]
 name = "cz_conventional_commits"
-version = "0.1.0"
+version = "0.1.1"
 # metadata.txt is what QGIS and plugins.qgis.org read. It must move with the
 # project version, or the plugin manager offers a release under the old number.
 version_files = [

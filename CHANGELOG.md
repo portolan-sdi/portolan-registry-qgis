@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- Registry discovery now uses `portolan-python`. Release ZIPs include that dependency under the QGIS plugin root.
+
 ### Added
 
 - A layer that fails to open shows GDAL's reason. A missing codec, such as LERC in the QGIS Flatpak, names the codec and what to do.

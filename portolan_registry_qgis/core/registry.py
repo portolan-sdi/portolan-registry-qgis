@@ -1,24 +1,16 @@
-"""Read the Portolan registry export into catalog entries.
-
-The registry publishes ``exports/catalogs.json`` as a static STAC catalog whose
-``child`` links are the registered catalogs. Ported from GeoLibre's
-``portolanIndexFromDocument`` (MIT, see NOTICE), extended to keep the
-``portolan_registry:*`` fields that GeoLibre drops.
-"""
+"""Adapt portolan-python registry entries for the QGIS panel."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from portolan_registry_qgis.core.hrefs import is_http_url
-from portolan_registry_qgis.core.stac import Bbox, horizontal_bbox, links_of
+from portolan import DEFAULT_REGISTRY_URL, RegistryCatalogEntry, load_registry_entries
 
-REGISTRY_URL = (
-    "https://raw.githubusercontent.com/portolan-sdi/portolan-registry/"
-    "refs/heads/main/exports/catalogs.json"
-)
-_PREFIX = "portolan_registry:"
+if TYPE_CHECKING:
+    from portolan_registry_qgis.core.stac import Bbox
+
+REGISTRY_URL = DEFAULT_REGISTRY_URL
 
 
 class RegistryError(ValueError):
@@ -62,33 +54,20 @@ class CatalogEntry:
         return west <= bbox[2] and east >= bbox[0] and south <= bbox[3] and north >= bbox[1]
 
 
-def _int(value: object) -> int | None:
-    return value if isinstance(value, int) and not isinstance(value, bool) else None
-
-
-def _str(value: object) -> str | None:
-    return value if isinstance(value, str) and value else None
-
-
-def _entry(link: dict[str, Any], href: str, title: str | None) -> CatalogEntry:
-    def field(name: str) -> object:
-        return link.get(_PREFIX + name)
-
-    licenses = field("licenses")
-    logo = field("logo")
+def _entry(entry: RegistryCatalogEntry) -> CatalogEntry:
     return CatalogEntry(
-        id=_str(field("id")) or href,
-        title=title or href,
-        url=href,
-        status=_str(field("status")) or "unknown",
-        bbox=horizontal_bbox(link.get("bbox")),
-        licenses=tuple(sorted(licenses)) if isinstance(licenses, dict) else (),
-        collection_count=_int(field("collection_count")),
-        feature_count=_int(field("feature_count")),
-        total_size_bytes=_int(field("total_size_bytes")),
-        updated=_str(field("updated")),
-        logo_url=_str(logo.get("href")) if isinstance(logo, dict) else None,
-        failure_reason=_str(field("failure_reason")),
+        id=entry.id,
+        title=entry.title or entry.url,
+        url=entry.url,
+        status=entry.status or "unknown",
+        bbox=entry.bbox,
+        licenses=entry.licenses,
+        collection_count=entry.collection_count,
+        feature_count=entry.feature_count,
+        total_size_bytes=entry.total_size_bytes,
+        updated=entry.updated,
+        logo_url=entry.logo_url,
+        failure_reason=entry.failure_reason,
     )
 
 
@@ -107,15 +86,18 @@ def parse_registry(document: object, base: str = REGISTRY_URL) -> list[CatalogEn
     raw_links = document.get("links")
     if not isinstance(raw_links, list):
         raise RegistryError("The Portolan registry returned an invalid catalog list")
-    entries: list[CatalogEntry] = []
-    for raw in raw_links:
-        # One link at a time, so a link links_of drops cannot shift the
-        # pairing between a raw link and its resolved href.
-        entries.extend(
-            _entry(raw, link.href, link.title)
-            for link in links_of([raw], base)
-            if link.rel == "child" and is_http_url(link.href)
+
+    def fetched_registry(_url: str) -> dict[str, Any]:
+        return document
+
+    entries = [
+        _entry(entry)
+        for entry in load_registry_entries(
+            base,
+            fetch_json=fetched_registry,
+            include_stale=True,
         )
+    ]
     return sorted(entries, key=lambda entry: entry.title.casefold())
 
 

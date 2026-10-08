@@ -7,7 +7,9 @@ The discovery cases are ported from GeoLibre's tests/portolan-registry.test.ts
 from __future__ import annotations
 
 import pytest
+from portolan import RegistryCatalogEntry
 
+from portolan_registry_qgis.core import registry as registry_module
 from portolan_registry_qgis.core.registry import (
     REGISTRY_URL,
     RegistryError,
@@ -60,10 +62,26 @@ def test_discovery_reads_only_catalog_links_and_resolves_relative_urls():
                 "rel": "child",
                 "href": "https://utrecht.blob.core.windows.net/catalog/catalog.json",
                 "title": "Utrecht",
+                "portolan_registry:id": "utrecht",
             },
-            {"rel": "child", "href": "./example/catalog.json", "title": "Example"},
-            {"rel": "child", "href": "javascript:alert(1)", "title": "Invalid"},
-            {"rel": "child", "href": "https://example.org/catalog.json"},
+            {
+                "rel": "child",
+                "href": "./example/catalog.json",
+                "title": "Example",
+                "portolan_registry:id": "example",
+            },
+            {
+                "rel": "child",
+                "href": "javascript:alert(1)",
+                "title": "Invalid",
+                "portolan_registry:id": "unsafe-scheme",
+                "portolan_registry:status": "valid",
+            },
+            {
+                "rel": "child",
+                "href": "https://example.org/catalog.json",
+                "portolan_registry:id": "example-org",
+            },
             {"rel": "item", "href": "./item.json", "title": "Not a catalog"},
             None,
         )
@@ -105,8 +123,16 @@ def test_registry_fields_are_kept():
 
 
 def test_missing_fields_fall_back():
-    (entry,) = parse_registry(registry({"rel": "child", "href": "https://x.test/catalog.json"}))
-    assert entry.id == "https://x.test/catalog.json"
+    (entry,) = parse_registry(
+        registry(
+            {
+                "rel": "child",
+                "href": "https://x.test/catalog.json",
+                "portolan_registry:id": "x",
+            }
+        )
+    )
+    assert entry.id == "x"
     assert entry.status == "unknown"
     assert entry.bbox is None
     assert entry.licenses == ()
@@ -136,5 +162,38 @@ def test_filters():
 
 
 def test_extent_filter_keeps_catalogs_without_extent():
-    (entry,) = parse_registry(registry({"rel": "child", "href": "https://x.test/catalog.json"}))
+    (entry,) = parse_registry(
+        registry(
+            {
+                "rel": "child",
+                "href": "https://x.test/catalog.json",
+                "portolan_registry:id": "x",
+            }
+        )
+    )
     assert entry.intersects((0, 0, 1, 1))
+
+
+def test_registry_discovery_delegates_to_portolan_python(monkeypatch):
+    source = registry(ANNCSU)
+    calls = []
+
+    def load_registry_entries(url, *, fetch_json, include_stale):
+        calls.append((url, fetch_json(url), include_stale))
+        return [
+            RegistryCatalogEntry(
+                id="anncsu",
+                url=ANNCSU["href"],
+                title="Indirizzi ANNCSU",
+                status="valid",
+                bbox=(6.7003259, 35.5017421, 18.660009, 47.0805336),
+            )
+        ]
+
+    monkeypatch.setattr(registry_module, "load_registry_entries", load_registry_entries)
+
+    entries = registry_module.parse_registry(source, REGISTRY_URL)
+
+    assert calls == [(REGISTRY_URL, source, True)]
+    assert entries[0].id == "anncsu"
+    assert entries[0].bbox == (6.7003259, 35.5017421, 18.660009, 47.0805336)

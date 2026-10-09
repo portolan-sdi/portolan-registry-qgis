@@ -25,7 +25,7 @@ Select one or more assets, then select **Add to map**. A double-click on an asse
 
 A PMTiles layer gets every MapLibre style in the collection that draws its archive, each as a named QGIS style. The collection's default style is current. To switch styles, right-click the layer, then select one under **Styles**. **QGIS default style** draws the tiles without a catalog style. A project saves every style with the layer.
 
-A style names its archive in `sources.<id>.url`. The plugin accepts a path relative to the style file, such as `../tiles.pmtiles`, with or without the `pmtiles://` prefix. A vector source with no `url` reads the collection's archive when the collection has only one.
+In a style, `sources.<id>.url` references the archive. The plugin accepts a path relative to the style file, such as `../tiles.pmtiles`. The `pmtiles://` prefix is optional. A vector source with no `url` reads the collection's archive when the collection has only one.
 
 **Read GeoParquet in the map extent only** sends the map extent to DuckDB. When a file has a GeoParquet `bbox` column, DuckDB uses its statistics to skip row groups outside the extent. Every read stops at 1,000,000 features.
 

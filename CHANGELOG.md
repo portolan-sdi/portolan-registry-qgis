@@ -2,7 +2,10 @@
 
 ## Unreleased
 
-### Added
+- Each GitHub release has a plugin ZIP that installs in QGIS.
+- The QGIS plugin manager shows the changes in each release.
+
+## 0.1.0 - 2026-10-07
 
 - A layer that fails to open shows GDAL's reason. A missing codec, such as LERC in the QGIS Flatpak, names the codec and what to do.
 - Registry panel with text, status, and map-extent filters. Each catalog shows a map of its extent and its logo.

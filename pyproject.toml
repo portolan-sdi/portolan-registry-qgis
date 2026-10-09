@@ -68,11 +68,14 @@ version_files = [
     "portolan_registry_qgis/metadata.txt:^version",
 ]
 tag_format = "v$version"
-update_changelog_on_bump = true
+# scripts/release_changelog.py writes CHANGELOG.md from its hand-written
+# Unreleased notes. Commitizen's generator would replace them with commit
+# subjects, in a heading format that qgis-plugin-ci cannot read.
+update_changelog_on_bump = false
 # The project is pre-1.0. A breaking change bumps the minor number, so the
 # major number stays at zero until the interface settles.
 major_version_zero = true
-pre_bump_hooks = ["uv lock"]
+pre_bump_hooks = ["uv lock", "uv run --no-sync python scripts/release_changelog.py"]
 
 # ---------- testing ----------
 

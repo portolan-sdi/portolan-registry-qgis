@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.1 - 2026-10-09
+
 - Each GitHub release has a plugin ZIP that installs in QGIS.
 - The QGIS plugin manager shows the changes in each release.
 

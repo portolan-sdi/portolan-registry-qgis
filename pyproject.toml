@@ -1,6 +1,6 @@
 [project]
 name = "portolan-registry-qgis"
-version = "0.1.0"
+version = "0.1.1"
 description = "QGIS plugin to browse, load, and download data from the Portolan registry"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -60,7 +60,7 @@ package = false
 
 [tool.commitizen]
 name = "cz_conventional_commits"
-version = "0.1.0"
+version = "0.1.1"
 # metadata.txt is what QGIS and plugins.qgis.org read. It must move with the
 # project version, or the plugin manager offers a release under the old number.
 version_files = [

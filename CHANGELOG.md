@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- A collection opens with one asset selected, so **Add to map** works at once. PMTiles come first.
+- PMTiles layers carry each of the collection's MapLibre styles as a named QGIS style. Switch styles from the layer's **Styles** menu.
+- Styles that name their archive as a bare relative path, such as `../tiles.pmtiles`, apply to the tiles. So do styles whose vector source has no `url`.
+- A PMTiles layer opens the archive you selected, not the archive the chosen style reads.
+
 ## 0.1.1 - 2026-10-09
 
 - Each GitHub release has a plugin ZIP that installs in QGIS.

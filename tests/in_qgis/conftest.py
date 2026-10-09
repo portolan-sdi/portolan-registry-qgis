@@ -15,6 +15,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import threading
 import time
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -189,6 +190,7 @@ def _build(root: Path) -> dict:
         datasetCreationOptions=["MINZOOM=0", "MAXZOOM=8", "NAME=points"],
         layerName="points",
     )
+    shutil.copy(root / "points.pmtiles", root / "other.pmtiles")
     _raster(collection / "relief.tif")
     _parquet(root / "points.parquet")
     _images(root, collection)
@@ -207,6 +209,17 @@ def _build(root: Path) -> dict:
         ],
     }
     (collection / "styles" / "red.json").write_text(json.dumps(style))
+    # The second style names its archive as a bare relative path, the form
+    # the specification's prose shows, with no pmtiles:// scheme.
+    blue = {
+        **style,
+        "name": "Points in blue",
+        "sources": {"data": {"type": "vector", "url": "../../points.pmtiles"}},
+        "layers": [
+            {**style["layers"][0], "paint": {"circle-color": "#0000ff", "circle-radius": 6}}
+        ],
+    }
+    (collection / "styles" / "blue.json").write_text(json.dumps(blue))
     assets = {
         "geojson": _asset(geojson, "./points.geojson", "application/geo+json", ["data"]),
         "relief": _asset(
@@ -223,6 +236,12 @@ def _build(root: Path) -> dict:
             "./styles/red.json",
             "application/vnd.mapbox.style+json",
             ["style", "default"],
+        ),
+        "style-blue": _asset(
+            collection / "styles" / "blue.json",
+            "./styles/blue.json",
+            "application/vnd.mapbox.style+json",
+            ["style"],
         ),
     }
     assets["thumbnail"] = _asset(

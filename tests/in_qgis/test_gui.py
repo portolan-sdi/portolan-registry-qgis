@@ -139,7 +139,7 @@ def test_tree_details_and_assets(iface, server, catalog):
     assert names[0] == "Point tiles"
     assert "geojson" in names
     # Assets QGIS can open come first, and each row carries its format badge.
-    assert names[-2:] == ["style-red", "thumbnail"]
+    assert names[-3:] == ["style-red", "style-blue", "thumbnail"]
     badges = {
         dock.assets.topLevelItem(i).text(0): dock.assets.topLevelItem(i).data(0, BADGE_ROLE)[0]
         for i in range(len(names))
@@ -149,12 +149,14 @@ def test_tree_details_and_assets(iface, server, catalog):
     assert badges["thumbnail"] == "PNG"
     assert "Test points" in shown(dock)
     assert "CC-BY-4.0" in shown(dock)
-    assert dock.style.itemText(0) == "style-red"
-    assert not dock.style_row.isHidden()
+    assert "2 styles" in dock.tile_styles.text()
+    assert not dock.tile_styles.isHidden()
     assert not dock.parquet_extent.isHidden()
     assert dock.zoom.isEnabled()
     assert dock.download_all.isEnabled()
-    assert not dock.add.isEnabled()
+    # The first PMTiles link is selected, so Add to map works at once.
+    assert [row.text(0) for row in dock.assets.selectedItems()] == ["Point tiles"]
+    assert dock.add.isEnabled()
     # The missing collection reports its failure in the details pane.
     dock.tree.setCurrentItem(dock.tree.topLevelItem(1))
     wait_for(lambda: "Could not read" in dock.description.text())
@@ -207,8 +209,9 @@ def test_add_styled_tiles_and_assets(iface, server, catalog):
     dock.add.click()
     wait_for(lambda: len(QgsProject.instance().mapLayers()) == 3, timeout=60)
     added = {layer.name(): layer for layer in QgsProject.instance().mapLayers().values()}
-    tiles = added["Points in red"]
+    tiles = added["Point tiles"]
     assert isinstance(tiles, QgsVectorTileLayer)
+    assert tiles.styleManager().currentStyle() == "style-red"
     assert tiles.customProperty(PMTILES_PROPERTY).endswith("points.pmtiles")
     assert added["geojson"].isValid()
     assert added["points"].featureCount() == 200
@@ -222,6 +225,7 @@ def test_parquet_in_a_small_extent(iface, server, catalog):
     dock = open_dock(iface, server, catalog)
     open_collection(dock)
     iface.canvas.setExtent(QgsRectangle(11.095, 44.0, 11.305, 45.0))
+    dock.assets.clearSelection()
     asset_row(dock, "data").setSelected(True)
     dock.add.click()
     wait_for(lambda: len(QgsProject.instance().mapLayers()) == 1, timeout=60)
@@ -237,6 +241,7 @@ def test_missing_duckdb_shows_install_help(iface, server, catalog, monkeypatch):
     monkeypatch.setattr(dock_module.QMessageBox, "exec", lambda box: shown.append(box.text()))
     dock = open_dock(iface, server, catalog)
     open_collection(dock)
+    dock.assets.clearSelection()
     asset_row(dock, "data").setSelected(True)
     dock.add.click()
     assert len(shown) == 1
@@ -292,9 +297,12 @@ def test_plugin_reconnects_saved_tiles(iface, catalog):
     # A layer as a saved project restores it: the old port no longer answers.
     stale = QgsVectorTileLayer("type=xyz&url=http://127.0.0.1:9/old/{z}/{x}/{y}.pbf", "saved")
     stale.setCustomProperty(PMTILES_PROPERTY, f"{catalog['base']}/points.pmtiles")
+    stale.styleManager().addStyleFromLayer("style-red")
     QgsProject.instance().addMapLayer(stale)
     wait_for(lambda: plugin.server.serves(stale.source()))
     assert stale.isValid()
+    # The catalog styles a project saved survive the reconnect.
+    assert "style-red" in stale.styleManager().styles()
     plugin.unload()
 
 

@@ -23,6 +23,17 @@ AssetFormat = Literal["pmtiles", "geojson", "cog", "parquet", "flatgeobuf", "cop
 _COLLECTION_HREF = re.compile(r"/collection\.json($|[?#])", re.IGNORECASE)
 _IMAGE_HREF = re.compile(r"\.(png|jpe?g|webp|gif|svg)($|[?#])", re.IGNORECASE)
 STYLE_MEDIA_TYPE = "application/vnd.mapbox.style+json"
+# The order in which the panel picks an asset to add. PMTiles draw at every
+# zoom with the catalog's style. A COG or COPC is the data itself. GeoParquet
+# reads only the map extent, and FlatGeobuf and GeoJSON come last.
+PREFERRED_FORMATS: tuple[AssetFormat, ...] = (
+    "pmtiles",
+    "cog",
+    "copc",
+    "parquet",
+    "flatgeobuf",
+    "geojson",
+)
 
 
 def is_image(href: str, media_type: str | None) -> bool:
@@ -132,6 +143,28 @@ class Document:
             for asset in self.assets
             if not asset.is_style and not skip.intersection(asset.roles)
         )
+
+    def preferred_href(self, *, parquet: bool = True) -> str | None:
+        """Return the href of the asset to add when the user picks nothing else.
+
+        The first ``rel: pmtiles`` link wins. Publishers list the archive that
+        the default style reads first. Otherwise the first data asset in
+        ``PREFERRED_FORMATS`` order wins. An upstream ``source`` asset never
+        does.
+
+        Args:
+            parquet: Whether the plugin can read GeoParquet, which needs DuckDB.
+        """
+        if self.pmtiles:
+            return self.pmtiles[0].href
+        candidates = [a for a in self.data_assets if "source" not in a.roles]
+        for wanted in PREFERRED_FORMATS:
+            if wanted == "parquet" and not parquet:
+                continue
+            for asset in candidates:
+                if asset.format == wanted:
+                    return asset.href
+        return None
 
     @property
     def icon(self) -> str | None:

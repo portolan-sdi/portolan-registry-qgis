@@ -14,16 +14,18 @@ Select a node to see its thumbnail, or a map of its extent when it has no thumbn
 
 ## Add data to the map
 
-Select one or more assets, then select **Add to map**. A double-click on an asset adds it too. A badge on each asset shows its format.
+Select one or more assets, then select **Add to map**. When a collection opens, the panel selects one asset for you, so **Add to map** works at once. It picks the first PMTiles link, which is the archive that the default style draws. Without PMTiles, it picks the first data asset in this order: COG, COPC, GeoParquet, FlatGeobuf, GeoJSON. It skips GeoParquet when DuckDB is missing. A double-click on an asset adds it too. A badge on each asset shows its format.
 
 | Asset | Layer |
 |---|---|
-| PMTiles link or asset | Vector tile layer, with the style chosen under **Tile style** |
+| PMTiles link or asset | Vector tile layer, with the collection's MapLibre styles |
 | GeoParquet | Memory layer, read with DuckDB |
 | COG | Raster layer, read over HTTP |
 | GeoJSON, FlatGeobuf | Vector layer, read over HTTP |
 
-**Tile style** lists the collection's MapLibre styles, with the default style first. **QGIS default style** skips them.
+A PMTiles layer gets every MapLibre style in the collection that draws its archive, each as a named QGIS style. The collection's default style is current. To switch styles, right-click the layer, then select one under **Styles**. **QGIS default style** draws the tiles without a catalog style. A project saves every style with the layer.
+
+In a style, `sources.<id>.url` references the archive. The plugin accepts a path relative to the style file, such as `../tiles.pmtiles`. The `pmtiles://` prefix is optional. A vector source with no `url` reads the collection's archive when the collection has only one.
 
 **Read GeoParquet in the map extent only** sends the map extent to DuckDB. When a file has a GeoParquet `bbox` column, DuckDB uses its statistics to skip row groups outside the extent. Every read stops at 1,000,000 features.
 

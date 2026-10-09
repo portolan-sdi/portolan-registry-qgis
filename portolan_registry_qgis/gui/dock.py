@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import contextlib
 import html
-from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -53,7 +52,7 @@ from qgis.PyQt.QtWidgets import (
 
 from portolan_registry_qgis.core import download, parquet_query, registry
 from portolan_registry_qgis.core.format import count, format_label, human_size
-from portolan_registry_qgis.core.stac import Asset, Document, Node, PmtilesLink, read_document
+from portolan_registry_qgis.core.stac import Asset, Document, Node, read_document
 from portolan_registry_qgis.gui.pictures import ACCENT, ImageCache, WorldMap, mix, muted, pixmap
 from portolan_registry_qgis.gui.widgets import (
     BADGE_ROLE,
@@ -263,14 +262,9 @@ class RegistryDock(QDockWidget):
         self.no_assets.setWordWrap(True)
         layout.addWidget(self.no_assets)
 
-        self.style_row = QWidget()
-        style_layout = QHBoxLayout(self.style_row)
-        style_layout.setContentsMargins(0, 0, 0, 0)
-        style_layout.addWidget(QLabel("Tile style"))
-        self.style = QComboBox()
-        self.style.setToolTip("The MapLibre style QGIS applies to the vector tiles")
-        style_layout.addWidget(self.style, 1)
-        layout.addWidget(self.style_row)
+        self.tile_styles = QLabel()
+        self.tile_styles.setWordWrap(True)
+        layout.addWidget(self.tile_styles)
 
         self.parquet_extent = QCheckBox("Read GeoParquet in the map extent only")
         self.parquet_extent.setChecked(True)
@@ -709,15 +703,29 @@ class RegistryDock(QDockWidget):
             row.setToolTip(0, _asset_tip(asset.href, "Roles", ", ".join(asset.roles)))
             self.assets.addTopLevelItem(row)
         self._fit_assets()
+        self._select_preferred(document)
 
-        self.style.clear()
-        for style in document.styles:
-            self.style.addItem(style.label, style)
-        self.style.addItem("QGIS default style", None)
-        has_tiles = bool(document.pmtiles) or any(a.format == "pmtiles" for a in document.assets)
-        self.style_row.setVisible(has_tiles)
+        styles = len(document.styles)
+        self.tile_styles.setText(
+            f"The collection has {count(styles, 'style')} for its vector tiles. "
+            "After you add the tiles, switch styles from the layer's Styles menu."
+        )
+        self.tile_styles.setStyleSheet(f"color: {muted(self.palette()).name()};")
+        self.tile_styles.setVisible(bool(styles and layer_io.archive_urls(document)))
         self.parquet_extent.setVisible(any(a.format == "parquet" for a in document.assets))
         self._sync_buttons()
+
+    def _select_preferred(self, document: Document) -> None:
+        """Select the asset that Add to map should add when the user picks nothing else."""
+        href = document.preferred_href(parquet=parquet_query.duckdb_status()[0])
+        if href is None:
+            return
+        for i in range(self.assets.topLevelItemCount()):
+            row = self.assets.topLevelItem(i)
+            value = row.data(0, _ROLE)
+            if value == _PMTILES_KEY + href or (isinstance(value, Asset) and value.href == href):
+                row.setSelected(True)
+                return
 
     def _fit_assets(self) -> None:
         """Size the asset list to its rows, so the details panel scrolls instead."""
@@ -740,7 +748,7 @@ class RegistryDock(QDockWidget):
         else:
             self.no_assets.hide()
         if document is None:
-            self.style_row.hide()
+            self.tile_styles.hide()
             self.parquet_extent.hide()
 
     def _selected(self) -> tuple[list[str], list[Asset]]:
@@ -761,7 +769,6 @@ class RegistryDock(QDockWidget):
         tiles, assets = self._selected()
         loadable = [a for a in assets if a.format is not None]
         self.add.setEnabled(bool(tiles or loadable))
-        self.style.setEnabled(bool(tiles) and self.style.count() > 1)
         has_document = self._document is not None
         self.zoom.setEnabled(
             self._document is not None and self._extent(self._document) is not None
@@ -786,16 +793,10 @@ class RegistryDock(QDockWidget):
                 self._add_asset(asset)
 
     def _add_tiles(self, document: Document, urls: list[str]) -> None:
-        style = self.style.currentData()
-        known = {link.href for link in document.pmtiles}
-        # The links the user picked, plus PMTiles that a catalog publishes as
-        # an asset without a matching link.
-        picked = [link for link in document.pmtiles if link.href in urls]
-        picked += [PmtilesLink(url, None, ()) for url in urls if url not in known]
-        scoped = replace(document, pmtiles=tuple(picked))
+        picked = list(dict.fromkeys(urls))
 
         def prepare(_task: object) -> layer_io.PreparedTiles:
-            return layer_io.prepare_pmtiles(scoped, fetch_bytes, style)
+            return layer_io.prepare_pmtiles(document, picked, fetch_bytes)
 
         def done(result: object, error: BaseException | None) -> None:
             if not isinstance(result, layer_io.PreparedTiles):

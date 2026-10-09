@@ -1,6 +1,6 @@
 [project]
 name = "portolan-registry-qgis"
-version = "0.1.0"
+version = "0.1.1"
 description = "QGIS plugin to browse, load, and download data from the Portolan registry"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -60,7 +60,7 @@ package = false
 
 [tool.commitizen]
 name = "cz_conventional_commits"
-version = "0.1.0"
+version = "0.1.1"
 # metadata.txt is what QGIS and plugins.qgis.org read. It must move with the
 # project version, or the plugin manager offers a release under the old number.
 version_files = [
@@ -68,11 +68,14 @@ version_files = [
     "portolan_registry_qgis/metadata.txt:^version",
 ]
 tag_format = "v$version"
-update_changelog_on_bump = true
+# scripts/release_changelog.py writes CHANGELOG.md from its hand-written
+# Unreleased notes. Commitizen's generator would replace them with commit
+# subjects, in a heading format that qgis-plugin-ci cannot read.
+update_changelog_on_bump = false
 # The project is pre-1.0. A breaking change bumps the minor number, so the
 # major number stays at zero until the interface settles.
 major_version_zero = true
-pre_bump_hooks = ["uv lock"]
+pre_bump_hooks = ["uv lock", "uv run --no-sync python scripts/release_changelog.py"]
 
 # ---------- testing ----------
 

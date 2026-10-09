@@ -24,6 +24,7 @@ CI runs `tests/in_qgis` in the official QGIS 3.44 and 4.2 Docker images, which c
 
 ## Release
 
-1. Run `uv run cz bump`. It updates `pyproject.toml`, `metadata.txt`, and `CHANGELOG.md`, then tags the commit.
-2. Push the commit and the tag, then publish a GitHub release from the tag.
-3. `.github/workflows/release.yml` packages the plugin with `qgis-plugin-ci`, attaches the zip to the release, and uploads it to the official QGIS plugin repository.
+1. List the changes under `## Unreleased` in `CHANGELOG.md`, as a flat list with no subheadings. qgis-plugin-ci copies the list into the changelog that the QGIS plugin manager shows, and it stops at the next heading.
+2. Run `uv run cz bump`. It updates `pyproject.toml` and `metadata.txt`, moves the notes under a `## <version> - <date>` heading, then tags the commit. The bump stops when the Unreleased notes are empty.
+3. Push the commit and the tag, then publish a GitHub release from the tag.
+4. `.github/workflows/release.yml` packages the plugin with `qgis-plugin-ci`, attaches the zip to the release, and uploads it to the official QGIS plugin repository.

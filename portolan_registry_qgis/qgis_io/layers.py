@@ -1,7 +1,8 @@
 """Turn STAC assets and PMTiles links into QGIS layers.
 
-PMTiles become native vector tile layers through the loopback tile server and
-take the collection's MapLibre style. GeoJSON and FlatGeobuf open through OGR,
+PMTiles become native vector tile layers through the loopback tile server.
+Each layer carries every collection MapLibre style that draws its archive, as
+a named QGIS style. GeoJSON and FlatGeobuf open through OGR,
 COGs through GDAL, and COPC through the point cloud provider, all over HTTP
 range requests without a download. GeoParquet goes through DuckDB instead, in
 ``parquet_layer``.
@@ -12,13 +13,14 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 from qgis.core import (
     QgsDataSourceUri,
     QgsMapBoxGlStyleConversionContext,
     QgsMapBoxGlStyleConverter,
     QgsMapLayer,
+    QgsMapLayerStyle,
     QgsPointCloudLayer,
     QgsRasterLayer,
     QgsVectorLayer,
@@ -35,7 +37,7 @@ if TYPE_CHECKING:
     from portolan_registry_qgis.core.stac import Asset, Document
 
 PMTILES_PROPERTY = "portolan/pmtiles_url"
-STYLE_PROPERTY = "portolan/style_url"
+DEFAULT_STYLE_NAME = "QGIS default style"
 _PMTILES_SCHEME = "pmtiles://"
 
 
@@ -51,11 +53,23 @@ class Styled:
     warnings: list[str] = field(default_factory=list)
 
 
-def pmtiles_sources(style: dict[str, Any], style_url: str) -> dict[str, str]:
+def archive_urls(document: Document) -> list[str]:
+    """Return the collection's PMTiles archives, from its links and its assets."""
+    urls = [link.href for link in document.pmtiles]
+    urls += [asset.href for asset in document.assets if asset.format == "pmtiles"]
+    return list(dict.fromkeys(urls))
+
+
+def pmtiles_sources(
+    style: dict[str, Any], style_url: str, fallback: str | None = None
+) -> dict[str, str]:
     """Map each PMTiles source id in a MapLibre style to an absolute archive URL.
 
-    A Portolan style names its archive as ``pmtiles://<path>``, with the path
-    relative to the style file.
+    A Portolan style names its archive in ``sources.<id>.url``, relative to the
+    style file. Catalogs write the path bare (``../x.pmtiles``) or with the
+    ``pmtiles://`` scheme, so the function accepts both. A vector source with
+    neither ``url`` nor ``tiles`` reads ``fallback``, the collection's only
+    archive.
     """
     sources = style.get("sources")
     found: dict[str, str] = {}
@@ -65,19 +79,28 @@ def pmtiles_sources(style: dict[str, Any], style_url: str) -> dict[str, str]:
         if not isinstance(source, dict) or source.get("type") != "vector":
             continue
         url = source.get("url")
-        if isinstance(url, str) and url.startswith(_PMTILES_SCHEME):
-            found[str(source_id)] = urljoin(style_url, url[len(_PMTILES_SCHEME) :])
+        if url is None and "tiles" not in source:
+            if fallback is not None:
+                found[str(source_id)] = fallback
+            continue
+        if not isinstance(url, str):
+            continue
+        if url.startswith(_PMTILES_SCHEME):
+            url = url[len(_PMTILES_SCHEME) :]
+        elif not urlsplit(url).path.lower().endswith(".pmtiles"):
+            continue
+        found[str(source_id)] = urljoin(style_url, url)
     return found
 
 
-def split_style(style: dict[str, Any], style_url: str) -> Styled:
+def split_style(style: dict[str, Any], style_url: str, fallback: str | None = None) -> Styled:
     """Split a MapLibre style into one style per PMTiles source.
 
     QGIS draws one archive per vector tile layer, so each archive gets the
     style layers that read from it. Background layers go with the first
     archive. Layers on any other source are dropped with a warning.
     """
-    sources = pmtiles_sources(style, style_url)
+    sources = pmtiles_sources(style, style_url, fallback)
     result = Styled()
     raw_layers = style.get("layers")
     layers = raw_layers if isinstance(raw_layers, list) else []
@@ -144,6 +167,24 @@ def vector_tile_layer(
 
 
 @dataclass
+class TileStyle:
+    """One catalog style, limited to the layers that read one archive."""
+
+    name: str
+    style: dict[str, Any]
+    sprite: tuple[bytes, dict[str, Any]] | None
+
+
+@dataclass
+class TilePart:
+    """One archive to add as a layer, with the catalog styles that draw it."""
+
+    archive: Archive
+    title: str
+    styles: list[TileStyle]
+
+
+@dataclass
 class PreparedTiles:
     """PMTiles archives read and styles split, ready to become layers.
 
@@ -152,54 +193,53 @@ class PreparedTiles:
     on the main thread.
     """
 
-    parts: list[tuple[Archive, dict[str, Any] | None, str]]
-    sprite: tuple[bytes, dict[str, Any]] | None
-    style_url: str | None
+    parts: list[TilePart]
     warnings: list[str]
 
 
 def prepare_pmtiles(
     document: Document,
+    urls: list[str],
     fetch_bytes: Callable[[str], bytes],
-    style_asset: Asset | None,
 ) -> PreparedTiles:
-    """Read a collection's style and PMTiles archives.
+    """Read PMTiles archives and every collection style that draws them.
 
     Args:
-        document: The collection, for its PMTiles links and title.
-        fetch_bytes: Fetches the style and its sprite.
-        style_asset: The style to apply, or None for QGIS's default style.
+        document: The collection, for its styles, PMTiles links, and title.
+        urls: The archives to open.
+        fetch_bytes: Fetches the styles and their sprites.
 
     Raises:
         PmtilesError: An archive cannot be read.
     """
     warnings: list[str] = []
-    targets: list[tuple[str, dict[str, Any] | None]] = []
-    style: dict[str, Any] | None = None
-    if style_asset is not None:
+    archives = archive_urls(document)
+    fallback = archives[0] if len(archives) == 1 else None
+    by_archive: dict[str, list[TileStyle]] = {url: [] for url in urls}
+    sprites: dict[str, tuple[bytes, dict[str, Any]] | None] = {}
+    # document.styles puts the default style first, so it becomes current.
+    for asset in document.styles:
         try:
-            style = parse_style(fetch_bytes(style_asset.href))
+            style = parse_style(fetch_bytes(asset.href))
         except (OSError, ValueError) as error:
-            warnings.append(f"Could not read the style {style_asset.href}: {error}")
-    if style is not None and style_asset is not None:
-        styled = split_style(style, style_asset.href)
-        warnings.extend(styled.warnings)
-        targets = list(styled.by_source.items())
-    if not targets:
-        targets = [(link.href, None) for link in document.pmtiles]
-    sprite = None
-    if style is not None and style_asset is not None:
-        sprite = _sprite(style, style_asset.href, fetch_bytes, warnings)
+            warnings.append(f"Could not read the style {asset.href}: {error}")
+            continue
+        styled = split_style(style, asset.href, fallback)
+        used = [url for url in styled.by_source if url in by_archive]
+        if not used:
+            continue
+        warnings.extend(f"{asset.label}: {note}" for note in styled.warnings)
+        sprite = _sprite(style, asset.href, fetch_bytes, warnings, sprites)
+        for url in used:
+            by_archive[url].append(TileStyle(asset.label, styled.by_source[url], sprite))
+    titles = {link.href: link.title for link in document.pmtiles}
     parts = []
-    for url, part in targets:
-        title = (part or {}).get("name") or document.title
-        parts.append((open_archive(url), part, str(title)))
-    return PreparedTiles(
-        parts=parts,
-        sprite=sprite,
-        style_url=style_asset.href if style_asset else None,
-        warnings=warnings,
-    )
+    for url in urls:
+        if document.styles and not by_archive[url]:
+            warnings.append(f"No style in {document.title} draws {url}.")
+        title = titles.get(url) or document.title
+        parts.append(TilePart(open_archive(url), title, by_archive[url]))
+    return PreparedTiles(parts=parts, warnings=warnings)
 
 
 def build_pmtiles(
@@ -209,22 +249,62 @@ def build_pmtiles(
 ) -> tuple[list[QgsMapLayer], list[str]]:
     """Create the styled vector tile layers. Call on the main thread."""
     warnings = list(prepared.warnings)
-    sprite = None
-    if prepared.sprite is not None:
-        sprite = (load_image(prepared.sprite[0]), prepared.sprite[1])
     layers: list[QgsMapLayer] = []
-    for archive, part, title in prepared.parts:
-        layer = vector_tile_layer(server, archive, title)
-        if part is not None:
-            renderer, labeling, notes = convert_style(part, sprite)
-            warnings.extend(notes)
-            if renderer is not None:
-                layer.setRenderer(renderer)
-            if labeling is not None:
-                layer.setLabeling(labeling)
-            layer.setCustomProperty(STYLE_PROPERTY, prepared.style_url or "")
+    for part in prepared.parts:
+        layer = vector_tile_layer(server, part.archive, part.title)
+        warnings.extend(add_styles(layer, part.styles, load_image))
         layers.append(layer)
     return layers, warnings
+
+
+def add_styles(
+    layer: QgsVectorTileLayer,
+    styles: list[TileStyle],
+    load_image: Callable[[bytes], Any],
+) -> list[str]:
+    """Add each catalog style to the layer as a named QGIS style.
+
+    The first style becomes current. The layer's own style stays available
+    under ``DEFAULT_STYLE_NAME``. The user switches styles from the layer's
+    **Styles** menu.
+
+    Returns:
+        The converter's warnings.
+    """
+    warnings: list[str] = []
+    original = QgsMapLayerStyle()
+    original.readFromLayer(layer)
+    named: dict[str, QgsMapLayerStyle] = {}
+    for style in styles:
+        sprite = None
+        if style.sprite is not None:
+            sprite = (load_image(style.sprite[0]), style.sprite[1])
+        renderer, labeling, notes = convert_style(style.style, sprite)
+        warnings.extend(f"{style.name}: {note}" for note in notes)
+        if renderer is None:
+            continue
+        layer.setRenderer(renderer)
+        layer.setLabeling(labeling)
+        captured = QgsMapLayerStyle()
+        captured.readFromLayer(layer)
+        named[_unique(style.name, named)] = captured
+    # Put the layer's own style back first. setCurrentStyle saves the layer's
+    # state into the current style before it switches.
+    original.writeToLayer(layer)
+    manager = layer.styleManager()
+    manager.renameStyle(manager.currentStyle(), DEFAULT_STYLE_NAME)
+    for name, captured in named.items():
+        manager.addStyle(name, captured)
+    if named:
+        manager.setCurrentStyle(next(iter(named)))
+    return warnings
+
+
+def _unique(name: str, taken: dict[str, Any]) -> str:
+    candidate, number = name, 2
+    while candidate in taken or candidate == DEFAULT_STYLE_NAME:
+        candidate, number = f"{name} ({number})", number + 1
+    return candidate
 
 
 def _sprite(
@@ -232,18 +312,23 @@ def _sprite(
     style_url: str,
     fetch_bytes: Callable[[str], bytes],
     warnings: list[str],
+    cache: dict[str, tuple[bytes, dict[str, Any]] | None],
 ) -> tuple[bytes, dict[str, Any]] | None:
     base = style.get("sprite")
     if not isinstance(base, str):
         return None
     root = urljoin(style_url, base)
-    try:
-        index = json.loads(fetch_bytes(f"{root}.json"))
-        image = fetch_bytes(f"{root}.png")
-    except (OSError, ValueError) as error:
-        warnings.append(f"Could not load the style's sprite at {root}: {error}")
-        return None
-    return (image, index) if isinstance(index, dict) else None
+    if root not in cache:
+        cache[root] = None
+        try:
+            index = json.loads(fetch_bytes(f"{root}.json"))
+            image = fetch_bytes(f"{root}.png")
+        except (OSError, ValueError) as error:
+            warnings.append(f"Could not load the style's sprite at {root}: {error}")
+        else:
+            if isinstance(index, dict):
+                cache[root] = (image, index)
+    return cache[root]
 
 
 def asset_layer(asset: Asset, name: str | None = None) -> QgsMapLayer:

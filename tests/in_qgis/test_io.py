@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import urllib.parse
 import urllib.request
+from dataclasses import replace
 
 import pytest
 from qgis.core import (
@@ -147,6 +148,9 @@ def test_style_split_and_sources():
         "sources": {
             "a": {"type": "vector", "url": "pmtiles://../a.pmtiles"},
             "b": {"type": "vector", "url": "pmtiles://https://x.test/b.pmtiles"},
+            "bare": {"type": "vector", "url": "../d.pmtiles?v=2"},
+            "tilejson": {"type": "vector", "url": "https://tiles.test/v.json"},
+            "xyz": {"type": "vector", "tiles": ["https://tiles.test/{z}/{x}/{y}.pbf"]},
             "base": {"type": "raster", "tiles": ["https://tiles.test/{z}/{x}/{y}.png"]},
         },
         "layers": [
@@ -160,6 +164,7 @@ def test_style_split_and_sources():
     assert layers.pmtiles_sources(style, url) == {
         "a": "https://x.test/c/a.pmtiles",
         "b": "https://x.test/b.pmtiles",
+        "bare": "https://x.test/c/d.pmtiles?v=2",
     }
     split = layers.split_style(style, url)
     assert {k: [layer["id"] for layer in v["layers"]] for k, v in split.by_source.items()} == {
@@ -168,6 +173,15 @@ def test_style_split_and_sources():
     }
     assert len(split.warnings) == 1
     assert "sat" in split.warnings[0]
+
+
+def test_source_without_url_reads_the_only_archive():
+    style = {"version": 8, "sources": {"data": {"type": "vector"}}, "layers": []}
+    url = "https://x.test/c/styles/s.json"
+    assert layers.pmtiles_sources(style, url) == {}
+    assert layers.pmtiles_sources(style, url, "https://x.test/c/a.pmtiles") == {
+        "data": "https://x.test/c/a.pmtiles"
+    }
 
 
 def test_parse_style_rejects_non_styles():
@@ -200,32 +214,81 @@ def _red_pixels(image: QImage) -> int:
     return count
 
 
-def test_styled_vector_tiles_render(collection, server):
-    prepared = layers.prepare_pmtiles(collection, fetch_bytes, collection.default_style)
+# Web Mercator extent around the points near Bologna.
+BOLOGNA = QgsRectangle(1_200_000, 5_440_000, 1_500_000, 5_640_000)
+
+
+def _blue_pixels(image: QImage) -> int:
+    count = 0
+    for x in range(0, image.width(), 2):
+        for y in range(0, image.height(), 2):
+            color = image.pixelColor(x, y)
+            if color.blue() > 200 and color.red() < 80 and color.green() < 80:
+                count += 1
+    return count
+
+
+def test_tiles_carry_every_style_as_a_named_style(catalog, collection, server):
+    urls = layers.archive_urls(collection)
+    assert urls == [f"{catalog['base']}/points.pmtiles"]
+    prepared = layers.prepare_pmtiles(collection, urls, fetch_bytes)
     assert prepared.warnings == []
-    built, warnings = layers.build_pmtiles(server, prepared, QImage.fromData)
+    built, _ = layers.build_pmtiles(server, prepared, QImage.fromData)
     (layer,) = built
     assert layer.isValid()
-    assert layer.name() == "Points in red"
+    assert layer.name() == "Point tiles"
     assert layer.customProperty(layers.PMTILES_PROPERTY).endswith("/points.pmtiles")
-    assert [s.layerName() for s in layer.renderer().styles()] == ["points"]
-    # Web Mercator extent around the points near Bologna.
-    image = _render(layer, QgsRectangle(1_200_000, 5_440_000, 1_500_000, 5_640_000))
+    manager = layer.styleManager()
+    assert sorted(manager.styles()) == sorted(
+        [layers.DEFAULT_STYLE_NAME, "style-red", "style-blue"]
+    )
+    # The default style is current, and each named style draws its own color.
+    assert manager.currentStyle() == "style-red"
+    image = _render(layer, BOLOGNA)
     assert _red_pixels(image) > 0
+    assert _blue_pixels(image) == 0
+    manager.setCurrentStyle("style-blue")
+    image = _render(layer, BOLOGNA)
+    assert _blue_pixels(image) > 0
+    assert _red_pixels(image) == 0
+    manager.setCurrentStyle(layers.DEFAULT_STYLE_NAME)
+    assert _red_pixels(_render(layer, BOLOGNA)) == 0
+    manager.setCurrentStyle("style-red")
+    assert _red_pixels(_render(layer, BOLOGNA)) > 0
 
 
-def test_unstyled_tiles_use_the_link(collection, server):
-    prepared = layers.prepare_pmtiles(collection, fetch_bytes, None)
+def test_tiles_without_styles_use_the_qgis_style(catalog, collection, server):
+    bare = replace(collection, assets=collection.data_assets)
+    urls = layers.archive_urls(bare)
+    prepared = layers.prepare_pmtiles(bare, urls, fetch_bytes)
+    assert prepared.warnings == []
     built, _ = layers.build_pmtiles(server, prepared, QImage.fromData)
-    assert [layer.name() for layer in built] == ["Test points"]
+    (layer,) = built
+    assert layer.styleManager().styles() == [layers.DEFAULT_STYLE_NAME]
 
 
-def test_unreadable_style_falls_back_with_a_warning(collection, server):
-    style = collection.default_style
-    broken = type(style)(**{**style.__dict__, "href": style.href.replace("red", "gone")})
-    prepared = layers.prepare_pmtiles(collection, fetch_bytes, broken)
-    assert len(prepared.parts) == 1
+def test_unreadable_style_is_skipped_with_a_warning(collection, server):
+    red, blue = collection.styles
+    broken = replace(red, href=red.href.replace("red", "gone"))
+    others = [a for a in collection.assets if a.key != red.key]
+    document = replace(collection, assets=(broken, *others))
+    urls = layers.archive_urls(document)
+    prepared = layers.prepare_pmtiles(document, urls, fetch_bytes)
     assert "Could not read the style" in prepared.warnings[0]
+    built, _ = layers.build_pmtiles(server, prepared, QImage.fromData)
+    assert built[0].styleManager().currentStyle() == blue.key
+
+
+def test_styles_follow_the_picked_archive(catalog, collection, server):
+    # Both styles read points.pmtiles, so neither one may replace the archive
+    # the user picked or show in its style list.
+    other = f"{catalog['base']}/other.pmtiles"
+    prepared = layers.prepare_pmtiles(collection, [other], fetch_bytes)
+    (part,) = prepared.parts
+    assert part.archive.url == other
+    assert part.title == "Test points"
+    assert part.styles == []
+    assert prepared.warnings == [f"No style in Test points draws {other}."]
 
 
 def test_asset_layers(catalog, collection):

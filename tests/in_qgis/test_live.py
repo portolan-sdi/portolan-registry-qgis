@@ -34,7 +34,8 @@ def test_live_anncsu_tiles_render_with_their_style():
     collection = read_document(fetch_json(href), href)
     server = TileServer()
     try:
-        prepared = layers.prepare_pmtiles(collection, fetch_bytes, collection.default_style)
+        urls = layers.archive_urls(collection)
+        prepared = layers.prepare_pmtiles(collection, urls, fetch_bytes)
         built, warnings = layers.build_pmtiles(server, prepared, QImage.fromData)
         (layer,) = built
         assert layer.isValid()

@@ -314,3 +314,41 @@ def test_overview_stands_in_for_a_missing_thumbnail():
 )
 def test_is_image(href, media, expected):
     assert is_image(href, media) is expected
+
+
+def _with_assets(assets, links=()):
+    return read_document(
+        {"type": "Collection", "id": "c", "links": list(links), "assets": assets},
+        "https://example.com/c/collection.json",
+    )
+
+
+def _asset(name, *roles):
+    return {"href": f"./{name}", "roles": list(roles) or ["data"]}
+
+
+def test_preferred_href_takes_the_first_pmtiles_link():
+    links = [
+        {"rel": "pmtiles", "href": "./main.pmtiles"},
+        {"rel": "pmtiles", "href": "./other.pmtiles"},
+    ]
+    document = _with_assets({"data": _asset("d.parquet")}, links)
+    assert document.preferred_href() == "https://example.com/c/main.pmtiles"
+
+
+def test_preferred_href_falls_back_by_format():
+    base = "https://example.com/c/"
+    assets = {
+        "upstream": _asset("u.tif", "source"),
+        "geojson": _asset("d.geojson"),
+        "data": _asset("d.parquet"),
+        "visual": _asset("v.pmtiles", "visual"),
+        "thumbnail": _asset("t.png", "thumbnail"),
+    }
+    assert _with_assets(assets).preferred_href() == f"{base}v.pmtiles"
+    del assets["visual"]
+    assert _with_assets(assets).preferred_href() == f"{base}d.parquet"
+    # Without DuckDB, GeoParquet cannot load, and an upstream source never counts.
+    assert _with_assets(assets).preferred_href(parquet=False) == f"{base}d.geojson"
+    assert _with_assets({"upstream": assets["upstream"]}).preferred_href() is None
+    assert _with_assets({"thumbnail": assets["thumbnail"]}).preferred_href() is None

@@ -14,7 +14,7 @@ Select a node to see its thumbnail, or a map of its extent when it has no thumbn
 
 ## Add data to the map
 
-Select one or more assets, then select **Add to map**. A double-click on an asset adds it too. A badge on each asset shows its format.
+Select one or more assets, then select **Add to map**. When a collection opens, the panel selects one asset for you, so **Add to map** works at once. It picks the first PMTiles link, which is the archive that the default style draws. Without PMTiles, it picks the first data asset in this order: COG, COPC, GeoParquet, FlatGeobuf, GeoJSON. It skips GeoParquet when DuckDB is missing. A double-click on an asset adds it too. A badge on each asset shows its format.
 
 | Asset | Layer |
 |---|---|

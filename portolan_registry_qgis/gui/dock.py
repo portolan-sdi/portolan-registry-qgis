@@ -703,6 +703,7 @@ class RegistryDock(QDockWidget):
             row.setToolTip(0, _asset_tip(asset.href, "Roles", ", ".join(asset.roles)))
             self.assets.addTopLevelItem(row)
         self._fit_assets()
+        self._select_preferred(document)
 
         styles = len(document.styles)
         self.tile_styles.setText(
@@ -713,6 +714,18 @@ class RegistryDock(QDockWidget):
         self.tile_styles.setVisible(bool(styles and layer_io.archive_urls(document)))
         self.parquet_extent.setVisible(any(a.format == "parquet" for a in document.assets))
         self._sync_buttons()
+
+    def _select_preferred(self, document: Document) -> None:
+        """Select the asset that Add to map should add when the user picks nothing else."""
+        href = document.preferred_href(parquet=parquet_query.duckdb_status()[0])
+        if href is None:
+            return
+        for i in range(self.assets.topLevelItemCount()):
+            row = self.assets.topLevelItem(i)
+            value = row.data(0, _ROLE)
+            if value == _PMTILES_KEY + href or (isinstance(value, Asset) and value.href == href):
+                row.setSelected(True)
+                return
 
     def _fit_assets(self) -> None:
         """Size the asset list to its rows, so the details panel scrolls instead."""

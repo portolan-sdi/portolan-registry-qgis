@@ -154,7 +154,9 @@ def test_tree_details_and_assets(iface, server, catalog):
     assert not dock.parquet_extent.isHidden()
     assert dock.zoom.isEnabled()
     assert dock.download_all.isEnabled()
-    assert not dock.add.isEnabled()
+    # The first PMTiles link is selected, so Add to map works at once.
+    assert [row.text(0) for row in dock.assets.selectedItems()] == ["Point tiles"]
+    assert dock.add.isEnabled()
     # The missing collection reports its failure in the details pane.
     dock.tree.setCurrentItem(dock.tree.topLevelItem(1))
     wait_for(lambda: "Could not read" in dock.description.text())
@@ -223,6 +225,7 @@ def test_parquet_in_a_small_extent(iface, server, catalog):
     dock = open_dock(iface, server, catalog)
     open_collection(dock)
     iface.canvas.setExtent(QgsRectangle(11.095, 44.0, 11.305, 45.0))
+    dock.assets.clearSelection()
     asset_row(dock, "data").setSelected(True)
     dock.add.click()
     wait_for(lambda: len(QgsProject.instance().mapLayers()) == 1, timeout=60)
@@ -238,6 +241,7 @@ def test_missing_duckdb_shows_install_help(iface, server, catalog, monkeypatch):
     monkeypatch.setattr(dock_module.QMessageBox, "exec", lambda box: shown.append(box.text()))
     dock = open_dock(iface, server, catalog)
     open_collection(dock)
+    dock.assets.clearSelection()
     asset_row(dock, "data").setSelected(True)
     dock.add.click()
     assert len(shown) == 1

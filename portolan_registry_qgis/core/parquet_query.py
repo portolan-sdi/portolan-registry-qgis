@@ -209,7 +209,7 @@ def _null_geometries(path: str) -> int:
         if row is None:
             return 0
         table, column = (str(part).replace('"', '""') for part in row)
-        sql = f'SELECT count(*) FROM "{table}" WHERE "{column}" IS NULL'  # noqa: S608 - names come from the GeoPackage and are quoted
+        sql = f'SELECT count(*) FROM "{table}" WHERE "{column}" IS NULL'  # noqa: S608  # nosec B608 - names come from the GeoPackage and are quoted
         return int(gpkg.execute(sql).fetchone()[0])
 
 

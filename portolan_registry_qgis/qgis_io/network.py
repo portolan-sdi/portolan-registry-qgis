@@ -59,11 +59,23 @@ def fetch_range(url: str, offset: int, length: int) -> bytes:
     Raises:
         NetworkError: The request failed, or the server ignores ranges.
     """
+    return _range(url, offset, length)[0]
+
+
+def _range(url: str, offset: int, length: int) -> tuple[bytes, bytes]:
+    """Return the range and the reply's Cache-Control header."""
     request = QNetworkRequest(QUrl(url))
     request.setRawHeader(b"Range", f"bytes={offset}-{offset + length - 1}".encode())
     # Qt's disk cache keys on the URL alone. A cached range would answer a
     # request for a different range, so ranges bypass the cache both ways.
     request.setAttribute(QNetworkRequest.Attribute.CacheSaveControlAttribute, False)
+    # QGIS 3.34 and 3.36 follow a redirect themselves and drop the Range
+    # header, so the target answers 200 with the whole file. Qt keeps the
+    # header when it follows the redirect, as QGIS 3.38 and later make it do.
+    request.setAttribute(
+        QNetworkRequest.Attribute.RedirectPolicyAttribute,
+        QNetworkRequest.RedirectPolicy.NoLessSafeRedirectPolicy,
+    )
     feedback = QgsFeedback()
     blocking = QgsBlockingNetworkRequest()
     check = cancel_past(length, feedback)
@@ -82,7 +94,7 @@ def fetch_range(url: str, offset: int, length: int) -> bytes:
         raise NetworkError(f"{url}: the server ignores HTTP range requests")
     if code != QgsBlockingNetworkRequest.ErrorCode.NoError:
         raise NetworkError(f"{url}: {blocking.errorMessage()}")
-    return bytes(reply.content())
+    return bytes(reply.content()), bytes(reply.rawHeader(b"Cache-Control"))
 
 
 def cancel_past(length: int, feedback: QgsFeedback) -> Callable[[int, int], None]:
@@ -99,10 +111,30 @@ def cancel_past(length: int, feedback: QgsFeedback) -> Callable[[int, int], None
     return check
 
 
+class RemoteRange:
+    """``fetch_range`` bound to one URL.
+
+    ``no_store`` turns true once the server answers with
+    ``Cache-Control: no-store``. The tile server then keeps the archive's
+    tiles out of the QGIS disk cache.
+    """
+
+    def __init__(self, url: str) -> None:
+        self.url = url
+        self.no_store = False
+
+    def __call__(self, offset: int, length: int) -> bytes:
+        """Return ``length`` bytes from ``offset``."""
+        body, cache_control = _range(self.url, offset, length)
+        if b"no-store" in cache_control.lower():
+            self.no_store = True
+        return body
+
+
 def range_fetcher(location: str) -> Callable[[int, int], bytes]:
     """Return a ``fetch_range(offset, length)`` for a URL or a local path."""
     if location.startswith(("http://", "https://")):
-        return lambda offset, length: fetch_range(location, offset, length)
+        return RemoteRange(location)
     path = Path(QUrl(location).toLocalFile() if location.startswith("file:") else location)
 
     def read(offset: int, length: int) -> bytes:

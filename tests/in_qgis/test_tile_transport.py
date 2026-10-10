@@ -7,12 +7,15 @@ machine. ``scripts/bench_tiles.py`` measures the time against a real host.
 from __future__ import annotations
 
 import http.client
+import statistics
 import threading
 import time
+import urllib.request
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 from qgis.core import (
+    Qgis,
     QgsCoordinateReferenceSystem,
     QgsCoordinateTransform,
     QgsFeedback,
@@ -158,6 +161,27 @@ def test_qgis_keeps_connections_and_caches_tiles(remote, server, loopback):
     assert loopback["tiles"] == first["tiles"]
 
 
+def test_a_kept_connection_does_not_stall(catalog, server):
+    """Nagle's algorithm with delayed acknowledgment adds 40 ms per response.
+
+    A local archive has no network cost, so each tile takes well under 1 ms
+    without the stall.
+    """
+    archive = open_archive(str(catalog["root"] / "points.pmtiles"))
+    host, path = server.register(archive).removeprefix("http://").split("/", 1)
+    connection = http.client.HTTPConnection(host, timeout=10)
+    times = []
+    for _ in range(50):
+        start = time.perf_counter()
+        connection.request("GET", "/" + path.replace("{z}/{x}/{y}", "0/0/0"))
+        response = connection.getresponse()
+        response.read()
+        times.append(time.perf_counter() - start)
+    connection.close()
+    assert response.status == 200
+    assert statistics.median(times) < 0.01
+
+
 def test_register_reuses_an_unchanged_archive(catalog, server, tmp_path):
     url = f"{catalog['base']}/points.pmtiles"
     first = open_archive(url)
@@ -176,6 +200,72 @@ def test_register_reuses_an_unchanged_archive(catalog, server, tmp_path):
     assert new_template != template
     assert server._server.archives[token] is second
     assert server._server.archives[new_template.split("/")[3]] is second
+
+
+@pytest.mark.parametrize("prefix", ["absolute", "relative"])
+def test_fetch_range_keeps_the_range_through_a_redirect(catalog, prefix):
+    """QGIS 3.34 and 3.36 drop the Range header when they follow a redirect.
+
+    QGIS 3.38 and later follow a redirect themselves and keep the header.
+    They reject a relative Location, with or without the plugin. Only older
+    versions hand a relative redirect to Qt, so only they run that case.
+    """
+    if prefix == "relative" and Qgis.versionInt() >= 33800:
+        pytest.skip("QGIS 3.38 and later reject a relative redirect")
+    seen = []
+
+    class Redirect(RangeHandler):
+        def do_GET(self):
+            seen.append((self.path, self.headers.get("Range")))
+            if self.path.startswith("/moved/"):
+                target = self.path.removeprefix("/moved")
+                if prefix == "absolute":
+                    target = f"http://127.0.0.1:{self.server.server_address[1]}{target}"
+                self.send_response(302)
+                self.send_header("Location", target)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            super().do_GET()
+
+    def handler(*args, **kwargs):
+        return Redirect(*args, directory=str(catalog["root"]), **kwargs)
+
+    moved = _serve(handler)
+    try:
+        url = f"http://127.0.0.1:{moved.server_address[1]}/moved/points.pmtiles"
+        whole = (catalog["root"] / "points.pmtiles").read_bytes()
+        assert fetch_range(url, 100, 10) == whole[100:110]
+    finally:
+        moved.shutdown()
+        moved.server_close()
+    assert seen == [
+        ("/moved/points.pmtiles", "bytes=100-109"),
+        ("/points.pmtiles", "bytes=100-109"),
+    ]
+
+
+def test_no_store_from_the_server_keeps_tiles_off_disk(catalog, server):
+    class NoStore(RangeHandler):
+        def end_headers(self):
+            self.send_header("Cache-Control", "no-store")
+            super().end_headers()
+
+    def handler(*args, **kwargs):
+        return NoStore(*args, directory=str(catalog["root"]), **kwargs)
+
+    private = _serve(handler)
+    try:
+        archive = open_archive(f"http://127.0.0.1:{private.server_address[1]}/points.pmtiles")
+        template = server.register(archive)
+        assert archive.no_store
+        for zxy in ("0/0/0", "8/0/0"):
+            with urllib.request.urlopen(template.replace("{z}/{x}/{y}", zxy)) as response:
+                assert response.headers["Cache-Control"] == "no-store"
+    finally:
+        private.shutdown()
+        private.server_close()
+    assert not open_archive(f"{catalog['base']}/points.pmtiles").no_store
 
 
 def test_fetch_range_rejects_a_server_that_ignores_ranges(catalog):

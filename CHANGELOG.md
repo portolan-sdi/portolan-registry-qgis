@@ -6,9 +6,12 @@
 - PMTiles layers carry each of the collection's MapLibre styles as a named QGIS style. Switch styles from the layer's **Styles** menu.
 - Styles that name their archive as a bare relative path, such as `../tiles.pmtiles`, apply to the tiles. So do styles whose vector source has no `url`.
 - A PMTiles layer opens the archive you selected, not the archive the chosen style reads.
-- PMTiles layers draw faster when you pan. The plugin keeps its connections to the archive's host open, and QGIS caches each tile, so an area you saw before draws without a download.
+- PMTiles layers draw faster when you pan. The plugin keeps its connections to the archive's host open.
+- Within one QGIS session, an area of a PMTiles layer that you saw before draws from the QGIS cache without a download.
+- QGIS now stores PMTiles tiles in its disk cache, as it does for other tile layers. A server that sends `Cache-Control: no-store` keeps its tiles out of the cache.
 - A PMTiles layer opens with one request fewer when the archive's metadata is in its first 16 KiB. Adding the same archive again keeps the tiles QGIS cached.
-- On QGIS 3.34 and 3.36, a server that ignores HTTP range requests now fails with a clear message. Before, each tile downloaded the whole archive.
+- On QGIS 3.34 and 3.36, a PMTiles archive behind a redirect reads only the bytes it needs. Before, each read downloaded the whole archive. On those versions, a relative redirect works too.
+- The plugin no longer reads PMTiles from a server that ignores HTTP range requests on QGIS 3.34 and 3.36. Before, a small archive worked, and each tile read downloaded the whole archive. QGIS 3.38 and later already refused such servers.
 
 ## 0.1.1 - 2026-10-09
 

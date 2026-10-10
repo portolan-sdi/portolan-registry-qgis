@@ -7,7 +7,10 @@ Run it with the Python that has PyQGIS:
 
 The script renders six screens east of Center City, Philadelphia, at about
 zoom 15, then pans over the same screens a second time. It prints the render
-time, the remote reads, and the loopback connections for each step.
+time, the remote reads, and the loopback connections for each step. The last
+line gives the time of the first visit and of the revisit apart. The revisit
+draws from the QGIS cache. The first visit gains from kept connections, and
+from the cache where neighboring screens share a tile.
 
 ``--baseline`` restores the transport of version 0.1.1: HTTP/1.0 and no
 caching. Compare the two runs to see what keep-alive and caching save. The
@@ -75,22 +78,22 @@ def _run(url: str, baseline: bool, steps: int) -> None:
 
     counts = {"reads": 0, "bytes": 0, "connections": 0}
     lock = threading.Lock()
-    fetch = network.fetch_range
+    fetch = network._range
     setup = tileserver._Handler.setup
 
-    def counted_fetch(location: str, offset: int, length: int) -> bytes:
-        body = fetch(location, offset, length)
+    def counted_fetch(url: str, offset: int, length: int) -> tuple[bytes, bytes]:
+        body, cache_control = fetch(url, offset, length)
         with lock:
             counts["reads"] += 1
             counts["bytes"] += len(body)
-        return body
+        return body, cache_control
 
     def counted_setup(handler: Any) -> None:
         with lock:
             counts["connections"] += 1
         setup(handler)
 
-    network.fetch_range = counted_fetch  # type: ignore[assignment]
+    network._range = counted_fetch
     tileserver._Handler.setup = counted_setup  # type: ignore[method-assign,assignment]
 
     server = tileserver.TileServer()
@@ -100,7 +103,7 @@ def _run(url: str, baseline: bool, steps: int) -> None:
         QgsCoordinateReferenceSystem("EPSG:4326"), merc, QgsProject.instance()
     )
     mode = "baseline" if baseline else "current"
-    total = 0.0
+    totals = {1: 0.0, 2: 0.0}
     for sweep in (1, 2):
         for step in range(steps):
             west = -75.20 + step * 0.015
@@ -118,13 +121,16 @@ def _run(url: str, baseline: bool, steps: int) -> None:
             job.start()
             job.waitForFinished()
             took = time.perf_counter() - start
-            total += took
+            totals[sweep] += took
             print(
                 f"{mode} pass {sweep} step {step}: {took:5.2f} s, "
                 f"{counts['reads']:2} remote reads, {counts['bytes'] // 1000:5} kB, "
                 f"{counts['connections']:2} new loopback connections"
             )
-    print(f"{mode} total: {total:.2f} s")
+    print(
+        f"{mode} first visit: {totals[1]:.2f} s, revisit: {totals[2]:.2f} s, "
+        f"total: {totals[1] + totals[2]:.2f} s"
+    )
     server.stop()
 
 

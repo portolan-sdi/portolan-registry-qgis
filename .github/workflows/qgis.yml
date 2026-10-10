@@ -1,6 +1,7 @@
 # Runs tests/in_qgis inside the official QGIS images. The uv matrix in ci.yml
 # cannot import qgis, so the plugin's QGIS, Qt, and network code is tested
-# here: once on Qt5 (QGIS 3.44 LTR) and once on Qt6 (QGIS 4.2).
+# here: on QGIS 3.34, the plugin's minimum version, on Qt5 (QGIS 3.44 LTR),
+# and on Qt6 (QGIS 4.2).
 name: QGIS
 
 on:
@@ -27,6 +28,9 @@ jobs:
       fail-fast: false
       matrix:
         qgis:
+          - name: "3.34 (Qt5)"
+            # qgis/qgis:3.34, digest as of 2026-10-09
+            image: qgis/qgis@sha256:6cf6c4b6aa9874c2a3513d18788361fe16a1f947c57b06648e011c17711e0214
           - name: "3.44 (Qt5)"
             # qgis/qgis:3.44, digest as of 2026-09-27
             image: qgis/qgis@sha256:bacafbaf899bb2af5d99dd8a138e0438733aac252ddd5f29d089ad34641bb059

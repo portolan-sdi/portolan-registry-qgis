@@ -17,8 +17,12 @@ connection has one handler thread, and QGIS gives each thread its own network
 manager. A kept connection therefore keeps its connection to the remote host,
 and a tile read does not pay for a new TLS handshake.
 
-Tile responses allow caching for a day. A changed archive gets a new token,
-so new layers of it do not draw tiles cached from the old archive.
+Tile responses allow caching for a day, so QGIS keeps them in its disk cache
+for the session. The tokens and the port change in each session, so a later
+session does not reuse them. A server that answers with
+``Cache-Control: no-store`` keeps that rule for its tiles. A changed archive
+gets a new token, so new layers of it do not draw tiles cached from the old
+archive.
 """
 
 from __future__ import annotations
@@ -48,6 +52,8 @@ class Archive:
     bounds: tuple[float, float, float, float] | None
     vector_layers: tuple[str, ...]
     reader: Reader = field(compare=False, repr=False)
+    # The server answered Cache-Control: no-store, so no tile may reach disk.
+    no_store: bool = False
 
 
 def open_archive(url: str, fetch_range: Callable[[int, int], bytes] | None = None) -> Archive:
@@ -87,6 +93,8 @@ def open_archive(url: str, fetch_range: Callable[[int, int], bytes] | None = Non
         bounds=header.bounds,
         vector_layers=names,
         reader=reader,
+        # network.RemoteRange records it. Other fetchers have no such header.
+        no_store=bool(getattr(fetch_range, "no_store", False)),
     )
 
 
@@ -102,6 +110,10 @@ CACHE_CONTROL = "max-age=86400"
 class _Handler(BaseHTTPRequestHandler):
     server: _Server
     protocol_version = "HTTP/1.1"
+    # The handler writes the headers and the body in two writes. On a kept
+    # connection, Nagle's algorithm holds the second write until the client
+    # acknowledges the first, which delayed acknowledgment stalls for 40 ms.
+    disable_nagle_algorithm = True
     # Close a connection that QGIS leaves idle, so its thread ends.
     timeout = 60
 
@@ -125,18 +137,22 @@ class _Handler(BaseHTTPRequestHandler):
             # An absent tile is empty ocean, not an error. 204 keeps QGIS from
             # logging a network failure for each one.
             self.send_response(204)
-            self.send_header("Cache-Control", CACHE_CONTROL)
+            self.send_header("Cache-Control", _cache_control(archive))
             self.end_headers()
             return
         self.send_response(200)
         self.send_header("Content-Type", "application/vnd.mapbox-vector-tile")
         self.send_header("Content-Length", str(len(tile)))
-        self.send_header("Cache-Control", CACHE_CONTROL)
+        self.send_header("Cache-Control", _cache_control(archive))
         self.end_headers()
         self.wfile.write(tile)
 
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A002 - base signature
         """Silence per-request logging; QGIS has its own network log."""
+
+
+def _cache_control(archive: Archive) -> str:
+    return "no-store" if archive.no_store else CACHE_CONTROL
 
 
 class _Server(ThreadingHTTPServer):
@@ -177,7 +193,11 @@ class TileServer:
         with self._lock:
             server = self._ensure_started()
             known = self._known.get(archive.url)
-            if known is not None and known[1].reader.header() == archive.reader.header():
+            if (
+                known is not None
+                and known[1].reader.header() == archive.reader.header()
+                and known[1].no_store == archive.no_store
+            ):
                 token, archive = known
             else:
                 token = secrets.token_urlsafe(16)

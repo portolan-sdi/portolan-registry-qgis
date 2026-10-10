@@ -455,6 +455,20 @@ def test_remove_stale_creates_nothing(tmp_path, monkeypatch):
     assert not missing.exists()
 
 
+def test_needs_restore_finds_a_missing_copy(tmp_path):
+    # On QGIS 3.34 the layer keeps the path of the missing copy.
+    gone = tmp_path / "portolan_registry" / "layers" / "session-1-x" / ("0" * 32 + ".gpkg")
+    layer = QgsVectorLayer(f"{gone}|layername=features", "gone", "ogr")
+    assert not layer.isValid()
+    assert not parquet_layer.needs_restore(layer)
+    layer.setCustomProperty(parquet_layer.SOURCE_PROPERTY, "https://x.test/a.parquet")
+    assert parquet_layer.needs_restore(layer)
+    # A missing file outside the scratch folder is the user's own layer.
+    other = QgsVectorLayer(str(tmp_path / "roads.gpkg"), "roads", "ogr")
+    other.setCustomProperty(parquet_layer.SOURCE_PROPERTY, "https://x.test/a.parquet")
+    assert not parquet_layer.needs_restore(other)
+
+
 def test_restore_path(tmp_path, monkeypatch):
     monkeypatch.setattr(parquet_layer, "scratch_folder", lambda **_: tmp_path)
     assert parquet_layer.restore_path("/data/roads.gpkg") == "/data/roads.gpkg"

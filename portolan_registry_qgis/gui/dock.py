@@ -67,7 +67,12 @@ from portolan_registry_qgis.gui.widgets import (
 from portolan_registry_qgis.qgis_io import layers as layer_io
 from portolan_registry_qgis.qgis_io import parquet_layer
 from portolan_registry_qgis.qgis_io.downloader import DownloadJob, DownloadReport
-from portolan_registry_qgis.qgis_io.network import fetch_bytes, fetch_json, run_task
+from portolan_registry_qgis.qgis_io.network import (
+    QtExecutor,
+    fetch_bytes,
+    fetch_json,
+    run_task,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -1001,17 +1006,27 @@ class RegistryDock(QDockWidget):
         self._show_progress(0, 0, f"Listing everything below {document.title}…")
 
         def build(task: Any) -> download.Plan:
-            return download.plan(fetch_json, document.href, root, cancelled=task.isCanceled)
+            executor = QtExecutor(download.WALK_WORKERS)
+            try:
+                return download.plan(
+                    fetch_json, document.href, root, cancelled=task.isCanceled, executor=executor
+                )
+            finally:
+                executor.shutdown(cancel_futures=True)
 
         def planned(result: object, error: BaseException | None) -> None:
             self._hide_progress()
+            # A cancelled walk returns the partial plan it has. Drop it.
+            if task.isCanceled():
+                self._info(f"Listing of {document.title} cancelled.")
+                return
             if not isinstance(result, download.Plan):
                 self._warn(f"Could not list {document.title}: {error}")
                 return
             if self._confirm(result):
                 self._start_download(folder, result.files)
 
-        run_task(f"List {document.title}", build, planned)
+        task = run_task(f"List {document.title}", build, planned)
 
     def _confirm(self, plan: download.Plan) -> bool:
         lines = [f"{len(plan.files)} files, at least {human_size(plan.known_bytes)}."]

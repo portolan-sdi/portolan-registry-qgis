@@ -7,7 +7,7 @@ Ported from GeoLibre's ``stac-api.ts`` (MIT, see NOTICE): ``absoluteHref``,
 from __future__ import annotations
 
 import re
-from urllib.parse import unquote, urljoin, urlsplit, urlunsplit
+from urllib.parse import quote, unquote, urljoin, urlsplit, urlunsplit
 
 _S3_WEBSITE = re.compile(r"^(.+)\.s3-website[.-]([a-z0-9-]+)\.amazonaws\.com$", re.IGNORECASE)
 _DFS_SUFFIX = ".dfs.core.windows.net"
@@ -75,6 +75,21 @@ def asset_href(href: str, base: str, account_name: str | None = None) -> str:
             return resolved
         return f"https://{account}.blob.core.windows.net/{container}{tail}"
     return resolved
+
+
+def vsicurl_path(url: str) -> str:
+    """Return the GDAL path that reads ``url`` over HTTP range requests.
+
+    The ``empty_dir=yes`` option stops GDAL from listing the parent directory
+    and from probing side-car files such as ``.aux.xml``, ``.ovr``, and
+    ``.msk``. On Google Cloud Storage, a COG open sent 41 such probes and took
+    17 s, not 1 s. The cost is that GDAL ignores external side-car files. A COG
+    keeps its overviews and mask inside the file, but an asset that relies on
+    an external ``.ovr`` or ``.aux.xml`` opens without it.
+
+    GDAL needs the URL percent-encoded in this form, query string included.
+    """
+    return f"/vsicurl?empty_dir=yes&url={quote(url, safe='')}"
 
 
 def folder_name(href: str) -> str:

@@ -19,6 +19,7 @@ from portolan_registry_qgis.gui import dock as dock_module
 from portolan_registry_qgis.gui.dock import RegistryDock
 from portolan_registry_qgis.gui.widgets import BADGE_ROLE
 from portolan_registry_qgis.plugin import REGISTRY_URL_SETTING
+from portolan_registry_qgis.qgis_io import parquet_layer
 from portolan_registry_qgis.qgis_io.layers import PMTILES_PROPERTY
 from portolan_registry_qgis.qgis_io.tileserver import TileServer
 
@@ -270,6 +271,15 @@ def test_tooltips_say_which_asset_to_use(iface, server, catalog):
     dock.disconnect_canvas()
 
 
+def test_no_pmtiles_advice_without_tiles(iface, server, catalog, monkeypatch):
+    monkeypatch.setattr(dock_module.layer_io, "archive_urls", lambda _document: [])
+    dock = open_dock(iface, server, catalog)
+    open_collection(dock)
+    assert dock_module.VIEW_OR_ANALYZE not in dock.add.toolTip()
+    assert dock_module.VIEW_OR_ANALYZE not in asset_row(dock, "data").toolTip(0)
+    dock.disconnect_canvas()
+
+
 def test_missing_duckdb_shows_install_help(iface, server, catalog, monkeypatch):
     shown = []
     monkeypatch.setattr(dock_module.parquet_query, "duckdb_status", lambda: (False, None))
@@ -339,6 +349,38 @@ def test_plugin_reconnects_saved_tiles(iface, catalog):
     assert stale.isValid()
     # The catalog styles a project saved survive the reconnect.
     assert "style-red" in stale.styleManager().styles()
+    plugin.unload()
+
+
+def test_plugin_restores_saved_parquet(iface, catalog, tmp_path):
+    plugin = portolan_registry_qgis.classFactory(iface)
+    plugin.initGui()
+    project = QgsProject.instance()
+    context = project.transformContext()
+    extent = QgsRectangle(11.095, 44.0, 11.305, 45.0)
+    planned = parquet_layer.plan(
+        f"{catalog['base']}/points.parquet",
+        context,
+        extent,
+        QgsCoordinateReferenceSystem("EPSG:4326"),
+    )
+    prepared = parquet_layer.prepare(planned)
+    layer, _ = parquet_layer.build(prepared, "points")
+    project.addMapLayer(layer)
+    saved = tmp_path / "saved.qgs"
+    assert project.write(str(saved))
+    # The save tells the user that edits to the copy are not kept.
+    assert any("without your edits" in item.text() for item in iface.bar.items())
+    project.clear()
+    # Closing the project removes the layer, and the sweep deletes its copy.
+    assert not prepared.path.exists()
+    assert project.read(str(saved))
+    (restored,) = project.mapLayers().values()
+    # The placeholder opens, so QGIS reports no unavailable layer.
+    assert restored.isValid()
+    wait_for(lambda: restored.featureCount() == 21, timeout=60)
+    assert not parquet_layer.needs_restore(restored)
+    assert sorted(f["id"] for f in restored.getFeatures()) == list(range(10, 31))
     plugin.unload()
 
 

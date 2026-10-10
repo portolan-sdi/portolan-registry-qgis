@@ -295,7 +295,6 @@ class RegistryDock(QDockWidget):
         buttons = QHBoxLayout()
         buttons.setSpacing(6)
         self.add = QPushButton("Add to map")
-        self.add.setToolTip(VIEW_OR_ANALYZE)
         self.add.setIcon(QgsApplication.getThemeIcon("/mActionAddLayer.svg"))
         self.add.setDefault(True)
         self._accent(self.add)
@@ -693,13 +692,13 @@ class RegistryDock(QDockWidget):
         self.download_all.setText(f"Everything in {_short(document.title)}…")
 
         self.assets.clear()
+        # The advice names the PMTiles, so it shows only when the collection has them.
+        advice = VIEW_OR_ANALYZE if layer_io.archive_urls(document) else ""
         for link in document.pmtiles:
             row = QTreeWidgetItem([link.title or "Vector tiles"])
             row.setData(0, _ROLE, _PMTILES_KEY + link.href)
             row.setData(0, BADGE_ROLE, ("PMTiles", "pmtiles", ""))
-            row.setToolTip(
-                0, _asset_tip(link.href, "Layers", ", ".join(link.layers), VIEW_OR_ANALYZE)
-            )
+            row.setToolTip(0, _asset_tip(link.href, "Layers", ", ".join(link.layers), advice))
             self.assets.addTopLevelItem(row)
         # Assets QGIS can open come first, then styles, thumbnails, and sidecars.
         for asset in sorted(document.assets, key=lambda a: a.format is None):
@@ -707,7 +706,7 @@ class RegistryDock(QDockWidget):
             row.setData(0, _ROLE, asset)
             badge = format_label(asset.format, asset.type, asset.href)
             row.setData(0, BADGE_ROLE, (badge, asset.format, human_size(asset.size)))
-            note = VIEW_OR_ANALYZE if asset.format in {"pmtiles", "parquet"} else ""
+            note = advice if asset.format in {"pmtiles", "parquet"} else ""
             row.setToolTip(0, _asset_tip(asset.href, "Roles", ", ".join(asset.roles), note))
             self.assets.addTopLevelItem(row)
         self._fit_assets()
@@ -721,6 +720,7 @@ class RegistryDock(QDockWidget):
         self.tile_styles.setStyleSheet(f"color: {muted(self.palette()).name()};")
         self.tile_styles.setVisible(bool(styles and layer_io.archive_urls(document)))
         self.parquet_extent.setVisible(any(a.format == "parquet" for a in document.assets))
+        self.add.setToolTip(advice)
         self._sync_buttons()
 
     def _select_preferred(self, document: Document) -> None:
@@ -847,17 +847,24 @@ class RegistryDock(QDockWidget):
         name = asset.title or asset.href.rsplit("/", 1)[-1].removesuffix(".parquet")
 
         in_extent = extent is not None
+        document = self._document
+        has_tiles = document is not None and bool(layer_io.archive_urls(document))
 
-        def read(_task: object) -> parquet_layer.Planned:
-            return parquet_layer.plan(asset.href, context, extent, extent_crs, extension_dir)
+        def read(task: Any) -> parquet_layer.Planned:
+            return parquet_layer.plan(
+                asset.href, context, extent, extent_crs, extension_dir, task.isCanceled
+            )
 
         def planned(result: object, error: BaseException | None) -> None:
             if not isinstance(result, parquet_layer.Planned):
-                self._warn(f"DuckDB could not read {asset.href}: {error}")
+                if type(error).__name__ == "InterruptException":
+                    self._info(f"Stopped reading {name}.")
+                else:
+                    self._warn(f"DuckDB could not read {asset.href}: {error}")
                 return
             estimate = result.estimate or 0
             if estimate > CONFIRM_FEATURES and not self._confirm_features(
-                name, estimate, in_extent
+                name, estimate, in_extent, has_tiles
             ):
                 self._info(f"Did not load {name}.")
                 return
@@ -866,12 +873,13 @@ class RegistryDock(QDockWidget):
         self._info(f"Reading {name} with DuckDB…")
         run_task(f"Read {asset.href} with DuckDB", read, planned)
 
-    def _confirm_features(self, name: str, estimate: int, in_extent: bool) -> bool:
+    def _confirm_features(self, name: str, estimate: int, in_extent: bool, has_tiles: bool) -> bool:
         where = "in the map extent" if in_extent else "in the file"
+        advice = f"{VIEW_OR_ANALYZE}\n\n" if has_tiles else ""
         text = (
             f"{name} holds about {estimate:,} features {where}. DuckDB copies them to a "
             "GeoPackage on disk, which takes time and disk space.\n\n"
-            f"{VIEW_OR_ANALYZE}\n\nLoad the features?"
+            f"{advice}Load the features?"
         )
         answer = QMessageBox.question(self, "Load GeoParquet", text)
         return answer == QMessageBox.StandardButton.Yes
@@ -905,7 +913,10 @@ class RegistryDock(QDockWidget):
             QgsProject.instance().addMapLayer(layer)
             notes = [f"Added {result.written.features:,} features from {name}."]
             if refused:
-                notes.append(f"{refused:,} features had a geometry type the layer cannot hold.")
+                notes.append(
+                    f"{refused:,} of them have no geometry, because their geometry type "
+                    f"does not fit a {result.written.geometry_type} layer."
+                )
             (self._warn if refused else self._info)(" ".join(notes))
 
         about = f"about {planned.estimate:,}" if planned.estimate is not None else "the"

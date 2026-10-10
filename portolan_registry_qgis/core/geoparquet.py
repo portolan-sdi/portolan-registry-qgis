@@ -37,6 +37,9 @@ _MULTI = {
     "Polygon": "MultiPolygon",
 }
 DEFAULT_CRS = "OGC:CRS84"
+# The name of the one layer in each GeoPackage. A fixed name lets a saved
+# project open a placeholder in place of a file that is gone.
+LAYER = "features"
 
 
 @dataclass(frozen=True)
@@ -346,13 +349,11 @@ def _type_condition(plan: ReadPlan, layer_type: str) -> tuple[str, bool]:
     return f"ST_GeometryType({shape(plan)})::VARCHAR IN ({allowed})", family in singles
 
 
-def build_refused(
-    plan: ReadPlan, layer_type: str, bbox: tuple[float, float, float, float] | None = None
-) -> tuple[str, list[object]]:
-    """Build a count of the features whose geometry does not fit ``layer_type``."""
-    where, params = _where(plan, bbox)
-    fits, _ = _type_condition(plan, layer_type)
-    return f"SELECT count(*) FROM read_parquet(?) WHERE {where} AND NOT ({fits})", params  # noqa: S608  # nosec B608 - identifiers are quoted, values are parameters
+def _free_name(base: str, taken: set[str]) -> str:
+    name, number = base, 1
+    while name.casefold() in taken:
+        name, number = f"{base}_{number}", number + 1
+    return name
 
 
 def fid_name(plan: ReadPlan) -> str:
@@ -361,11 +362,17 @@ def fid_name(plan: ReadPlan) -> str:
     A GeoPackage keeps its feature id in a column named ``fid``. An
     attribute of that name with other values makes GDAL refuse the write.
     """
+    return _free_name("fid", {column.name.casefold() for column in plan.columns})
+
+
+def geometry_name(plan: ReadPlan) -> str:
+    """Return a GeoPackage geometry column name that no attribute or the FID uses.
+
+    GDAL names the geometry column ``geom``. It drops an attribute of the
+    same name without an error.
+    """
     taken = {column.name.casefold() for column in plan.columns}
-    name, number = "fid", 1
-    while name in taken:
-        name, number = f"fid_{number}", number + 1
-    return name
+    return _free_name("geom", taken | {fid_name(plan).casefold()})
 
 
 def _value(column: Column) -> str:
@@ -400,7 +407,8 @@ def build_copy(
         plan: The read plan.
         path: The GeoPackage to write.
         layer_type: The layer geometry type, from the plan or from
-            ``type_from_first``. Features of another type are left out.
+            ``type_from_first``. A feature of another type keeps its
+            attributes and gets a NULL geometry.
         bbox: Keep only features that intersect this box, in the file's CRS.
         srs: The CRS to record in the GeoPackage, in any form GDAL reads.
 
@@ -409,15 +417,17 @@ def build_copy(
     """
     fits, promote = _type_condition(plan, layer_type)
     geometry = f"ST_Multi({shape(plan)})" if promote else shape(plan)
-    selected = [f"{geometry} AS {quote(plan.geometry)}"]
+    selected = [f"CASE WHEN {fits} THEN {geometry} END AS {quote(plan.geometry)}"]
     selected += [
         f"{_value(column)} AS {quote(output_name(column.name))}" for column in plan.columns
     ]
     where, params = _where(plan, bbox)
+    creation = [f"FID={fid_name(plan)}", f"GEOMETRY_NAME={geometry_name(plan)}"]
     options = [
         "FORMAT GDAL",
         "DRIVER 'GPKG'",
-        f"LAYER_CREATION_OPTIONS ({literal('FID=' + fid_name(plan))})",
+        f"LAYER_NAME {literal(LAYER)}",
+        f"LAYER_CREATION_OPTIONS ({', '.join(literal(option) for option in creation)})",
     ]
     if not layer_type.endswith("Z"):
         # GDAL takes no Z types here. Without the option it reads the type
@@ -427,6 +437,6 @@ def build_copy(
         options.append(f"SRS {literal(srs)}")
     sql = (
         f"COPY (SELECT {', '.join(selected)} FROM read_parquet(?) "  # noqa: S608  # nosec B608 - identifiers are quoted, values are parameters
-        f"WHERE {where} AND {fits}) TO {literal(path)} ({', '.join(options)})"
+        f"WHERE {where}) TO {literal(path)} ({', '.join(options)})"
     )
     return sql, params

@@ -13,6 +13,7 @@ from qgis.core import (
     QgsMapSettings,
     QgsProject,
     QgsRectangle,
+    QgsVectorLayer,
     QgsWkbTypes,
 )
 from qgis.PyQt.QtCore import QDate, QMetaType, QSize, QVariant
@@ -406,22 +407,70 @@ def test_sweep_keeps_files_that_layers_read(catalog):
     assert not kept.path.exists()
 
 
+def test_sweep_covers_earlier_plugin_loads(catalog, monkeypatch):
+    """A plugin reload forgets its session folder. The sweep still finds the files."""
+    project = QgsProject.instance()
+    _, before = _load(_parquet_url(catalog))
+    project.addMapLayer(parquet_layer.build(before, "before")[0])
+    monkeypatch.setattr(parquet_layer, "_session", None)
+    _, after = _load(_parquet_url(catalog))
+    project.addMapLayer(parquet_layer.build(after, "after")[0])
+    assert before.path.parent != after.path.parent
+    project.removeAllMapLayers()
+    parquet_layer.sweep(project)
+    assert not before.path.exists()
+    assert not after.path.exists()
+
+
 def test_remove_stale(tmp_path, monkeypatch):
-    monkeypatch.setattr(parquet_layer, "scratch_folder", lambda: tmp_path)
-    old = tmp_path / "session-old"
+    monkeypatch.setattr(parquet_layer, "scratch_folder", lambda **_: tmp_path)
+    old = tmp_path / "session-1-old"
     old.mkdir()
     (old / "a.gpkg").write_bytes(b"x")
-    recent = tmp_path / "session-recent"
+    # Another QGIS deleted this file during the scan. The scan skips it.
+    (old / "gone.gpkg").symlink_to(tmp_path / "missing")
+    recent = tmp_path / "session-1-recent"
     recent.mkdir()
     (recent / "b.gpkg").write_bytes(b"x")
+    own = tmp_path / f"session-{os.getpid()}-own"
+    own.mkdir()
+    (own / "c.gpkg").write_bytes(b"x")
     other = tmp_path / "duckdb"
     other.mkdir()
     week_ago = (recent / "b.gpkg").stat().st_mtime - parquet_layer.STALE_SECONDS - 60
-    os.utime(old / "a.gpkg", (week_ago, week_ago))
+    for path in (old / "a.gpkg", own / "c.gpkg"):
+        os.utime(path, (week_ago, week_ago))
     parquet_layer.remove_stale()
     assert not old.exists()
     assert recent.exists()
+    # This QGIS's folder stays, however old its files are.
+    assert own.exists()
     assert other.exists()
+
+
+def test_remove_stale_creates_nothing(tmp_path, monkeypatch):
+    missing = tmp_path / "layers"
+    monkeypatch.setattr(parquet_layer, "scratch_folder", lambda **_: missing)
+    parquet_layer.remove_stale()
+    assert not missing.exists()
+
+
+def test_restore_path(tmp_path, monkeypatch):
+    monkeypatch.setattr(parquet_layer, "scratch_folder", lambda **_: tmp_path)
+    assert parquet_layer.restore_path("/data/roads.gpkg") == "/data/roads.gpkg"
+    session = tmp_path / "session-1-abc"
+    session.mkdir()
+    name = "0123456789abcdef0123456789abcdef.gpkg"
+    (session / name).write_bytes(b"x")
+    # A project saved with relative paths keeps a path relative to the project file.
+    saved = f"../../profile/portolan_registry/layers/session-1-abc/{name}"
+    assert parquet_layer.restore_path(saved) == str(session / name)
+    gone = f"/home/u/portolan_registry/layers/session-2-def/{name}|layername=features"
+    restored = parquet_layer.restore_path(gone)
+    assert restored == f"{tmp_path / 'placeholder.gpkg'}|layername=features"
+    placeholder = QgsVectorLayer(restored, "placeholder", "ogr")
+    assert placeholder.isValid()
+    assert placeholder.featureCount() == 0
 
 
 def _download(folder, files):

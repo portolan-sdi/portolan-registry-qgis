@@ -31,9 +31,11 @@ Add the PMTiles to look at the data. They draw at every zoom with the catalog's 
 
 DuckDB copies the GeoParquet features into a GeoPackage in the QGIS profile folder, and the layer reads that file. **Read GeoParquet in the map extent only** copies only the features that intersect the map extent. When a file has a GeoParquet `bbox` column, DuckDB uses its statistics to skip row groups outside the extent. Clear the box to copy the whole file.
 
-Loads have no feature limit. For an estimate of more than 1,000,000 features, the panel asks first, because the copy takes time and about 300 MB of disk per million polygons. To stop a copy, select **Cancel** in the QGIS task manager.
+Loads have no feature limit. For an estimate of more than 1,000,000 features, the panel asks first, because the copy takes time and disk space. To stop a read or a copy, select **Cancel** in the QGIS task manager.
 
-The plugin deletes a GeoPackage when you remove the last layer that reads it. A saved project does not keep GeoParquet layers between sessions. Load the GeoParquet again, or export the layer to keep it.
+A layer stores one geometry type. When a feature has another type, it keeps its attributes and has no geometry, and the panel reports how many features this affects.
+
+The plugin deletes a GeoPackage when you remove the last layer that reads it. A saved project keeps each GeoParquet layer as a link to its source file and its extent. When the project opens, the plugin copies the features again. The new copy drops your edits, so export the layer to keep them.
 
 PMTiles layers read through a loopback server that the plugin runs on `127.0.0.1`. A saved project reconnects them when it reopens.
 

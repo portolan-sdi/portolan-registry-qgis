@@ -149,13 +149,47 @@ def test_mixed_geometries_promote(con, tmp_path):
     assert plan.geometry_type == "Unknown"
     target = tmp_path / "mixed.gpkg"
     written = parquet_query.write_gpkg(con, str(source), plan, str(target), srs="EPSG:4326")
-    assert written == parquet_query.Written(features=2, geometry_type="MultiPoint", refused=1)
+    assert written == parquet_query.Written(features=3, geometry_type="MultiPoint", refused=1)
     rows = con.execute(
         "SELECT fid_1, fid, ST_AsText(geom) FROM ST_Read(?) ORDER BY fid", [str(target)]
     ).fetchall()
     # The attribute named fid keeps its values. The GeoPackage id gets another name.
-    assert [row[1] for row in rows] == [7, 8]
+    assert [row[1] for row in rows] == [7, 8, 9]
     assert rows[0][2] == "MULTIPOINT (1 1)"
+    # The line keeps its attributes and has no geometry.
+    assert rows[2][2] is None
+
+
+def test_declared_type_counts_refused_features(con, tmp_path):
+    """A file that declares Polygon but holds a MultiPolygon used to lose it silently."""
+    source = tmp_path / "declared.parquet"
+    con.execute(
+        f"""COPY (SELECT ST_GeomFromText(w) AS geometry, i FROM (VALUES
+            ('POLYGON ((0 0, 1 0, 1 1, 0 0))', 1),
+            ('MULTIPOLYGON (((0 0, 1 0, 1 1, 0 0)))', 2)) v(w, i))
+        TO '{source}' (FORMAT parquet)"""
+    )
+    schema = [("geometry", "GEOMETRY"), ("i", "INTEGER")]
+    geo = {"columns": {"geometry": {"geometry_types": ["Polygon"]}}}
+    plan = plan_read(schema, json.dumps(geo))
+    written = parquet_query.write_gpkg(con, str(source), plan, str(tmp_path / "declared.gpkg"))
+    assert written == parquet_query.Written(features=2, geometry_type="Polygon", refused=1)
+
+
+def test_attribute_named_geom_survives(con, tmp_path):
+    """GDAL names the geometry column geom, and dropped an attribute of that name."""
+    source = tmp_path / "geom.parquet"
+    con.execute(
+        f"""COPY (SELECT 'label' AS geom, 1 AS geom_1, ST_Point(1, 2) AS geometry)
+        TO '{source}' (FORMAT parquet)"""
+    )
+    plan = parquet_query.read_plan(con, str(source))
+    target = tmp_path / "geom.gpkg"
+    parquet_query.write_gpkg(con, str(source), plan, str(target))
+    row = con.execute(
+        "SELECT geom, geom_1, ST_AsText(geom_2) FROM ST_Read(?)", [str(target)]
+    ).fetchone()
+    assert row == ("label", 1, "POINT (1 2)")
 
 
 def test_ogc_fid_column(con, tmp_path):
@@ -197,6 +231,16 @@ def test_cancel_stops_the_copy(con, tmp_path):
     target = tmp_path / "cancel.gpkg"
     with pytest.raises(duckdb.InterruptException):
         parquet_query.write_gpkg(con, str(source), plan, str(target), cancelled=lambda: True)
+
+
+def test_cancel_stops_a_read(con):
+    import duckdb
+
+    with (
+        pytest.raises(duckdb.InterruptException),
+        parquet_query._cursor(con, lambda: True) as cursor,
+    ):
+        cursor.execute("SELECT sum(a.range * b.range) FROM range(100000) a, range(100000) b")
 
 
 def test_close_is_idempotent():

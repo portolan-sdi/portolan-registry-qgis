@@ -10,7 +10,9 @@ it when it is not.
 
 from __future__ import annotations
 
+import contextlib
 import os
+import sqlite3
 import sys
 import threading
 from dataclasses import dataclass
@@ -21,13 +23,12 @@ from portolan_registry_qgis.core.geoparquet import (
     build_copy,
     build_estimate,
     build_first_type,
-    build_refused,
     plan_read,
     type_from_first,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
 
 Bbox = tuple[float, float, float, float]
 
@@ -123,10 +124,35 @@ def close() -> None:
             _connection = None
 
 
-def read_plan(con: Any, url: str) -> ReadPlan:
-    """Read a file's schema and GeoParquet metadata and plan the query."""
+def _interrupt_when(cancelled: Callable[[], bool], cursor: Any, stop: threading.Event) -> None:
+    while not stop.wait(0.1):
+        if cancelled():
+            cursor.interrupt()
+            return
+
+
+@contextlib.contextmanager
+def _cursor(con: Any, cancelled: Callable[[], bool] | None = None) -> Iterator[Any]:
+    """Yield a cursor that a watcher thread interrupts when ``cancelled`` returns True.
+
+    The running query then raises ``duckdb.InterruptException``.
+    """
     cursor = con.cursor()
+    stop = threading.Event()
+    if cancelled is not None:
+        threading.Thread(
+            target=_interrupt_when, args=(cancelled, cursor, stop), daemon=True
+        ).start()
     try:
+        yield cursor
+    finally:
+        stop.set()
+        cursor.close()
+
+
+def read_plan(con: Any, url: str, cancelled: Callable[[], bool] | None = None) -> ReadPlan:
+    """Read a file's schema and GeoParquet metadata and plan the query."""
+    with _cursor(con, cancelled) as cursor:
         schema = [
             (str(row[0]), str(row[1]))
             for row in cursor.execute("DESCRIBE SELECT * FROM read_parquet(?)", [url]).fetchall()
@@ -134,12 +160,16 @@ def read_plan(con: Any, url: str) -> ReadPlan:
         geo = cursor.execute(
             "SELECT value FROM parquet_kv_metadata(?) WHERE key = 'geo' LIMIT 1", [url]
         ).fetchall()
-    finally:
-        cursor.close()
     return plan_read(schema, geo[0][0] if geo else None)
 
 
-def estimate(con: Any, url: str, plan: ReadPlan, bbox: Bbox | None = None) -> int | None:
+def estimate(
+    con: Any,
+    url: str,
+    plan: ReadPlan,
+    bbox: Bbox | None = None,
+    cancelled: Callable[[], bool] | None = None,
+) -> int | None:
     """Return about how many features a copy of ``url`` in ``bbox`` holds.
 
     The count is exact without a box. With a box it counts the rows whose
@@ -153,11 +183,8 @@ def estimate(con: Any, url: str, plan: ReadPlan, bbox: Bbox | None = None) -> in
     if query is None:
         return None
     sql, params = query
-    cursor = con.cursor()
-    try:
+    with _cursor(con, cancelled) as cursor:
         return int(cursor.execute(sql, [url, *params]).fetchone()[0])
-    finally:
-        cursor.close()
 
 
 @dataclass(frozen=True)
@@ -166,14 +193,24 @@ class Written:
 
     features: int
     geometry_type: str
+    # Features whose geometry type does not fit the layer. They keep their
+    # attributes and have a NULL geometry.
     refused: int
 
 
-def _interrupt_when(cancelled: Callable[[], bool], cursor: Any, stop: threading.Event) -> None:
-    while not stop.wait(0.1):
-        if cancelled():
-            cursor.interrupt()
-            return
+def _null_geometries(path: str) -> int:
+    """Count the features with a NULL geometry in a GeoPackage.
+
+    SQLite reads only the record headers to test for NULL, so the count
+    stays fast on a large local file.
+    """
+    with contextlib.closing(sqlite3.connect(path)) as gpkg:
+        row = gpkg.execute("SELECT table_name, column_name FROM gpkg_geometry_columns").fetchone()
+        if row is None:
+            return 0
+        table, column = (str(part).replace('"', '""') for part in row)
+        sql = f'SELECT count(*) FROM "{table}" WHERE "{column}" IS NULL'  # noqa: S608 - names come from the GeoPackage and are quoted
+        return int(gpkg.execute(sql).fetchone()[0])
 
 
 def write_gpkg(
@@ -188,8 +225,8 @@ def write_gpkg(
     """Copy the features of ``url`` into a new GeoPackage at ``path``.
 
     A layer holds one geometry type. When the file declares none, the first
-    geometry picks it, and the function counts the features of other types
-    that the copy leaves out.
+    geometry picks it. A feature of another type keeps its attributes, gets
+    a NULL geometry, and counts as refused.
 
     Args:
         con: The DuckDB connection.
@@ -201,23 +238,12 @@ def write_gpkg(
         cancelled: Polled while the queries run. When it returns True, the
             running query stops and raises ``duckdb.InterruptException``.
     """
-    cursor = con.cursor()
-    stop = threading.Event()
-    if cancelled is not None:
-        threading.Thread(
-            target=_interrupt_when, args=(cancelled, cursor, stop), daemon=True
-        ).start()
-    try:
+    with _cursor(con, cancelled) as cursor:
         layer_type = plan.geometry_type
-        refused = 0
         if layer_type == "Unknown":
             sql, params = build_first_type(plan, bbox)
             layer_type = type_from_first(cursor.execute(sql, [url, *params]).fetchone())
-            sql, params = build_refused(plan, layer_type, bbox)
-            refused = int(cursor.execute(sql, [url, *params]).fetchone()[0])
         sql, params = build_copy(plan, path, layer_type, bbox, srs)
         written = cursor.execute(sql, [url, *params]).fetchone()
-        return Written(int(written[0]) if written else 0, layer_type, refused)
-    finally:
-        stop.set()
-        cursor.close()
+    features = int(written[0]) if written else 0
+    return Written(features, layer_type, _null_geometries(path) if features else 0)

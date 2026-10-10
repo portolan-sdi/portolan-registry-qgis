@@ -10,6 +10,7 @@ from portolan_registry_qgis.core.geoparquet import (
     build_estimate,
     fid_name,
     field_kind,
+    geometry_name,
     layer_geometry_type,
     plan_read,
     type_from_first,
@@ -67,9 +68,9 @@ def test_copy_uses_the_covering_column():
     assert "LIMIT" not in sql
     assert params == [-75.15, -75.17, 39.96, 39.94, -75.17, 39.94, -75.15, 39.96]
     assert 'CAST("c_dig1desc" AS VARCHAR) AS "c_dig1desc"' in sql
-    # The layer is multi, so single polygons are promoted and points are left out.
-    assert 'ST_Multi("geometry") AS "geometry"' in sql
-    assert "IN ('POLYGON', 'MULTIPOLYGON')" in sql
+    # The layer is multi, so single polygons are promoted. Points get a NULL geometry.
+    assert "IN ('POLYGON', 'MULTIPOLYGON') THEN ST_Multi(\"geometry\") END AS" in sql
+    assert "LAYER_NAME 'features'" in sql
     assert "GEOMETRY_TYPE 'MULTIPOLYGON'" in sql
     assert "TO '/tmp/x.gpkg'" in sql
 
@@ -78,7 +79,7 @@ def test_copy_without_bbox_or_covering():
     plan = plan_read([("geom", "BLOB"), ("a", "INTEGER")], None)
     sql, params = build_copy(plan, "out.gpkg", "Point")
     assert plan.geometry_is_wkb_blob
-    assert 'ST_GeomFromWKB("geom") AS "geom"' in sql
+    assert 'THEN ST_GeomFromWKB("geom") END AS "geom"' in sql
     assert "ST_Multi" not in sql
     assert "IN ('POINT')" in sql
     assert "ST_Intersects" not in sql
@@ -95,7 +96,7 @@ def test_copy_options():
     assert "GEOMETRY_TYPE" not in sql
     assert "SRS 'EPSG:2272'" in sql
     assert "TO 'it''s.gpkg'" in sql
-    assert "LAYER_CREATION_OPTIONS ('FID=fid_1')" in sql
+    assert "LAYER_CREATION_OPTIONS ('FID=fid_1', 'GEOMETRY_NAME=geom')" in sql
     assert 'CAST("n" AS DOUBLE) AS "n"' in sql
 
 
@@ -103,6 +104,12 @@ def test_fid_name():
     assert fid_name(plan_read([("g", "GEOMETRY")], None)) == "fid"
     schema = [("g", "GEOMETRY"), ("fid", "INTEGER"), ("fid_1", "INTEGER")]
     assert fid_name(plan_read(schema, None)) == "fid_2"
+
+
+def test_geometry_name():
+    assert geometry_name(plan_read([("geometry", "GEOMETRY")], None)) == "geom"
+    schema = [("geometry", "GEOMETRY"), ("GEOM", "VARCHAR"), ("geom_1", "INTEGER")]
+    assert geometry_name(plan_read(schema, None)) == "geom_2"
 
 
 def test_estimate():

@@ -11,8 +11,8 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from qgis.core import QgsApplication, QgsBlockingNetworkRequest, QgsTask
-from qgis.PyQt.QtCore import QUrl
+from qgis.core import QgsApplication, QgsBlockingNetworkRequest, QgsFeedback, QgsTask
+from qgis.PyQt.QtCore import Qt, QUrl
 from qgis.PyQt.QtNetwork import QNetworkRequest
 
 if TYPE_CHECKING:
@@ -52,26 +52,51 @@ def fetch_range(url: str, offset: int, length: int) -> bytes:
     """Return ``length`` bytes of ``url`` from ``offset``.
 
     A server that ignores the Range header answers 200 with the whole body.
-    The function slices that body, so the caller always gets the asked range.
+    QGIS 3.38 and later abort that reply. QGIS 3.34 and 3.36 read it to the
+    end, so the function cancels it when the body grows past ``length``.
+    Without the cancel, every tile read downloads the whole archive.
 
     Raises:
-        NetworkError: The request failed.
+        NetworkError: The request failed, or the server ignores ranges.
     """
     request = QNetworkRequest(QUrl(url))
     request.setRawHeader(b"Range", f"bytes={offset}-{offset + length - 1}".encode())
     # Qt's disk cache keys on the URL alone. A cached range would answer a
     # request for a different range, so ranges bypass the cache both ways.
     request.setAttribute(QNetworkRequest.Attribute.CacheSaveControlAttribute, False)
+    feedback = QgsFeedback()
     blocking = QgsBlockingNetworkRequest()
-    code = blocking.get(request, forceRefresh=True)
+    check = cancel_past(length, feedback)
+    # Direct, because the calling thread runs no event loop. The slot
+    # disconnects before the function returns, because the request's
+    # destructor aborts its reply and emits progress on whatever thread
+    # collects it.
+    blocking.downloadProgress.connect(check, Qt.ConnectionType.DirectConnection)
+    try:
+        code = blocking.get(request, forceRefresh=True, feedback=feedback)
+    finally:
+        blocking.downloadProgress.disconnect(check)
+    reply = blocking.reply()
+    status = reply.attribute(QNetworkRequest.Attribute.HttpStatusCodeAttribute)
+    if feedback.isCanceled() or status == 200:
+        raise NetworkError(f"{url}: the server ignores HTTP range requests")
     if code != QgsBlockingNetworkRequest.ErrorCode.NoError:
         raise NetworkError(f"{url}: {blocking.errorMessage()}")
-    reply = blocking.reply()
-    body = bytes(reply.content())
-    status = reply.attribute(QNetworkRequest.Attribute.HttpStatusCodeAttribute)
-    if status == 200:
-        return body[offset : offset + length]
-    return body
+    return bytes(reply.content())
+
+
+def cancel_past(length: int, feedback: QgsFeedback) -> Callable[[int, int], None]:
+    """Return a ``downloadProgress`` slot that cancels a body longer than ``length``.
+
+    A 206 reply holds ``length`` bytes or fewer. More bytes, received or
+    announced, mean that the server sends the whole file.
+    """
+
+    def check(received: int, total: int) -> None:
+        if received > length or total > length:
+            feedback.cancel()
+
+    return check
 
 
 def range_fetcher(location: str) -> Callable[[int, int], bytes]:

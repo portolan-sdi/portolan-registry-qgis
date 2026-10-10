@@ -11,6 +11,14 @@ authentication settings.
 
 The server binds 127.0.0.1 on a free port and answers only for archives the
 plugin registered, each under a random token.
+
+The server speaks HTTP/1.1, so QGIS keeps its tile connections open. Each
+connection has one handler thread, and QGIS gives each thread its own network
+manager. A kept connection therefore keeps its connection to the remote host,
+and a tile read does not pay for a new TLS handshake.
+
+Tile responses allow caching for a day. A changed archive gets a new token,
+so new layers of it do not draw tiles cached from the old archive.
 """
 
 from __future__ import annotations
@@ -87,8 +95,15 @@ def read_tile(archive: Archive, z: int, x: int, y: int) -> bytes | None:
     return archive.reader.tile(z, x, y)
 
 
+# The tokens last one QGIS session, so a day outlives every tile URL.
+CACHE_CONTROL = "max-age=86400"
+
+
 class _Handler(BaseHTTPRequestHandler):
     server: _Server
+    protocol_version = "HTTP/1.1"
+    # Close a connection that QGIS leaves idle, so its thread ends.
+    timeout = 60
 
     def do_GET(self) -> None:  # noqa: N802 - name set by BaseHTTPRequestHandler
         parts = self.path.split("?", 1)[0].strip("/").split("/")
@@ -110,11 +125,13 @@ class _Handler(BaseHTTPRequestHandler):
             # An absent tile is empty ocean, not an error. 204 keeps QGIS from
             # logging a network failure for each one.
             self.send_response(204)
+            self.send_header("Cache-Control", CACHE_CONTROL)
             self.end_headers()
             return
         self.send_response(200)
         self.send_header("Content-Type", "application/vnd.mapbox-vector-tile")
         self.send_header("Content-Length", str(len(tile)))
+        self.send_header("Cache-Control", CACHE_CONTROL)
         self.end_headers()
         self.wfile.write(tile)
 
@@ -136,7 +153,8 @@ class TileServer:
     def __init__(self) -> None:
         self._server: _Server | None = None
         self._thread: threading.Thread | None = None
-        self._tokens: dict[str, str] = {}
+        # Each archive URL maps to its token and the archive behind it.
+        self._known: dict[str, tuple[str, Archive]] = {}
         self._lock = threading.Lock()
 
     def _ensure_started(self) -> _Server:
@@ -149,13 +167,24 @@ class TileServer:
         return self._server
 
     def register(self, archive: Archive) -> str:
-        """Serve ``archive`` and return its XYZ URL template."""
+        """Serve ``archive`` and return its XYZ URL template.
+
+        An archive with the same URL and header as a registered one keeps the
+        registered reader and token. Its directory cache and the tiles QGIS
+        cached stay valid. A changed header means that the archive changed, so
+        it gets a new token. Older layers of that URL read the new archive.
+        """
         with self._lock:
             server = self._ensure_started()
-            token = self._tokens.get(archive.url)
-            if token is None:
+            known = self._known.get(archive.url)
+            if known is not None and known[1].reader.header() == archive.reader.header():
+                token, archive = known
+            else:
                 token = secrets.token_urlsafe(16)
-                self._tokens[archive.url] = token
+                self._known[archive.url] = (token, archive)
+                for old, served in server.archives.items():
+                    if served.url == archive.url:
+                        server.archives[old] = archive
             server.archives[token] = archive
             port = server.server_address[1]
         return f"http://127.0.0.1:{port}/{token}/{{z}}/{{x}}/{{y}}.pbf"
@@ -174,9 +203,12 @@ class TileServer:
         """Shut the server down. Layers that use it stop drawing."""
         with self._lock:
             if self._server is not None:
+                # A kept connection outlives the listener. With no archives,
+                # it answers 404.
+                self._server.archives.clear()
                 self._server.shutdown()
                 self._server.server_close()
             if self._thread is not None:
                 self._thread.join(timeout=5)
             self._server = self._thread = None
-            self._tokens.clear()
+            self._known.clear()

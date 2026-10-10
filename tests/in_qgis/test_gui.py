@@ -234,6 +234,42 @@ def test_parquet_in_a_small_extent(iface, server, catalog):
     dock.disconnect_canvas()
 
 
+def test_large_parquet_asks_first(iface, server, catalog, monkeypatch):
+    asked = []
+    answers = [QMessageBox.StandardButton.No, QMessageBox.StandardButton.Yes]
+
+    def question(_parent, _title, text):
+        asked.append(text)
+        return answers[len(asked) - 1]
+
+    monkeypatch.setattr(dock_module, "CONFIRM_FEATURES", 100)
+    monkeypatch.setattr(dock_module.QMessageBox, "question", question)
+    dock = open_dock(iface, server, catalog)
+    open_collection(dock)
+    dock.parquet_extent.setChecked(False)
+    dock.assets.clearSelection()
+    asset_row(dock, "data").setSelected(True)
+    dock.add.click()
+    wait_for(lambda: len(asked) == 1, timeout=60)
+    assert "about 200 features in the file" in asked[0]
+    assert QgsProject.instance().mapLayers() == {}
+    dock.add.click()
+    wait_for(lambda: len(QgsProject.instance().mapLayers()) == 1, timeout=60)
+    (layer,) = QgsProject.instance().mapLayers().values()
+    assert layer.featureCount() == 200
+    dock.disconnect_canvas()
+
+
+def test_tooltips_say_which_asset_to_use(iface, server, catalog):
+    dock = open_dock(iface, server, catalog)
+    open_collection(dock)
+    assert dock_module.VIEW_OR_ANALYZE in dock.add.toolTip()
+    assert dock_module.VIEW_OR_ANALYZE in asset_row(dock, "data").toolTip(0)
+    assert dock_module.VIEW_OR_ANALYZE in asset_row(dock, "Point tiles").toolTip(0)
+    assert dock_module.VIEW_OR_ANALYZE not in asset_row(dock, "geojson").toolTip(0)
+    dock.disconnect_canvas()
+
+
 def test_missing_duckdb_shows_install_help(iface, server, catalog, monkeypatch):
     shown = []
     monkeypatch.setattr(dock_module.parquet_query, "duckdb_status", lambda: (False, None))

@@ -12,6 +12,7 @@ from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction
 
 from portolan_registry_qgis.core import parquet_query
+from portolan_registry_qgis.qgis_io import parquet_layer
 from portolan_registry_qgis.qgis_io.layers import PMTILES_PROPERTY, vector_tile_layer
 from portolan_registry_qgis.qgis_io.network import run_task
 from portolan_registry_qgis.qgis_io.tileserver import Archive, TileServer, open_archive
@@ -40,11 +41,17 @@ class PortolanRegistryPlugin:
         self.iface.addPluginToWebMenu(MENU, self.action)
         self.iface.addWebToolBarIcon(self.action)
         QgsProject.instance().layersAdded.connect(self._reconnect)
+        # A GeoParquet layer reads a GeoPackage in the scratch folder. The
+        # file goes when the last layer that reads it is removed.
+        QgsProject.instance().layersRemoved.connect(self._sweep)
+        parquet_layer.remove_stale()
 
     def unload(self) -> None:
         """Remove everything initGui added. QGIS calls this on unload."""
         with contextlib.suppress(TypeError):
             QgsProject.instance().layersAdded.disconnect(self._reconnect)
+        with contextlib.suppress(TypeError):
+            QgsProject.instance().layersRemoved.disconnect(self._sweep)
         if self.dock is not None:
             self.dock.disconnect_canvas()
             self.iface.removeDockWidget(self.dock)
@@ -57,6 +64,11 @@ class PortolanRegistryPlugin:
             self.action = None
         self.server.stop()
         parquet_query.close()
+        parquet_layer.close_session()
+
+    @staticmethod
+    def _sweep(_layer_ids: list[str]) -> None:
+        parquet_layer.sweep()
 
     def _toggle(self, visible: bool) -> None:
         if self.dock is None:

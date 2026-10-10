@@ -85,6 +85,10 @@ _PMTILES_KEY = "\x00pmtiles:"
 # tree reads the child documents of each page it shows, for their icons.
 CATALOG_PAGE = 25
 NODE_PAGE = 50
+# A GeoParquet load above this many features asks first. A load of any size
+# works, but it takes time and disk space.
+CONFIRM_FEATURES = 1_000_000
+VIEW_OR_ANALYZE = "For quick viewing, add the PMTiles. For analysis, load the GeoParquet."
 _KIND_ICONS = {
     "catalog": "/mIconFolder.svg",
     "collection": "/mIconLayerTree.svg",
@@ -269,8 +273,8 @@ class RegistryDock(QDockWidget):
         self.parquet_extent = QCheckBox("Read GeoParquet in the map extent only")
         self.parquet_extent.setChecked(True)
         self.parquet_extent.setToolTip(
-            "DuckDB reads only the features that intersect the current map extent. "
-            f"Every read stops at {parquet_layer.DEFAULT_LIMIT:,} features."
+            "DuckDB copies only the features that intersect the current map extent. "
+            "Clear the box to copy the whole file."
         )
         layout.addWidget(self.parquet_extent)
         layout.addStretch(1)
@@ -291,6 +295,7 @@ class RegistryDock(QDockWidget):
         buttons = QHBoxLayout()
         buttons.setSpacing(6)
         self.add = QPushButton("Add to map")
+        self.add.setToolTip(VIEW_OR_ANALYZE)
         self.add.setIcon(QgsApplication.getThemeIcon("/mActionAddLayer.svg"))
         self.add.setDefault(True)
         self._accent(self.add)
@@ -692,7 +697,9 @@ class RegistryDock(QDockWidget):
             row = QTreeWidgetItem([link.title or "Vector tiles"])
             row.setData(0, _ROLE, _PMTILES_KEY + link.href)
             row.setData(0, BADGE_ROLE, ("PMTiles", "pmtiles", ""))
-            row.setToolTip(0, _asset_tip(link.href, "Layers", ", ".join(link.layers)))
+            row.setToolTip(
+                0, _asset_tip(link.href, "Layers", ", ".join(link.layers), VIEW_OR_ANALYZE)
+            )
             self.assets.addTopLevelItem(row)
         # Assets QGIS can open come first, then styles, thumbnails, and sidecars.
         for asset in sorted(document.assets, key=lambda a: a.format is None):
@@ -700,7 +707,8 @@ class RegistryDock(QDockWidget):
             row.setData(0, _ROLE, asset)
             badge = format_label(asset.format, asset.type, asset.href)
             row.setData(0, BADGE_ROLE, (badge, asset.format, human_size(asset.size)))
-            row.setToolTip(0, _asset_tip(asset.href, "Roles", ", ".join(asset.roles)))
+            note = VIEW_OR_ANALYZE if asset.format in {"pmtiles", "parquet"} else ""
+            row.setToolTip(0, _asset_tip(asset.href, "Roles", ", ".join(asset.roles), note))
             self.assets.addTopLevelItem(row)
         self._fit_assets()
         self._select_preferred(document)
@@ -838,33 +846,71 @@ class RegistryDock(QDockWidget):
         extension_dir = parquet_layer.extension_directory()
         name = asset.title or asset.href.rsplit("/", 1)[-1].removesuffix(".parquet")
 
-        def read(task: Any) -> parquet_layer.Prepared:
-            return parquet_layer.prepare(
-                asset.href,
-                context,
-                extent,
-                extent_crs,
-                extension_dir=extension_dir,
-                cancelled=task.isCanceled,
-            )
+        in_extent = extent is not None
+
+        def read(_task: object) -> parquet_layer.Planned:
+            return parquet_layer.plan(asset.href, context, extent, extent_crs, extension_dir)
+
+        def planned(result: object, error: BaseException | None) -> None:
+            if not isinstance(result, parquet_layer.Planned):
+                self._warn(f"DuckDB could not read {asset.href}: {error}")
+                return
+            estimate = result.estimate or 0
+            if estimate > CONFIRM_FEATURES and not self._confirm_features(
+                name, estimate, in_extent
+            ):
+                self._info(f"Did not load {name}.")
+                return
+            self._copy_parquet(result, name, extension_dir, in_extent)
+
+        self._info(f"Reading {name} with DuckDB…")
+        run_task(f"Read {asset.href} with DuckDB", read, planned)
+
+    def _confirm_features(self, name: str, estimate: int, in_extent: bool) -> bool:
+        where = "in the map extent" if in_extent else "in the file"
+        text = (
+            f"{name} holds about {estimate:,} features {where}. DuckDB copies them to a "
+            "GeoPackage on disk, which takes time and disk space.\n\n"
+            f"{VIEW_OR_ANALYZE}\n\nLoad the features?"
+        )
+        answer = QMessageBox.question(self, "Load GeoParquet", text)
+        return answer == QMessageBox.StandardButton.Yes
+
+    def _copy_parquet(
+        self, planned: parquet_layer.Planned, name: str, extension_dir: str, in_extent: bool
+    ) -> None:
+        def copy(task: Any) -> parquet_layer.Prepared:
+            return parquet_layer.prepare(planned, extension_dir, cancelled=task.isCanceled)
 
         def done(result: object, error: BaseException | None) -> None:
             if not isinstance(result, parquet_layer.Prepared):
-                self._warn(f"DuckDB could not read {asset.href}: {error}")
+                if type(error).__name__ == "InterruptException":
+                    self._info(f"Stopped the copy of {name}.")
+                else:
+                    self._warn(f"DuckDB could not read {planned.url}: {error}")
                 return
-            layer, refused = parquet_layer.build(result, name)
+            if not result.written.features:
+                parquet_layer.discard_path(result.path)
+                self._info(
+                    "No feature intersects the map extent."
+                    if in_extent
+                    else f"{name} holds no features."
+                )
+                return
+            try:
+                layer, refused = parquet_layer.build(result, name)
+            except OSError as failure:
+                self._warn(str(failure))
+                return
             QgsProject.instance().addMapLayer(layer)
-            notes = [f"Added {layer.featureCount():,} features from {name}."]
-            if result.truncated:
-                notes.append(f"The read stopped at {parquet_layer.DEFAULT_LIMIT:,} features.")
+            notes = [f"Added {result.written.features:,} features from {name}."]
             if refused:
-                notes.append(f"{refused} features had a geometry type the layer cannot hold.")
-            if not result.features and extent is not None:
-                notes.append("No feature intersects the map extent.")
-            (self._warn if result.truncated or refused else self._info)(" ".join(notes))
+                notes.append(f"{refused:,} features had a geometry type the layer cannot hold.")
+            (self._warn if refused else self._info)(" ".join(notes))
 
-        self._info(f"Reading {name} with DuckDB…")
-        run_task(f"Read {asset.href} with DuckDB", read, done)
+        about = f"about {planned.estimate:,}" if planned.estimate is not None else "the"
+        self._info(f"Copying {about} features of {name} with DuckDB…")
+        run_task(f"Copy {planned.url} with DuckDB", copy, done)
 
     def _duckdb_help(self, version: str | None) -> None:
         minimum = ".".join(str(part) for part in parquet_query.MINIMUM_DUCKDB)
@@ -1027,10 +1073,12 @@ def _short(title: str, limit: int = 28) -> str:
     return title if len(title) <= limit else title[: limit - 1].rstrip() + "…"
 
 
-def _asset_tip(href: str, label: str, value: str) -> str:
+def _asset_tip(href: str, label: str, value: str, note: str = "") -> str:
     lines = [html.escape(href)]
     if value:
         lines.append(f"{label}: {html.escape(value)}")
+    if note:
+        lines.append(html.escape(note))
     return "<br>".join(lines)
 
 

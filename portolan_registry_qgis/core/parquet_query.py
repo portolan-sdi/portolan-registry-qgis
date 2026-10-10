@@ -1,6 +1,8 @@
-"""Query GeoParquet over HTTP with DuckDB.
+"""Copy GeoParquet over HTTP into a GeoPackage with DuckDB.
 
-DuckDB is an external dependency. QGIS does not ship it, so every function
+DuckDB writes the GeoPackage through the GDAL that its spatial extension
+bundles, so no Python code touches a feature. QGIS then opens the file
+through OGR. DuckDB is an external dependency. QGIS does not ship it, so every function
 imports it lazily and the plugin loads without it. ``duckdb_status`` reports
 whether a usable version is present, and the GUI tells the user how to install
 it when it is not.
@@ -11,12 +13,23 @@ from __future__ import annotations
 import os
 import sys
 import threading
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from portolan_registry_qgis.core.geoparquet import ReadPlan, build_select, plan_read
+from portolan_registry_qgis.core.geoparquet import (
+    ReadPlan,
+    build_copy,
+    build_estimate,
+    build_first_type,
+    build_refused,
+    plan_read,
+    type_from_first,
+)
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable
+
+Bbox = tuple[float, float, float, float]
 
 MINIMUM_DUCKDB = (1, 5, 0)
 MEMORY_LIMIT = "4GB"
@@ -126,31 +139,85 @@ def read_plan(con: Any, url: str) -> ReadPlan:
     return plan_read(schema, geo[0][0] if geo else None)
 
 
-def iter_rows(
+def estimate(con: Any, url: str, plan: ReadPlan, bbox: Bbox | None = None) -> int | None:
+    """Return about how many features a copy of ``url`` in ``bbox`` holds.
+
+    The count is exact without a box. With a box it counts the rows whose
+    bbox overlaps it, an upper bound.
+
+    Returns:
+        The estimate, or None when the file has no covering column to count
+        a box with cheaply.
+    """
+    query = build_estimate(plan, bbox)
+    if query is None:
+        return None
+    sql, params = query
+    cursor = con.cursor()
+    try:
+        return int(cursor.execute(sql, [url, *params]).fetchone()[0])
+    finally:
+        cursor.close()
+
+
+@dataclass(frozen=True)
+class Written:
+    """What ``write_gpkg`` put in the GeoPackage."""
+
+    features: int
+    geometry_type: str
+    refused: int
+
+
+def _interrupt_when(cancelled: Callable[[], bool], cursor: Any, stop: threading.Event) -> None:
+    while not stop.wait(0.1):
+        if cancelled():
+            cursor.interrupt()
+            return
+
+
+def write_gpkg(
     con: Any,
     url: str,
     plan: ReadPlan,
-    bbox: tuple[float, float, float, float] | None = None,
-    limit: int | None = None,
-    batch: int = 10_000,
+    path: str,
+    bbox: Bbox | None = None,
+    srs: str | None = None,
     cancelled: Callable[[], bool] | None = None,
-) -> Iterator[list[tuple[Any, ...]]]:
-    """Yield batches of rows. Each row is ``(wkb, *attribute values)``.
+) -> Written:
+    """Copy the features of ``url`` into a new GeoPackage at ``path``.
 
-    The rows hold each column of ``plan.columns`` in order. A cancelled read
-    stops at the next batch and interrupts the query.
+    A layer holds one geometry type. When the file declares none, the first
+    geometry picks it, and the function counts the features of other types
+    that the copy leaves out.
+
+    Args:
+        con: The DuckDB connection.
+        url: The GeoParquet file.
+        plan: The file's read plan.
+        path: The GeoPackage to write. It must not exist.
+        bbox: Keep only features that intersect this box, in the file's CRS.
+        srs: The CRS to record in the GeoPackage.
+        cancelled: Polled while the queries run. When it returns True, the
+            running query stops and raises ``duckdb.InterruptException``.
     """
-    sql, params = build_select(plan, bbox, limit)
     cursor = con.cursor()
+    stop = threading.Event()
+    if cancelled is not None:
+        threading.Thread(
+            target=_interrupt_when, args=(cancelled, cursor, stop), daemon=True
+        ).start()
     try:
-        cursor.execute(sql, [url, *params])
-        while True:
-            if cancelled is not None and cancelled():
-                cursor.interrupt()
-                return
-            rows = cursor.fetchmany(batch)
-            if not rows:
-                return
-            yield rows
+        layer_type = plan.geometry_type
+        refused = 0
+        if layer_type == "Unknown":
+            sql, params = build_first_type(plan, bbox)
+            layer_type = type_from_first(cursor.execute(sql, [url, *params]).fetchone())
+            sql, params = build_refused(plan, layer_type, bbox)
+            refused = int(cursor.execute(sql, [url, *params]).fetchone()[0])
+        sql, params = build_copy(plan, path, layer_type, bbox, srs)
+        written = cursor.execute(sql, [url, *params]).fetchone()
+        return Written(int(written[0]) if written else 0, layer_type, refused)
     finally:
+        stop.set()
         cursor.close()

@@ -66,13 +66,15 @@ def test_live_source_coop_pmtiles():
 def test_live_source_coop_geoparquet_in_an_extent():
     """The file that failed through OGR. DuckDB reads one block of Center City."""
     context = QgsProject.instance().transformContext()
-    prepared = parquet_layer.prepare(
+    planned = parquet_layer.plan(
         f"{PHL}/land_use.parquet",
         context,
         QgsRectangle(-75.17, 39.94, -75.15, 39.96),
         QgsCoordinateReferenceSystem("EPSG:4326"),
     )
-    layer, refused = parquet_layer.build(prepared, "land_use")
+    assert planned.estimate is not None
+    assert planned.estimate >= 7332
+    layer, refused = parquet_layer.build(parquet_layer.prepare(planned), "land_use")
     assert refused == 0
     assert layer.featureCount() == 7332
     assert layer.wkbType() == QgsWkbTypes.Type.MultiPolygon

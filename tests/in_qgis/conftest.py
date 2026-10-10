@@ -130,13 +130,19 @@ def _raster(path: Path) -> None:
 
 
 def _parquet(path: Path) -> None:
-    """Write 200 points as GeoParquet with a bbox covering column, as DuckDB does."""
+    """Write 200 points as GeoParquet with a bbox covering column, as DuckDB does.
+
+    The date and timestamp columns guard against the memory-layer bug that
+    loaded such files with no features.
+    """
     import duckdb
 
     con = duckdb.connect()
     con.execute("INSTALL spatial; LOAD spatial;")
     con.execute(
         f"""COPY (SELECT i AS id, 'p' || i AS name, i * 0.5 AS score,
+            DATE '2026-01-01' + i::INT AS day,
+            TIMESTAMP '2026-01-01 03:00:00' + to_hours(i::BIGINT) AS seen,
             ST_Point(11 + i * 0.01, 44 + i * 0.005) AS geometry,
             {{'xmin': 11 + i * 0.01, 'ymin': 44 + i * 0.005,
               'xmax': 11 + i * 0.01, 'ymax': 44 + i * 0.005}} AS bbox

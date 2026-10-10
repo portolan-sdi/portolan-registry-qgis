@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import os
+import threading
+import time
 import urllib.parse
 import urllib.request
 from dataclasses import replace
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
+from osgeo import gdal
 from qgis.core import (
+    QgsApplication,
     QgsCoordinateReferenceSystem,
     QgsCoordinateTransform,
     QgsMapRendererParallelJob,
@@ -20,9 +25,9 @@ from qgis.PyQt.QtCore import QDate, QMetaType, QSize, QVariant
 from qgis.PyQt.QtGui import QColor, QImage
 
 from portolan_registry_qgis.core import parquet_query
-from portolan_registry_qgis.core.download import PlannedFile, local_path
+from portolan_registry_qgis.core.download import Plan, PlannedFile, local_path, plan
 from portolan_registry_qgis.core.stac import read_document
-from portolan_registry_qgis.qgis_io import layers, parquet_layer
+from portolan_registry_qgis.qgis_io import downloader, layers, parquet_layer
 from portolan_registry_qgis.qgis_io.downloader import DownloadJob, target_path
 from portolan_registry_qgis.qgis_io.network import (
     NetworkError,
@@ -251,7 +256,11 @@ def test_tiles_carry_every_style_as_a_named_style(catalog, collection, server):
     assert _blue_pixels(image) > 0
     assert _red_pixels(image) == 0
     manager.setCurrentStyle(layers.DEFAULT_STYLE_NAME)
-    assert _red_pixels(_render(layer, BOLOGNA)) == 0
+    # QGIS colors a new vector tile layer from a random palette, which can
+    # land on a red, so check the colors the catalog styles set instead.
+    colors = {s.symbol().color().name() for s in layer.renderer().styles() if s.symbol()}
+    assert colors
+    assert colors.isdisjoint({"#ff0000", "#0000ff"})
     manager.setCurrentStyle("style-red")
     assert _red_pixels(_render(layer, BOLOGNA)) > 0
 
@@ -299,6 +308,23 @@ def test_asset_layers(catalog, collection):
     for key in ("style-red", "data"):
         with pytest.raises(layers.LayerError, match="no format"):
             layers.asset_layer(by_key[key])
+
+
+def test_asset_layers_read_only_the_asset(catalog, collection):
+    # A plain /vsicurl/ path makes GDAL list the parent directory and probe
+    # side-car files. The asset's own URL is the only one GDAL may request.
+    # A fresh query string keeps QGIS and GDAL from reusing an earlier open,
+    # and checks that the query reaches the server intact.
+    by_key = {asset.key: asset for asset in collection.assets}
+    for key in ("relief", "geojson"):
+        asset = replace(by_key[key], href=f"{by_key[key].href}?probe={key}&x=%2F")
+        gdal.VSICurlClearCache()
+        catalog["requests"].clear()
+        layer = layers.asset_layer(asset, f"{key} alone")
+        assert layer.isValid()
+        parts = urllib.parse.urlsplit(asset.href)
+        assert {path for _method, path in catalog["requests"]} == {f"{parts.path}?{parts.query}"}
+        assert layer.source().startswith("/vsicurl?empty_dir=yes&url=")
 
 
 def _parquet_url(catalog):
@@ -520,8 +546,9 @@ def test_download_rejects_bad_checksum_and_missing_files(catalog, tmp_path):
         PlannedFile(f"{catalog['base']}/missing.json", "missing.json"),
     ]
     report = _download(tmp_path, files)
-    assert [path for path, _ in report.failed] == ["catalog.json", "missing.json"]
-    assert "do not match" in report.failed[0][1]
+    failed = dict(report.failed)
+    assert sorted(failed) == ["catalog.json", "missing.json"]
+    assert "do not match" in failed["catalog.json"]
     assert not (tmp_path / "catalog.json").exists()
 
 
@@ -542,3 +569,125 @@ def test_cancel_stops_the_job(catalog, tmp_path):
     assert reports[0].cancelled
     assert len(reports) == 1
     QgsProject.instance().clear()
+
+
+def test_download_runs_files_at_the_same_time(tmp_path):
+    # The server answers no file until three requests wait at the same time,
+    # so a job that downloads one file after another times out.
+    barrier = threading.Barrier(3, timeout=10)
+    lock = threading.Lock()
+    active = peak = 0
+
+    class Gate(BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            nonlocal active, peak
+            with lock:
+                active += 1
+                peak = max(peak, active)
+            try:
+                barrier.wait()
+            except threading.BrokenBarrierError:
+                self.send_error(504)
+                return
+            finally:
+                with lock:
+                    active -= 1
+            body = self.path.encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, format, *args):  # noqa: A002
+            pass
+
+    gate = ThreadingHTTPServer(("127.0.0.1", 0), Gate)
+    threading.Thread(target=gate.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{gate.server_address[1]}"
+    try:
+        files = [PlannedFile(f"{base}/f{i}", f"f{i}.txt") for i in range(6)]
+        report = _download(tmp_path, files)
+    finally:
+        gate.shutdown()
+        gate.server_close()
+    assert report.failed == []
+    assert sorted(report.downloaded) == [f"f{i}.txt" for i in range(6)]
+    assert peak == 3
+    assert (tmp_path / "f4.txt").read_text() == "/f4"
+
+
+def test_download_hashes_while_the_next_file_downloads(catalog, collection, tmp_path, monkeypatch):
+    # The hash of the first file waits until the server sees the request for
+    # the second file. A job that hashes before the next download times out.
+    relief = next(a for a in collection.assets if a.key == "relief")
+    # The query keeps the QGIS network cache from answering an earlier test's copy.
+    second = f"{catalog['base']}/points.pmtiles?overlap"
+    real = downloader.file_matches
+    overlapped = []
+
+    def slow_hash(path, checksum, cancelled=None):
+        deadline = time.monotonic() + 10
+        while ("GET", "/points.pmtiles?overlap") not in catalog["requests"]:
+            if time.monotonic() > deadline:
+                overlapped.append(False)
+                return real(path, checksum, cancelled=cancelled)
+            time.sleep(0.01)
+        overlapped.append(True)
+        return real(path, checksum, cancelled=cancelled)
+
+    monkeypatch.setattr(downloader, "file_matches", slow_hash)
+    catalog["requests"].clear()
+    files = [
+        PlannedFile(relief.href, "relief.tif", relief.size, relief.checksum),
+        PlannedFile(second, "points.pmtiles"),
+    ]
+    progress = []
+    reports = []
+    job = DownloadJob(tmp_path, files)
+    job.progress.connect(lambda done, total, _message: progress.append((done, total)))
+    job.finished.connect(reports.append)
+    job.start()
+    wait_for(lambda: reports, timeout=30)
+    (report,) = reports
+    assert overlapped == [True]
+    assert report.failed == []
+    assert report.verified == 1
+    assert progress[-1] == (2, 2)
+
+
+def test_cancel_frees_every_slot_once(catalog, tmp_path):
+    files = [PlannedFile(f"{catalog['base']}/points.pmtiles", f"f{i}.pmtiles") for i in range(9)]
+    reports = []
+    job = DownloadJob(tmp_path, files)
+    job.finished.connect(reports.append)
+    job.start()
+    wait_for(lambda: job._downloaders)
+    job.cancel()
+    wait_for(lambda: reports)
+    # Let any late downloadError signals arrive. None may report again.
+    wait_for(lambda: not job._downloaders)
+    for _ in range(20):
+        QgsApplication.processEvents()
+    assert len(reports) == 1
+    assert reports[0].cancelled
+    assert job._busy == 0
+    assert len(reports[0].downloaded) < len(files)
+
+
+def test_plan_reads_the_catalog_from_a_task(catalog):
+    # The dock plans inside a QgsTask, and the walk reads from its own
+    # threads. fetch_json must work from those threads.
+    results = []
+    run_task(
+        "plan",
+        lambda task: plan(fetch_json, catalog["url"], cancelled=task.isCanceled),
+        lambda result, error: results.append((result, error)),
+    )
+    wait_for(lambda: results)
+    result, error = results[0]
+    assert error is None
+    assert isinstance(result, Plan)
+    paths = [f.path for f in result.files]
+    assert paths[:2] == ["catalog.json", "points/collection.json"]
+    assert "points/relief.tif" in paths
+    assert [url for url, _ in result.failures] == [f"{catalog['base']}/missing/collection.json"]

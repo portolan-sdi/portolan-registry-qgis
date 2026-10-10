@@ -10,6 +10,7 @@ from portolan_registry_qgis.core.hrefs import (
     catalog_href,
     folder_name,
     is_http_url,
+    vsicurl_path,
 )
 
 
@@ -115,3 +116,24 @@ def test_folder_name(href, name):
 )
 def test_is_http_url(value, expected):
     assert is_http_url(value) is expected
+
+
+@pytest.mark.parametrize(
+    ("url", "path"),
+    [
+        (
+            "https://example.com/a/relief.tif",
+            "/vsicurl?empty_dir=yes&url=https%3A%2F%2Fexample.com%2Fa%2Frelief.tif",
+        ),
+        # A signed URL keeps its query string inside the encoded url option.
+        (
+            "https://b.test/x%20y.fgb?X-Amz-Signature=a%2Fb&e=1",
+            (
+                "/vsicurl?empty_dir=yes&url="
+                "https%3A%2F%2Fb.test%2Fx%2520y.fgb%3FX-Amz-Signature%3Da%252Fb%26e%3D1"
+            ),
+        ),
+    ],
+)
+def test_vsicurl_path_skips_directory_listing(url, path):
+    assert vsicurl_path(url) == path

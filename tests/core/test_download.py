@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -94,3 +96,95 @@ def test_plan_skips_cycles():
     }
     result = plan(fake_fetch(documents), a)
     assert [f.path for f in result.files] == ["catalog.json", "b/catalog.json"]
+
+
+def fan_out(count):
+    """A catalog with ``count`` child catalogs, keyed by URL."""
+    root = "https://x.test/catalog.json"
+    children = [f"https://x.test/c{i}/catalog.json" for i in range(count)]
+    documents = {
+        root: {
+            "type": "Catalog",
+            "id": "root",
+            "links": [{"rel": "child", "href": f"./c{i}/catalog.json"} for i in range(count)],
+        }
+    }
+    for i, href in enumerate(children):
+        documents[href] = {"type": "Catalog", "id": f"c{i}", "links": []}
+    return root, children, documents
+
+
+def test_walk_reads_a_level_in_parallel():
+    # Every child read waits until 8 reads are in flight. A walk that reads
+    # one document at a time breaks the barrier and fails.
+    root, children, documents = fan_out(16)
+    barrier = threading.Barrier(8, timeout=10)
+    lock = threading.Lock()
+    active = peak = 0
+
+    def fetch(url):
+        nonlocal active, peak
+        if url == root:
+            return documents[url]
+        with lock:
+            active += 1
+            peak = max(peak, active)
+        try:
+            barrier.wait()
+        finally:
+            with lock:
+                active -= 1
+        return documents[url]
+
+    result = plan(fetch, root)
+    assert result.failures == []
+    assert peak == 8
+    assert [f.url for f in result.files] == [root, *children]
+
+
+def test_walk_keeps_link_order_when_reads_finish_out_of_order():
+    root, children, documents = fan_out(12)
+    failing = children[3]
+    del documents[failing]
+
+    def fetch(url):
+        # Later links answer first.
+        if url != root:
+            time.sleep(0.002 * (12 - children.index(url)))
+        if url not in documents:
+            raise OSError(f"404 {url}")
+        return documents[url]
+
+    result = plan(fetch, root, workers=4)
+    assert [f.url for f in result.files] == [root, *(c for c in children if c != failing)]
+    assert result.failures == [(failing, f"404 {failing}")]
+
+
+def test_walk_respects_the_limit_inside_a_level():
+    root, _children, documents = fan_out(20)
+    reads = []
+
+    def fetch(url):
+        reads.append(url)
+        return documents[url]
+
+    result = plan(fetch, root, max_documents=5)
+    assert len(reads) == 5
+    assert len(result.files) == 5
+    assert result.truncated
+
+
+def test_walk_stops_reading_on_cancel():
+    root, _children, documents = fan_out(40)
+    reads = []
+    stop = threading.Event()
+
+    def fetch(url):
+        reads.append(url)
+        if len(reads) >= 3:
+            stop.set()
+        return documents[url]
+
+    plan(fetch, root, cancelled=stop.is_set, workers=2)
+    # The reads already started may finish. No new read starts.
+    assert len(reads) <= 4

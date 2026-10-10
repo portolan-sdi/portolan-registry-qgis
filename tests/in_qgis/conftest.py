@@ -5,7 +5,8 @@ environment. CI runs it in the QGIS container (.github/workflows/qgis.yml).
 
 ``catalog`` builds a small Portolan catalog with GDAL and serves it over
 HTTP with range support, so every network path the plugin takes runs for
-real against loopback.
+real against loopback. ``catalog["requests"]`` logs each request as
+``(method, path)``.
 """
 
 from __future__ import annotations
@@ -78,6 +79,12 @@ class RangeHandler(SimpleHTTPRequestHandler):
 
     def log_message(self, format, *args):  # noqa: A002, D102
         pass
+
+    def log_request(self, code="-", size="-"):  # noqa: D102
+        # The tests read this log to count the requests GDAL sends.
+        requests = getattr(self.server, "requests", None)
+        if requests is not None:
+            requests.append((self.command, self.path))
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -313,6 +320,7 @@ def catalog(tmp_path_factory):
         return RangeHandler(*args, directory=str(root), **kwargs)
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    server.requests = []
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     base = f"http://127.0.0.1:{server.server_address[1]}"
@@ -335,6 +343,12 @@ def catalog(tmp_path_factory):
         ],
     }
     (root / "registry.json").write_text(json.dumps(registry))
-    yield {"url": f"{base}/catalog.json", "base": base, "root": root, **info}
+    yield {
+        "url": f"{base}/catalog.json",
+        "base": base,
+        "root": root,
+        "requests": server.requests,
+        **info,
+    }
     server.shutdown()
     server.server_close()

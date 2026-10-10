@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import posixpath
 import re
-from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from urllib.parse import unquote, urlsplit
@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 
 _UNSAFE = re.compile(r"[^A-Za-z0-9._@+=-]")
 EXTERNAL_DIR = "_external"
+WALK_WORKERS = 8
 
 
 @dataclass(frozen=True)
@@ -107,39 +108,61 @@ def walk(
     failures: list[tuple[str, str]],
     max_documents: int = 5000,
     cancelled: Callable[[], bool] | None = None,
+    workers: int = WALK_WORKERS,
 ) -> Iterator[Document]:
     """Read ``start`` and every catalog, collection, and item below it.
 
+    The walk reads one breadth-first level at a time. A pool of ``workers``
+    threads reads the documents of a level in parallel, so a level of 500
+    items costs about 500 / ``workers`` round trips, not 500.
+
     Args:
         fetch_json: Fetches a URL and returns the parsed JSON. It raises on
-            failure.
+            failure. The walk calls it from several threads at once.
         start: The document to begin with.
         failures: Receives ``(url, reason)`` for each document that could
             not be read. The walk continues past it.
         max_documents: Stops the walk after this many reads.
         cancelled: Polled before each read.
+        workers: The number of documents read at the same time.
 
     Yields:
-        Each document read, breadth first.
+        Each document read, breadth first, in link order.
     """
-    queue: deque[str] = deque([start])
+
+    def read(href: str) -> Document | tuple[str, str] | None:
+        if cancelled is not None and cancelled():
+            return None
+        try:
+            return read_document(fetch_json(href), href)
+        except (OSError, ValueError, StacError) as error:
+            return (href, str(error))
+
+    level = [start]
     seen = {start}
     reads = 0
-    while queue and reads < max_documents:
-        if cancelled is not None and cancelled():
-            return
-        href = queue.popleft()
-        reads += 1
-        try:
-            document = read_document(fetch_json(href), href)
-        except (OSError, ValueError, StacError) as error:
-            failures.append((href, str(error)))
-            continue
-        yield document
-        for child in document.children:
-            if child.href not in seen:
-                seen.add(child.href)
-                queue.append(child.href)
+    pool = ThreadPoolExecutor(max_workers=max(1, workers), thread_name_prefix="stac-walk")
+    try:
+        while level and reads < max_documents:
+            level = level[: max_documents - reads]
+            reads += len(level)
+            following: list[str] = []
+            # map() returns the results in link order, so the plan is stable.
+            for result in pool.map(read, level):
+                if result is None:
+                    return
+                if isinstance(result, tuple):
+                    failures.append(result)
+                    continue
+                yield result
+                for child in result.children:
+                    if child.href not in seen:
+                        seen.add(child.href)
+                        following.append(child.href)
+            level = following
+    finally:
+        # A cancelled or abandoned walk drops the reads it has not started.
+        pool.shutdown(wait=True, cancel_futures=True)
 
 
 def plan(
@@ -148,6 +171,7 @@ def plan(
     root: str | None = None,
     max_documents: int = 5000,
     cancelled: Callable[[], bool] | None = None,
+    workers: int = WALK_WORKERS,
 ) -> Plan:
     """Plan the download of ``start`` and everything below it.
 
@@ -158,12 +182,13 @@ def plan(
             ``start``, so the chosen document lands at the top of the folder.
         max_documents: Stops the walk after this many reads.
         cancelled: Polled before each read.
+        workers: The number of documents read at the same time.
     """
     base = root or start
     failures: list[tuple[str, str]] = []
     files: dict[str, PlannedFile] = {}
     reads = 0
-    for document in walk(fetch_json, start, failures, max_documents, cancelled):
+    for document in walk(fetch_json, start, failures, max_documents, cancelled, workers):
         reads += 1
         for planned in files_of(document, base):
             files.setdefault(planned.url, planned)

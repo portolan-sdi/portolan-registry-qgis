@@ -28,6 +28,7 @@ from qgis.core import (
 )
 
 from portolan_registry_qgis.core.diagnose import open_failure
+from portolan_registry_qgis.core.hrefs import vsicurl_path
 from portolan_registry_qgis.core.parquet_query import is_flatpak
 from portolan_registry_qgis.qgis_io.tileserver import Archive, TileServer, open_archive
 
@@ -338,7 +339,7 @@ def asset_layer(asset: Asset, name: str | None = None) -> QgsMapLayer:
         LayerError: The asset has no supported format, or QGIS cannot open it.
     """
     title = name or asset.label
-    path = f"/vsicurl/{asset.href}"
+    path = vsicurl_path(asset.href)
     layer: QgsMapLayer
     if asset.format in {"geojson", "flatgeobuf"}:
         layer = QgsVectorLayer(path, title, "ogr")

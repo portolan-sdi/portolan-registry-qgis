@@ -6,7 +6,8 @@ responsive. The job runs ``CONCURRENT_FILES`` files at the same time. A file
 that declares ``file:checksum`` is hashed in a background task, and that slot
 waits for the hash while the other slots keep downloading. A file already on
 disk with a matching checksum is skipped, so a second run resumes an
-interrupted download.
+interrupted download. A file whose local path an earlier file already claims
+fails at once, so two downloads never write one file.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from qgis.core import QgsFileDownloader, QgsTask
 from qgis.PyQt import sip
 from qgis.PyQt.QtCore import QObject, QUrl, pyqtSignal
 
+from portolan_registry_qgis.core.download import split_collisions
 from portolan_registry_qgis.core.multihash import ChecksumError, file_matches
 from portolan_registry_qgis.qgis_io.network import run_task
 
@@ -70,11 +72,18 @@ class DownloadJob(QObject):
         super().__init__(parent)
         self._folder = folder
         self._total = len(files)
-        self._pending = deque(files)
+        keep, clashes = split_collisions(files)
+        self._pending = deque(keep)
         self._concurrency = max(1, concurrency)
         self._busy = 0
-        self._settled = 0
+        self._settled = len(clashes)
         self._report = DownloadReport()
+        self._report.failed.extend(
+            (planned.path, f"{planned.url} has the same local path as another file")
+            for planned in clashes
+        )
+        # What each busy slot does, for the progress message.
+        self._activity: dict[str, str] = {}
         self._downloaders: set[QgsFileDownloader] = set()
         self._tasks: set[QgsTask] = set()
         self._cancelled = False
@@ -115,13 +124,22 @@ class DownloadJob(QObject):
         if self._busy == 0 and (self._cancelled or not self._pending):
             self._finish()
 
+    def _show(self, planned: PlannedFile, activity: str | None) -> None:
+        if activity is None:
+            self._activity.pop(planned.path, None)
+        else:
+            self._activity[planned.path] = activity
+        message = " · ".join(self._activity.values()) or planned.path
+        self.progress.emit(self._settled, self._total, message)
+
     def _begin(self, planned: PlannedFile) -> None:
-        self.progress.emit(self._settled, self._total, planned.path)
+        self._show(planned, planned.path)
         try:
             path = target_path(self._folder, planned)
         except ValueError as error:
             self._report.failed.append((planned.path, str(error)))
             self._settled += 1
+            self._activity.pop(planned.path, None)
             return
         if path.exists() and planned.checksum:
             self._busy += 1
@@ -130,6 +148,7 @@ class DownloadJob(QObject):
         if path.exists() and planned.size is not None and path.stat().st_size == planned.size:
             self._report.skipped.append(planned.path)
             self._settled += 1
+            self._activity.pop(planned.path, None)
             return
         path.parent.mkdir(parents=True, exist_ok=True)
         self._busy += 1
@@ -178,7 +197,7 @@ class DownloadJob(QObject):
 
     def _verify(self, planned: PlannedFile, path: Path, *, existing: bool) -> None:
         checksum = planned.checksum or ""
-        self.progress.emit(self._settled, self._total, f"Verifying {planned.path}")
+        self._show(planned, f"Verifying {planned.path}")
 
         def hash_file(task: object) -> bool:
             cancelled = getattr(task, "isCanceled", lambda: False)
@@ -219,5 +238,5 @@ class DownloadJob(QObject):
     def _release(self, planned: PlannedFile) -> None:
         self._busy -= 1
         self._settled += 1
-        self.progress.emit(self._settled, self._total, planned.path)
+        self._show(planned, None)
         self._pump()

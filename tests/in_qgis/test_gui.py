@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -319,6 +321,39 @@ def test_download_all(iface, server, catalog, tmp_path, monkeypatch):
     assert (tmp_path / "points" / "collection.json").is_file()
     assert (tmp_path / "points.pmtiles").is_file()
     assert (tmp_path / "points" / "styles" / "red.json").is_file()
+    dock.disconnect_canvas()
+
+
+def test_cancelled_listing_asks_nothing(iface, server, catalog, tmp_path, monkeypatch):
+    # The walk returns a partial plan when it is cancelled. The dock must not
+    # offer that partial plan for download.
+    monkeypatch.setattr(dock_module.QFileDialog, "getExistingDirectory", lambda *a: str(tmp_path))
+    asked = []
+    monkeypatch.setattr(dock_module.QMessageBox, "question", lambda *a: asked.append(a))
+    real = dock_module.fetch_json
+
+    reading = threading.Event()
+
+    def slow(url):
+        reading.set()
+        time.sleep(0.5)
+        return real(url)
+
+    dock = open_dock(iface, server, catalog)
+    open_collection(dock)
+    dock.header.clicked.emit()
+    wait_for(lambda: dock._document is not None and dock._document.kind == "catalog")
+    monkeypatch.setattr(dock_module, "fetch_json", slow)
+    manager = QgsApplication.taskManager()
+    dock.download_all.trigger()
+    # Cancel during the first read, so the walk returns a partial plan.
+    wait_for(reading.is_set)
+    manager.cancelAll()
+    wait_for(lambda: dock.progress.isHidden() and manager.countActiveTasks() == 0)
+    for _ in range(20):
+        QgsApplication.processEvents()
+    assert asked == []
+    assert dock._job is None
     dock.disconnect_canvas()
 
 

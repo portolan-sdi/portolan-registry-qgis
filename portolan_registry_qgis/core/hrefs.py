@@ -81,8 +81,12 @@ def vsicurl_path(url: str) -> str:
     """Return the GDAL path that reads ``url`` over HTTP range requests.
 
     The ``empty_dir=yes`` option stops GDAL from listing the parent directory
-    and from probing side-car files such as ``.aux.xml`` and ``.ovr``. A
-    catalog asset has no side-car files, so those requests only add latency.
+    and from probing side-car files such as ``.aux.xml``, ``.ovr``, and
+    ``.msk``. On Google Cloud Storage, a COG open sent 41 such probes and took
+    17 s, not 1 s. The cost is that GDAL ignores external side-car files. A COG
+    keeps its overviews and mask inside the file, but an asset that relies on
+    an external ``.ovr`` or ``.aux.xml`` opens without it.
+
     GDAL needs the URL percent-encoded in this form, query string included.
     """
     return f"/vsicurl?empty_dir=yes&url={quote(url, safe='')}"

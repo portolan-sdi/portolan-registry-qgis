@@ -1016,13 +1016,17 @@ class RegistryDock(QDockWidget):
 
         def planned(result: object, error: BaseException | None) -> None:
             self._hide_progress()
+            # A cancelled walk returns the partial plan it has. Drop it.
+            if task.isCanceled():
+                self._info(f"Listing of {document.title} cancelled.")
+                return
             if not isinstance(result, download.Plan):
                 self._warn(f"Could not list {document.title}: {error}")
                 return
             if self._confirm(result):
                 self._start_download(folder, result.files)
 
-        run_task(f"List {document.title}", build, planned)
+        task = run_task(f"List {document.title}", build, planned)
 
     def _confirm(self, plan: download.Plan) -> bool:
         lines = [f"{len(plan.files)} files, at least {human_size(plan.known_bytes)}."]

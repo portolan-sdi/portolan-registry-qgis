@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import threading
 import time
 import urllib.parse
@@ -239,6 +240,23 @@ def _blue_pixels(image: QImage) -> int:
     return count
 
 
+def _style_colors(layer) -> set[str]:
+    """Return the fill colors of the layer's current renderer, alpha included.
+
+    Stroke colors stay out. The converter and QGIS share a default gray stroke.
+    """
+    colors = set()
+    for style in layer.renderer().styles():
+        symbol = style.symbol()
+        if symbol is None:
+            continue
+        for index in range(symbol.symbolLayerCount()):
+            color = symbol.symbolLayer(index).color()
+            if color.isValid() and color.alpha() > 0:
+                colors.add(color.name(QColor.NameFormat.HexArgb))
+    return colors
+
+
 def test_tiles_carry_every_style_as_a_named_style(catalog, collection, server):
     urls = layers.archive_urls(collection)
     assert urls == [f"{catalog['base']}/points.pmtiles"]
@@ -262,12 +280,18 @@ def test_tiles_carry_every_style_as_a_named_style(catalog, collection, server):
     image = _render(layer, BOLOGNA)
     assert _blue_pixels(image) > 0
     assert _red_pixels(image) == 0
-    manager.setCurrentStyle(layers.DEFAULT_STYLE_NAME)
     # QGIS colors a new vector tile layer from a random palette, which can
-    # land on a red, so check the colors the catalog styles set instead.
-    colors = {s.symbol().color().name() for s in layer.renderer().styles() if s.symbol()}
-    assert colors
-    assert colors.isdisjoint({"#ff0000", "#0000ff"})
+    # land on a red. So the default style must share no color with any
+    # catalog style, alpha included, rather than draw no red pixels.
+    catalog_colors = set()
+    for name in ("style-red", "style-blue"):
+        manager.setCurrentStyle(name)
+        catalog_colors |= _style_colors(layer)
+    assert {"#ffff0000", "#ff0000ff"} <= catalog_colors
+    manager.setCurrentStyle(layers.DEFAULT_STYLE_NAME)
+    default_colors = _style_colors(layer)
+    assert default_colors
+    assert default_colors.isdisjoint(catalog_colors)
     manager.setCurrentStyle("style-red")
     assert _red_pixels(_render(layer, BOLOGNA)) > 0
 
@@ -743,3 +767,61 @@ def test_qt_executor_cancels_queued_work():
     executor.shutdown()
     assert running.result() is True
     assert all(future.cancelled() for future in queued)
+
+
+def test_resume_of_many_present_files_does_not_recurse(tmp_path):
+    # Each present file settles at once. A job that starts the next file
+    # from inside the last one recurses once per file and overflows.
+    count = sys.getrecursionlimit() + 200
+    files = []
+    for i in range(count):
+        (tmp_path / f"f{i}.txt").write_bytes(b"x")
+        files.append(PlannedFile(f"http://127.0.0.1:9/f{i}.txt", f"f{i}.txt", 1))
+    report = _download(tmp_path, files)
+    assert report.failed == []
+    assert len(report.skipped) == count
+
+
+def test_files_that_share_a_local_path_fail_before_any_download(catalog, tmp_path):
+    first = PlannedFile(f"{catalog['base']}/points.pmtiles?a", "points.pmtiles")
+    same = PlannedFile(f"{catalog['base']}/other.pmtiles", "points.pmtiles")
+    case = PlannedFile(f"{catalog['base']}/catalog.json", "POINTS.pmtiles")
+    report = _download(tmp_path, [first, same, case])
+    assert report.downloaded == ["points.pmtiles"]
+    assert report.failed == [
+        ("points.pmtiles", f"{same.url} has the same local path as another file"),
+        ("POINTS.pmtiles", f"{case.url} has the same local path as another file"),
+    ]
+    assert (tmp_path / "points.pmtiles").read_bytes() == (
+        catalog["root"] / "points.pmtiles"
+    ).read_bytes()
+
+
+def test_progress_names_every_busy_slot(catalog, collection, tmp_path, monkeypatch):
+    # A slow hash keeps "Verifying relief.tif" on screen while the other
+    # slots start their files.
+    relief = next(a for a in collection.assets if a.key == "relief")
+    release = threading.Event()
+    real = downloader.file_matches
+
+    def slow_hash(path, checksum, cancelled=None):
+        release.wait(10)
+        return real(path, checksum, cancelled=cancelled)
+
+    monkeypatch.setattr(downloader, "file_matches", slow_hash)
+    files = [
+        PlannedFile(relief.href, "relief.tif", relief.size, relief.checksum),
+        PlannedFile(f"{catalog['base']}/catalog.json?progress", "catalog.json"),
+    ]
+    messages = []
+    reports = []
+    job = DownloadJob(tmp_path, files)
+    job.progress.connect(lambda _done, _total, message: messages.append(message))
+    job.finished.connect(reports.append)
+    job.start()
+    wait_for(lambda: any("Verifying relief.tif" in m for m in messages))
+    wait_for(lambda: "catalog.json" in job._report.downloaded)
+    assert "Verifying relief.tif" in messages[-1]
+    release.set()
+    wait_for(lambda: reports)
+    assert reports[0].failed == []

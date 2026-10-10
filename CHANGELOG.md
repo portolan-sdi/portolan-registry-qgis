@@ -20,9 +20,11 @@
 - A PMTiles layer opens with one request fewer when the archive's metadata is in its first 16 KiB. Adding the same archive again keeps the tiles QGIS cached.
 - On QGIS 3.34 and 3.36, a PMTiles archive behind a redirect reads only the bytes it needs. Before, each read downloaded the whole archive. On those versions, a relative redirect works too.
 - The plugin no longer reads PMTiles from a server that ignores HTTP range requests on QGIS 3.34 and 3.36. Before, a small archive worked, and each tile read downloaded the whole archive. QGIS 3.38 and later already refused such servers.
-- COG, GeoJSON, and FlatGeobuf assets open with no directory listing and no side-car probes. GDAL requests only the asset itself.
+- COG, GeoJSON, and FlatGeobuf assets open with no directory listing and no side-car probes. GDAL requests only the asset itself. GDAL now ignores external side-car files such as `.ovr`, `.aux.xml`, and `.msk` next to an asset.
 - **Download all** reads eight catalog documents at the same time while it lists a catalog.
 - Downloads run three files at the same time. A checksum check no longer holds up the next download.
+- A download reports a failure for each file whose local path an earlier file already uses, such as `Data.tif` and `data.tif`.
+- A cancelled **Download all** listing no longer asks to download the partial list.
 
 ## 0.1.1 - 2026-10-09
 

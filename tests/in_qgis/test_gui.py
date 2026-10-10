@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 from qgis.core import (
+    Qgis,
     QgsApplication,
     QgsCoordinateReferenceSystem,
     QgsProject,
@@ -15,6 +16,7 @@ from qgis.gui import QgsMapCanvas, QgsMessageBar
 from qgis.PyQt.QtWidgets import QMainWindow, QMessageBox
 
 import portolan_registry_qgis
+from portolan_registry_qgis import plugin as plugin_module
 from portolan_registry_qgis.gui import dock as dock_module
 from portolan_registry_qgis.gui.dock import RegistryDock
 from portolan_registry_qgis.gui.widgets import BADGE_ROLE
@@ -352,9 +354,17 @@ def test_plugin_reconnects_saved_tiles(iface, catalog):
     plugin.unload()
 
 
-def test_plugin_restores_saved_parquet(iface, catalog, tmp_path):
+@pytest.mark.parametrize("preprocessor", [True, False], ids=["preprocessor", "qgis-3.34"])
+def test_plugin_restores_saved_parquet(iface, catalog, tmp_path, monkeypatch, preprocessor):
+    if not preprocessor:
+        # QGIS 3.34 crashes when Python registers a path preprocessor, so the
+        # plugin skips it there. Restore must work without it.
+        monkeypatch.setattr(plugin_module, "PATH_PREPROCESSOR_VERSION", 10**9)
+    elif Qgis.versionInt() < plugin_module.PATH_PREPROCESSOR_VERSION:
+        pytest.skip("This QGIS cannot register a path preprocessor")
     plugin = portolan_registry_qgis.classFactory(iface)
     plugin.initGui()
+    assert (plugin._preprocessor is not None) is preprocessor
     project = QgsProject.instance()
     context = project.transformContext()
     extent = QgsRectangle(11.095, 44.0, 11.305, 45.0)
@@ -376,9 +386,10 @@ def test_plugin_restores_saved_parquet(iface, catalog, tmp_path):
     assert not prepared.path.exists()
     assert project.read(str(saved))
     (restored,) = project.mapLayers().values()
-    # The placeholder opens, so QGIS reports no unavailable layer.
-    assert restored.isValid()
-    wait_for(lambda: restored.featureCount() == 21, timeout=60)
+    # With the preprocessor, the placeholder opens, so QGIS reports no
+    # unavailable layer. Without it, the layer opens unavailable.
+    assert restored.isValid() is preprocessor
+    wait_for(lambda: restored.isValid() and restored.featureCount() == 21, timeout=60)
     assert not parquet_layer.needs_restore(restored)
     assert sorted(f["id"] for f in restored.getFeatures()) == list(range(10, 31))
     plugin.unload()

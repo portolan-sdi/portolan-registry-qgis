@@ -7,6 +7,7 @@
 - A GeoParquet load has no feature limit. When it holds more than 1,000,000 features, the panel asks first.
 - Tooltips on **Add to map**, PMTiles, and GeoParquet say which to use: PMTiles to view, GeoParquet to analyze. They show when the collection has PMTiles.
 - A saved project copies its GeoParquet layers again when it opens.
+- On QGIS 3.34, a saved GeoParquet layer opens as unavailable until the plugin copies it again. QGIS 3.34 crashes when a plugin registers a path preprocessor, so the plugin does not register one there.
 - A GeoParquet feature whose geometry type does not fit the layer keeps its attributes, with no geometry. The panel reports the count.
 - A GeoParquet attribute named `geom` loads. Before, the copy dropped it.
 - A collection opens with one asset selected, so **Add to map** works at once. PMTiles come first.

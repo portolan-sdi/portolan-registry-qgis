@@ -263,13 +263,24 @@ def _source_path(layer: QgsVectorLayer) -> Path | None:
 
 
 def needs_restore(layer: object) -> bool:
-    """Return whether ``layer`` is a copy that reads the placeholder."""
-    return (
+    """Return whether ``layer`` is a copy whose file is gone.
+
+    With ``restore_path`` in place, such a layer reads the placeholder. On
+    QGIS 3.34, the plugin cannot register ``restore_path``, so the layer
+    keeps the path of the missing copy and opens as unavailable.
+    """
+    if not (
         isinstance(layer, QgsVectorLayer)
         and bool(layer.customProperty(SOURCE_PROPERTY))
         and layer.providerType() == "ogr"
-        and _source_path(layer) == scratch_folder(create=False) / _PLACEHOLDER
-    )
+    ):
+        return False
+    path = _source_path(layer)
+    if path is None:
+        return False
+    if path == scratch_folder(create=False) / _PLACEHOLDER:
+        return True
+    return _SCRATCH_FILE.search(path.as_posix()) is not None and not path.exists()
 
 
 def restore(

@@ -30,6 +30,8 @@ MENU = "&Portolan Registry"
 # A QGIS setting, so a user can point the plugin at a registry mirror.
 REGISTRY_URL_SETTING = "PortolanRegistry/registry_url"
 _ICON = Path(__file__).parent / "icon.svg"
+# The first QGIS whose QgsPathResolver.setPathPreprocessor binding is safe.
+PATH_PREPROCESSOR_VERSION = 33600
 
 
 class PortolanRegistryPlugin:
@@ -56,7 +58,12 @@ class PortolanRegistryPlugin:
         # file goes when the last layer that reads it is removed.
         QgsProject.instance().layersRemoved.connect(self._sweep)
         QgsProject.instance().writeProject.connect(self._warn_copies)
-        self._preprocessor = QgsPathResolver.setPathPreprocessor(parquet_layer.restore_path)
+        # QGIS 3.34 crashes when Python registers a path preprocessor. Its
+        # binding builds the return value without the GIL. QGIS 3.36 fixed
+        # the binding. On 3.34, a copy whose file is gone opens as an
+        # unavailable layer, and _reconnect restores it.
+        if Qgis.versionInt() >= PATH_PREPROCESSOR_VERSION:
+            self._preprocessor = QgsPathResolver.setPathPreprocessor(parquet_layer.restore_path)
         try:
             parquet_layer.remove_stale()
         except OSError as error:

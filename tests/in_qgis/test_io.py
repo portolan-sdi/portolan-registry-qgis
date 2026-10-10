@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import urllib.parse
 import urllib.request
 from dataclasses import replace
@@ -8,16 +9,14 @@ import pytest
 from qgis.core import (
     QgsCoordinateReferenceSystem,
     QgsCoordinateTransform,
-    QgsFeature,
-    QgsFields,
-    QgsGeometry,
     QgsMapRendererParallelJob,
     QgsMapSettings,
     QgsProject,
     QgsRectangle,
+    QgsVectorLayer,
     QgsWkbTypes,
 )
-from qgis.PyQt.QtCore import QSize
+from qgis.PyQt.QtCore import QDate, QMetaType, QSize, QVariant
 from qgis.PyQt.QtGui import QColor, QImage
 
 from portolan_registry_qgis.core import parquet_query
@@ -306,43 +305,65 @@ def _parquet_url(catalog):
     return f"{catalog['base']}/points.parquet"
 
 
-def test_parquet_layer_whole_file(catalog):
+def _load(url, extent=None, extent_crs=None):
     context = QgsProject.instance().transformContext()
-    prepared = parquet_layer.prepare(_parquet_url(catalog), context)
-    assert not prepared.truncated
-    assert len(prepared.features) == 200
+    planned = parquet_layer.plan(url, context, extent, extent_crs)
+    prepared = parquet_layer.prepare(planned)
+    return planned, prepared
+
+
+def test_parquet_layer_whole_file(catalog):
+    planned, prepared = _load(_parquet_url(catalog))
+    assert planned.estimate == 200
+    assert prepared.written.features == 200
+    assert prepared.path.parent.parent == parquet_layer.scratch_folder()
     layer, refused = parquet_layer.build(prepared, "points")
     assert refused == 0
     assert layer.isValid()
+    assert layer.providerType() == "ogr"
     assert layer.featureCount() == 200
     assert QgsWkbTypes.displayString(layer.wkbType()) == "Point"
     assert layer.crs().isGeographic()
-    assert [f.name() for f in layer.fields()] == ["id", "name", "score"]
+    names = [f.name() for f in layer.fields()]
+    assert names == ["fid", "id", "name", "score", "day", "seen"]
     first = next(layer.getFeatures())
     assert first["name"] == "p0"
     assert first.geometry().asPoint().x() == pytest.approx(11.0)
     assert layer.customProperty(parquet_layer.SOURCE_PROPERTY) == _parquet_url(catalog)
 
 
-def test_parquet_layer_extent_and_limit(catalog):
-    context = QgsProject.instance().transformContext()
+def test_parquet_dates_load(catalog):
+    """Regression: a DATE or TIMESTAMP column used to load no features at all."""
+    _, prepared = _load(_parquet_url(catalog))
+    layer, _ = parquet_layer.build(prepared, "points")
+    fields = layer.fields()
+    assert fields.field("day").type() in (QVariant.Date, QMetaType.Type.QDate)
+    assert fields.field("seen").type() in (QVariant.DateTime, QMetaType.Type.QDateTime)
+    feature = next(layer.getFeatures())
+    assert feature["day"] == QDate(2026, 1, 1)
+    # The column holds a TIMESTAMP without a zone, so the wall-clock time survives.
+    assert feature["seen"].toString("yyyy-MM-dd HH:mm") == "2026-01-01 03:00"
+
+
+def test_parquet_layer_extent(catalog):
     mercator = QgsCoordinateReferenceSystem("EPSG:3857")
     to_mercator = QgsCoordinateTransform(
-        QgsCoordinateReferenceSystem("EPSG:4326"), mercator, context
+        QgsCoordinateReferenceSystem("EPSG:4326"),
+        mercator,
+        QgsProject.instance().transformContext(),
     )
     extent = to_mercator.transformBoundingBox(QgsRectangle(11.095, 44.0, 11.305, 45.0))
-    prepared = parquet_layer.prepare(_parquet_url(catalog), context, extent, mercator)
-    assert sorted(f["id"] for f in prepared.features) == list(range(10, 31))
-    limited = parquet_layer.prepare(_parquet_url(catalog), context, limit=50)
-    assert limited.truncated
-    assert len(limited.features) == 50
+    planned, prepared = _load(_parquet_url(catalog), extent, mercator)
+    assert planned.estimate == 21
+    layer, _ = parquet_layer.build(prepared, "points")
+    assert sorted(f["id"] for f in layer.getFeatures()) == list(range(10, 31))
 
 
 def test_parquet_layer_needs_duckdb(catalog, monkeypatch):
     monkeypatch.setattr(parquet_query, "duckdb_status", lambda: (False, None))
     monkeypatch.setattr(parquet_query, "_connection", None)
     with pytest.raises(parquet_query.DuckDBMissingError):
-        parquet_layer.prepare(_parquet_url(catalog), QgsProject.instance().transformContext())
+        parquet_layer.plan(_parquet_url(catalog), QgsProject.instance().transformContext())
 
 
 def test_parquet_crs_fallback():
@@ -357,26 +378,99 @@ def test_parquet_crs_fallback():
     assert parquet_layer.crs_for(plan).authid() == "EPSG:2272"
 
 
-def test_mixed_geometries_promote():
-    fields = QgsFields()
-    point = QgsFeature(fields)
-    point.setGeometry(QgsGeometry.fromWkt("POINT (1 1)"))
-    multi = QgsFeature(fields)
-    multi.setGeometry(QgsGeometry.fromWkt("MULTIPOINT ((2 2), (3 3))"))
-    line = QgsFeature(fields)
-    line.setGeometry(QgsGeometry.fromWkt("LINESTRING (0 0, 1 1)"))
-    prepared = parquet_layer.Prepared(
-        "x",
-        QgsCoordinateReferenceSystem("EPSG:4326"),
-        "Unknown",
-        fields,
-        [point, multi, line],
-        False,
-    )
-    layer, refused = parquet_layer.build(prepared, "mixed")
-    assert QgsWkbTypes.displayString(layer.wkbType()) == "MultiPoint"
-    assert layer.featureCount() == 2
-    assert refused == 1
+def test_sweep_keeps_files_that_layers_read(catalog):
+    project = QgsProject.instance()
+    _, kept = _load(_parquet_url(catalog))
+    _, shared = _load(_parquet_url(catalog))
+    layer, _ = parquet_layer.build(kept, "kept")
+    first, _ = parquet_layer.build(shared, "first")
+    project.addMapLayers([layer, first])
+    # A duplicated layer reads the same file as the original.
+    second = first.clone()
+    project.addMapLayer(second)
+    _, unused = _load(_parquet_url(catalog))
+    pending = unused.path
+    parquet_layer.sweep(project)
+    # A copy that is not a layer yet is still being opened. The sweep keeps it.
+    assert pending.exists()
+    parquet_layer.discard_path(pending)
+    assert not pending.exists()
+    project.removeMapLayer(first.id())
+    parquet_layer.sweep(project)
+    assert shared.path.exists()
+    project.removeMapLayer(second.id())
+    parquet_layer.sweep(project)
+    assert not shared.path.exists()
+    assert kept.path.exists()
+    project.removeAllMapLayers()
+    parquet_layer.sweep(project)
+    assert not kept.path.exists()
+
+
+def test_sweep_covers_earlier_plugin_loads(catalog, monkeypatch):
+    """A plugin reload forgets its session folder. The sweep still finds the files."""
+    project = QgsProject.instance()
+    _, before = _load(_parquet_url(catalog))
+    project.addMapLayer(parquet_layer.build(before, "before")[0])
+    monkeypatch.setattr(parquet_layer, "_session", None)
+    _, after = _load(_parquet_url(catalog))
+    project.addMapLayer(parquet_layer.build(after, "after")[0])
+    assert before.path.parent != after.path.parent
+    project.removeAllMapLayers()
+    parquet_layer.sweep(project)
+    assert not before.path.exists()
+    assert not after.path.exists()
+
+
+def test_remove_stale(tmp_path, monkeypatch):
+    monkeypatch.setattr(parquet_layer, "scratch_folder", lambda **_: tmp_path)
+    old = tmp_path / "session-1-old"
+    old.mkdir()
+    (old / "a.gpkg").write_bytes(b"x")
+    # Another QGIS deleted this file during the scan. The scan skips it.
+    (old / "gone.gpkg").symlink_to(tmp_path / "missing")
+    recent = tmp_path / "session-1-recent"
+    recent.mkdir()
+    (recent / "b.gpkg").write_bytes(b"x")
+    own = tmp_path / f"session-{os.getpid()}-own"
+    own.mkdir()
+    (own / "c.gpkg").write_bytes(b"x")
+    other = tmp_path / "duckdb"
+    other.mkdir()
+    week_ago = (recent / "b.gpkg").stat().st_mtime - parquet_layer.STALE_SECONDS - 60
+    for path in (old / "a.gpkg", own / "c.gpkg"):
+        os.utime(path, (week_ago, week_ago))
+    parquet_layer.remove_stale()
+    assert not old.exists()
+    assert recent.exists()
+    # This QGIS's folder stays, however old its files are.
+    assert own.exists()
+    assert other.exists()
+
+
+def test_remove_stale_creates_nothing(tmp_path, monkeypatch):
+    missing = tmp_path / "layers"
+    monkeypatch.setattr(parquet_layer, "scratch_folder", lambda **_: missing)
+    parquet_layer.remove_stale()
+    assert not missing.exists()
+
+
+def test_restore_path(tmp_path, monkeypatch):
+    monkeypatch.setattr(parquet_layer, "scratch_folder", lambda **_: tmp_path)
+    assert parquet_layer.restore_path("/data/roads.gpkg") == "/data/roads.gpkg"
+    session = tmp_path / "session-1-abc"
+    session.mkdir()
+    name = "0123456789abcdef0123456789abcdef.gpkg"
+    (session / name).write_bytes(b"x")
+    # A project saved with relative paths keeps a path relative to the project file.
+    saved = f"../../profile/portolan_registry/layers/session-1-abc/{name}"
+    assert parquet_layer.restore_path(saved) == str(session / name)
+    gone = f"/home/u/portolan_registry/layers/session-2-def/{name}|layername=features"
+    restored = parquet_layer.restore_path(gone)
+    assert restored == f"{tmp_path / 'placeholder.gpkg'}|layername=features"
+    placeholder = QgsVectorLayer(restored, "placeholder", "ogr")
+    assert placeholder.isValid()
+    assert placeholder.featureCount() == 0
 
 
 def _download(folder, files):

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- GeoParquet loads through a GeoPackage that DuckDB writes. A million polygons from a local file load in 2 seconds instead of 19, QGIS stays responsive, and memory use drops from 1.9 GB to 380 MB.
+- GeoParquet files with date or timestamp columns load their features. Before, the layer was empty.
+- A GeoParquet load has no feature limit. When it holds more than 1,000,000 features, the panel asks first.
+- Tooltips on **Add to map**, PMTiles, and GeoParquet say which to use: PMTiles to view, GeoParquet to analyze. They show when the collection has PMTiles.
+- A saved project copies its GeoParquet layers again when it opens.
+- A GeoParquet feature whose geometry type does not fit the layer keeps its attributes, with no geometry. The panel reports the count.
+- A GeoParquet attribute named `geom` loads. Before, the copy dropped it.
 - A collection opens with one asset selected, so **Add to map** works at once. PMTiles come first.
 - PMTiles layers carry each of the collection's MapLibre styles as a named QGIS style. Switch styles from the layer's **Styles** menu.
 - Styles that name their archive as a bare relative path, such as `../tiles.pmtiles`, apply to the tiles. So do styles whose vector source has no `url`.

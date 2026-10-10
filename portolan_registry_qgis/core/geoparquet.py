@@ -1,10 +1,11 @@
-"""Plan a DuckDB read of a remote GeoParquet file.
+"""Plan a DuckDB copy of a remote GeoParquet file into a GeoPackage.
 
 The plan picks the geometry column, the CRS, the layer geometry type, and the
-attribute types, and builds the SELECT statement. It uses the GeoParquet
-``geo`` metadata when the file has it. A bbox filter goes through the
-GeoParquet 1.1 ``covering`` column when the file declares one, so DuckDB skips
-row groups through Parquet statistics instead of scanning the whole file.
+attribute types. It uses the GeoParquet ``geo`` metadata when the file has
+it. The builders below write the count query and the ``COPY`` statement. A
+bbox filter goes through the GeoParquet 1.1 ``covering`` column when the file
+declares one, so DuckDB skips row groups through Parquet statistics instead
+of scanning the whole file.
 """
 
 from __future__ import annotations
@@ -20,13 +21,14 @@ _INT_TYPES = (
     "SMALLINT",
     "INTEGER",
     "BIGINT",
-    "HUGEINT",
     "UTINYINT",
     "USMALLINT",
     "UINTEGER",
     "UBIGINT",
-    "UHUGEINT",
 )
+# GDAL holds at most a 64-bit integer, and refuses a DECIMAL wider than 19
+# digits. These types go to the GeoPackage as DOUBLE.
+_WIDE_TYPES = ("HUGEINT", "UHUGEINT")
 _DOUBLE_TYPES = ("FLOAT", "DOUBLE", "REAL")
 _GEOMETRY_NAMES = ("geometry", "geom", "wkb_geometry", "the_geom")
 _MULTI = {
@@ -35,6 +37,9 @@ _MULTI = {
     "Polygon": "MultiPolygon",
 }
 DEFAULT_CRS = "OGC:CRS84"
+# The name of the one layer in each GeoPackage. A fixed name lets a saved
+# project open a placeholder in place of a file that is gone.
+LAYER = "features"
 
 
 @dataclass(frozen=True)
@@ -79,7 +84,7 @@ def field_kind(duckdb_type: str) -> FieldKind:
         return "bool"
     if upper in _INT_TYPES:
         return "int"
-    if upper in _DOUBLE_TYPES or upper.startswith("DECIMAL"):
+    if upper in _DOUBLE_TYPES or upper in _WIDE_TYPES or upper.startswith("DECIMAL"):
         return "double"
     if upper == "DATE":
         return "date"
@@ -236,28 +241,29 @@ def _path(parts: tuple[str, ...]) -> str:
     return ".".join(quote(part) for part in parts)
 
 
-def build_select(
-    plan: ReadPlan,
-    bbox: tuple[float, float, float, float] | None = None,
-    limit: int | None = None,
+def literal(text: str) -> str:
+    """Quote a SQL string literal."""
+    return "'" + text.replace("'", "''") + "'"
+
+
+def shape(plan: ReadPlan) -> str:
+    """Return the SQL expression for the geometry, as a DuckDB GEOMETRY."""
+    geometry = quote(plan.geometry)
+    return f"ST_GeomFromWKB({geometry})" if plan.geometry_is_wkb_blob else geometry
+
+
+def _where(
+    plan: ReadPlan, bbox: tuple[float, float, float, float] | None, *, exact: bool = True
 ) -> tuple[str, list[object]]:
-    """Build the SELECT for ``plan``, with the URL as the first parameter.
+    """Return the WHERE clause and its parameters.
 
     Args:
         plan: The read plan.
         bbox: Keep only features that intersect this box, in the file's CRS.
-        limit: Return at most this many rows.
-
-    Returns:
-        The SQL and its parameters after the URL.
+        exact: Test each geometry against ``bbox``. Without it, only the
+            covering column filters, which reads far less of the file.
     """
-    geometry = quote(plan.geometry)
-    shape = f"ST_GeomFromWKB({geometry})" if plan.geometry_is_wkb_blob else geometry
-    selected = [f"ST_AsWKB({shape}) AS __wkb"]
-    for column in plan.columns:
-        name = quote(column.name)
-        selected.append(f"CAST({name} AS VARCHAR)" if column.kind == "string" else name)
-    where = [f"{geometry} IS NOT NULL"]
+    where = [f"{quote(plan.geometry)} IS NOT NULL"]
     params: list[object] = []
     if bbox is not None:
         west, south, east, north = bbox
@@ -268,9 +274,169 @@ def build_select(
                 f"AND {_path(c.ymin)} <= ? AND {_path(c.ymax)} >= ?"
             )
             params += [east, west, north, south]
-        where.append(f"ST_Intersects({shape}, ST_MakeEnvelope(?, ?, ?, ?))")
-        params += [west, south, east, north]
-    sql = f"SELECT {', '.join(selected)} FROM read_parquet(?) WHERE {' AND '.join(where)}"  # noqa: S608  # nosec B608 - identifiers are quoted, values are parameters
-    if limit is not None:
-        sql += f" LIMIT {int(limit)}"
+        if exact:
+            where.append(f"ST_Intersects({shape(plan)}, ST_MakeEnvelope(?, ?, ?, ?))")
+            params += [west, south, east, north]
+    return " AND ".join(where), params
+
+
+def build_estimate(
+    plan: ReadPlan, bbox: tuple[float, float, float, float] | None = None
+) -> tuple[str, list[object]] | None:
+    """Build a query that estimates the number of features, with the URL first.
+
+    Without a box, DuckDB answers from the Parquet footer. With a box, the
+    query reads only the covering column, so the estimate counts the rows
+    whose bbox overlaps the box. That is an upper bound of the features the
+    copy keeps.
+
+    Returns:
+        The SQL and its parameters after the URL, or None when a box is
+        given and the file has no covering column. The estimate would then
+        cost as much as the copy itself.
+    """
+    if bbox is None:
+        return "SELECT count(*) FROM read_parquet(?)", []
+    if plan.covering is None:
+        return None
+    where, params = _where(plan, bbox, exact=False)
+    return f"SELECT count(*) FROM read_parquet(?) WHERE {where}", params  # noqa: S608  # nosec B608 - identifiers are quoted, values are parameters
+
+
+def build_first_type(
+    plan: ReadPlan, bbox: tuple[float, float, float, float] | None = None
+) -> tuple[str, list[object]]:
+    """Build a query for the type of the first geometry, with the URL first.
+
+    The query returns the DuckDB type name, such as ``POLYGON``, and whether
+    the geometry has Z.
+    """
+    where, params = _where(plan, bbox)
+    geometry = shape(plan)
+    sql = (
+        f"SELECT ST_GeometryType({geometry})::VARCHAR, ST_HasZ({geometry}) "  # noqa: S608  # nosec B608 - identifiers are quoted, values are parameters
+        f"FROM read_parquet(?) WHERE {where} LIMIT 1"
+    )
+    return sql, params
+
+
+def type_from_first(row: tuple[object, object] | None) -> str:
+    """Return the layer geometry type for a file that declares none.
+
+    A layer holds one geometry family. The first geometry picks it, promoted
+    to its multi type so single and multi parts both fit. A file with no
+    geometry in range gives ``Point``.
+    """
+    if row is None or not isinstance(row[0], str):
+        return "Point"
+    family = {name.upper(): name for name in (*_MULTI, *_MULTI.values(), "GeometryCollection")}.get(
+        row[0].upper(), "Point"
+    )
+    family = _MULTI.get(family, family)
+    return f"{family}Z" if row[1] else family
+
+
+def _type_condition(plan: ReadPlan, layer_type: str) -> tuple[str, bool]:
+    """Return the SQL test that a geometry fits ``layer_type``, and whether to promote it.
+
+    A multi layer takes the single and the multi type of its family, and the
+    copy promotes the single parts. A single layer takes only its own type.
+    """
+    family = layer_type.removesuffix("Z")
+    singles = {multi: single for single, multi in _MULTI.items()}
+    names = (singles[family], family) if family in singles else (family,)
+    allowed = ", ".join(literal(name.upper()) for name in names)
+    return f"ST_GeometryType({shape(plan)})::VARCHAR IN ({allowed})", family in singles
+
+
+def _free_name(base: str, taken: set[str]) -> str:
+    name, number = base, 1
+    while name.casefold() in taken:
+        name, number = f"{base}_{number}", number + 1
+    return name
+
+
+def fid_name(plan: ReadPlan) -> str:
+    """Return a GeoPackage FID column name that no attribute uses.
+
+    A GeoPackage keeps its feature id in a column named ``fid``. An
+    attribute of that name with other values makes GDAL refuse the write.
+    """
+    return _free_name("fid", {column.name.casefold() for column in plan.columns})
+
+
+def geometry_name(plan: ReadPlan) -> str:
+    """Return a GeoPackage geometry column name that no attribute or the FID uses.
+
+    GDAL names the geometry column ``geom``. It drops an attribute of the
+    same name without an error.
+    """
+    taken = {column.name.casefold() for column in plan.columns}
+    return _free_name("geom", taken | {fid_name(plan).casefold()})
+
+
+def _value(column: Column) -> str:
+    name = quote(column.name)
+    if column.kind == "string":
+        return f"CAST({name} AS VARCHAR)"
+    if column.kind == "double" and column.duckdb_type.upper() not in _DOUBLE_TYPES:
+        return f"CAST({name} AS DOUBLE)"
+    return name
+
+
+def output_name(name: str) -> str:
+    """Return the GeoPackage name of an attribute column.
+
+    GDAL's Arrow writer takes a column named exactly ``OGC_FID`` as the
+    feature id and refuses the write. The lower-case name is an ordinary
+    field, and SQLite matches column names without case anyway.
+    """
+    return "ogc_fid" if name == "OGC_FID" else name
+
+
+def build_copy(
+    plan: ReadPlan,
+    path: str,
+    layer_type: str,
+    bbox: tuple[float, float, float, float] | None = None,
+    srs: str | None = None,
+) -> tuple[str, list[object]]:
+    """Build the ``COPY`` of the features into a GeoPackage, with the URL first.
+
+    Args:
+        plan: The read plan.
+        path: The GeoPackage to write.
+        layer_type: The layer geometry type, from the plan or from
+            ``type_from_first``. A feature of another type keeps its
+            attributes and gets a NULL geometry.
+        bbox: Keep only features that intersect this box, in the file's CRS.
+        srs: The CRS to record in the GeoPackage, in any form GDAL reads.
+
+    Returns:
+        The SQL and its parameters after the URL.
+    """
+    fits, promote = _type_condition(plan, layer_type)
+    geometry = f"ST_Multi({shape(plan)})" if promote else shape(plan)
+    selected = [f"CASE WHEN {fits} THEN {geometry} END AS {quote(plan.geometry)}"]
+    selected += [
+        f"{_value(column)} AS {quote(output_name(column.name))}" for column in plan.columns
+    ]
+    where, params = _where(plan, bbox)
+    creation = [f"FID={fid_name(plan)}", f"GEOMETRY_NAME={geometry_name(plan)}"]
+    options = [
+        "FORMAT GDAL",
+        "DRIVER 'GPKG'",
+        f"LAYER_NAME {literal(LAYER)}",
+        f"LAYER_CREATION_OPTIONS ({', '.join(literal(option) for option in creation)})",
+    ]
+    if not layer_type.endswith("Z"):
+        # GDAL takes no Z types here. Without the option it reads the type
+        # from the first feature, which gives an empty layer no geometry.
+        options.append(f"GEOMETRY_TYPE {literal(layer_type.upper())}")
+    if srs:
+        options.append(f"SRS {literal(srs)}")
+    sql = (
+        f"COPY (SELECT {', '.join(selected)} FROM read_parquet(?) "  # noqa: S608  # nosec B608 - identifiers are quoted, values are parameters
+        f"WHERE {where}) TO {literal(path)} ({', '.join(options)})"
+    )
     return sql, params

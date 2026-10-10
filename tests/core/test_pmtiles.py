@@ -30,7 +30,7 @@ def file_fetcher(path, log=None):
     return fetch
 
 
-def build(path, tiles, compression=Compression.GZIP, tile_type=TileType.MVT):
+def build(path, tiles, compression=Compression.GZIP, tile_type=TileType.MVT, metadata=None):
     with write(str(path)) as writer:
         for (z, x, y), data in sorted(tiles.items(), key=lambda t: zxy_to_tileid(*t[0])):
             payload = gzip.compress(data, mtime=0) if compression == Compression.GZIP else data
@@ -47,7 +47,11 @@ def build(path, tiles, compression=Compression.GZIP, tile_type=TileType.MVT):
                 "center_lon_e7": 0,
                 "center_lat_e7": 0,
             },
-            {"vector_layers": [{"id": "land_use", "fields": {}}], "name": "test"},
+            {
+                "vector_layers": [{"id": "land_use", "fields": {}}],
+                "name": "test",
+                **(metadata or {}),
+            },
         )
 
 
@@ -85,6 +89,8 @@ def test_small_archive(tmp_path):
     assert (header.min_zoom, header.max_zoom) == (0, 2)
     assert header.bounds == pytest.approx((-75.28, 39.86, -74.95, 40.14))
     assert reader.metadata()["vector_layers"][0]["id"] == "land_use"
+    # The metadata comes out of the first read, with no request of its own.
+    assert log == [(0, 16384)]
     for (z, x, y), data in tiles.items():
         assert reader.tile(z, x, y) == data
     assert reader.tile(1, 1, 1) is None
@@ -162,3 +168,15 @@ def test_json_metadata_round_trip(tmp_path):
     path = tmp_path / "a.pmtiles"
     build(path, {(0, 0, 0): b"w"})
     assert json.dumps(Reader(file_fetcher(path)).metadata(), sort_keys=True).startswith("{")
+
+
+def test_metadata_past_the_first_read(tmp_path):
+    path = tmp_path / "a.pmtiles"
+    # Random hex does not compress, so the metadata ends past 16 KiB.
+    noise = random.Random(3).randbytes(24000).hex()
+    build(path, {(0, 0, 0): b"w"}, metadata={"description": noise})
+    log = []
+    reader = Reader(file_fetcher(path, log))
+    assert reader.metadata()["description"] == noise
+    header = reader.header()
+    assert log == [(0, 16384), (header.metadata_offset, header.metadata_length)]

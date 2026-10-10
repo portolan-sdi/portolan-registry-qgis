@@ -20,7 +20,16 @@ QT_QPA_PLATFORM=offscreen .venv-qgis/bin/python -m pytest tests/in_qgis
 
 Add `-m network` to run the live checks against the registry and two published catalogs.
 
-CI runs `tests/in_qgis` in the official QGIS 3.44 and 4.2 Docker images, which cover Qt5 and Qt6.
+CI runs `tests/in_qgis` in the official QGIS 3.34, 3.44, and 4.2 Docker images. QGIS 3.34 is the oldest version the plugin supports, and 4.2 covers Qt6.
+
+To time PMTiles rendering against a remote archive, run the benchmark with the same Python. The `--baseline` flag restores the 0.1.1 tile transport for comparison.
+
+```bash
+QT_QPA_PLATFORM=offscreen .venv-qgis/bin/python \
+  scripts/bench_tiles.py
+QT_QPA_PLATFORM=offscreen .venv-qgis/bin/python \
+  scripts/bench_tiles.py --baseline
+```
 
 ## Release
 

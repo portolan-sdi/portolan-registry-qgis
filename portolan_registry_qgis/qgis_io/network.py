@@ -11,8 +11,8 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from qgis.core import QgsApplication, QgsBlockingNetworkRequest, QgsTask
-from qgis.PyQt.QtCore import QUrl
+from qgis.core import QgsApplication, QgsBlockingNetworkRequest, QgsFeedback, QgsTask
+from qgis.PyQt.QtCore import Qt, QUrl
 from qgis.PyQt.QtNetwork import QNetworkRequest
 
 if TYPE_CHECKING:
@@ -52,32 +52,89 @@ def fetch_range(url: str, offset: int, length: int) -> bytes:
     """Return ``length`` bytes of ``url`` from ``offset``.
 
     A server that ignores the Range header answers 200 with the whole body.
-    The function slices that body, so the caller always gets the asked range.
+    QGIS 3.38 and later abort that reply. QGIS 3.34 and 3.36 read it to the
+    end, so the function cancels it when the body grows past ``length``.
+    Without the cancel, every tile read downloads the whole archive.
 
     Raises:
-        NetworkError: The request failed.
+        NetworkError: The request failed, or the server ignores ranges.
     """
+    return _range(url, offset, length)[0]
+
+
+def _range(url: str, offset: int, length: int) -> tuple[bytes, bytes]:
+    """Return the range and the reply's Cache-Control header."""
     request = QNetworkRequest(QUrl(url))
     request.setRawHeader(b"Range", f"bytes={offset}-{offset + length - 1}".encode())
     # Qt's disk cache keys on the URL alone. A cached range would answer a
     # request for a different range, so ranges bypass the cache both ways.
     request.setAttribute(QNetworkRequest.Attribute.CacheSaveControlAttribute, False)
+    # QGIS 3.34 and 3.36 follow a redirect themselves and drop the Range
+    # header, so the target answers 200 with the whole file. Qt keeps the
+    # header when it follows the redirect, as QGIS 3.38 and later make it do.
+    request.setAttribute(
+        QNetworkRequest.Attribute.RedirectPolicyAttribute,
+        QNetworkRequest.RedirectPolicy.NoLessSafeRedirectPolicy,
+    )
+    feedback = QgsFeedback()
     blocking = QgsBlockingNetworkRequest()
-    code = blocking.get(request, forceRefresh=True)
+    check = cancel_past(length, feedback)
+    # Direct, because the calling thread runs no event loop. The slot
+    # disconnects before the function returns, because the request's
+    # destructor aborts its reply and emits progress on whatever thread
+    # collects it.
+    blocking.downloadProgress.connect(check, Qt.ConnectionType.DirectConnection)
+    try:
+        code = blocking.get(request, forceRefresh=True, feedback=feedback)
+    finally:
+        blocking.downloadProgress.disconnect(check)
+    reply = blocking.reply()
+    status = reply.attribute(QNetworkRequest.Attribute.HttpStatusCodeAttribute)
+    if feedback.isCanceled() or status == 200:
+        raise NetworkError(f"{url}: the server ignores HTTP range requests")
     if code != QgsBlockingNetworkRequest.ErrorCode.NoError:
         raise NetworkError(f"{url}: {blocking.errorMessage()}")
-    reply = blocking.reply()
-    body = bytes(reply.content())
-    status = reply.attribute(QNetworkRequest.Attribute.HttpStatusCodeAttribute)
-    if status == 200:
-        return body[offset : offset + length]
-    return body
+    return bytes(reply.content()), bytes(reply.rawHeader(b"Cache-Control"))
+
+
+def cancel_past(length: int, feedback: QgsFeedback) -> Callable[[int, int], None]:
+    """Return a ``downloadProgress`` slot that cancels a body longer than ``length``.
+
+    A 206 reply holds ``length`` bytes or fewer. More bytes, received or
+    announced, mean that the server sends the whole file.
+    """
+
+    def check(received: int, total: int) -> None:
+        if received > length or total > length:
+            feedback.cancel()
+
+    return check
+
+
+class RemoteRange:
+    """``fetch_range`` bound to one URL.
+
+    ``no_store`` turns true once the server answers with
+    ``Cache-Control: no-store``. The tile server then keeps the archive's
+    tiles out of the QGIS disk cache.
+    """
+
+    def __init__(self, url: str) -> None:
+        self.url = url
+        self.no_store = False
+
+    def __call__(self, offset: int, length: int) -> bytes:
+        """Return ``length`` bytes from ``offset``."""
+        body, cache_control = _range(self.url, offset, length)
+        if b"no-store" in cache_control.lower():
+            self.no_store = True
+        return body
 
 
 def range_fetcher(location: str) -> Callable[[int, int], bytes]:
     """Return a ``fetch_range(offset, length)`` for a URL or a local path."""
     if location.startswith(("http://", "https://")):
-        return lambda offset, length: fetch_range(location, offset, length)
+        return RemoteRange(location)
     path = Path(QUrl(location).toLocalFile() if location.startswith("file:") else location)
 
     def read(offset: int, length: int) -> bytes:

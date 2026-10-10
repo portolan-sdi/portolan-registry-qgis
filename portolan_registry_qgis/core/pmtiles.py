@@ -197,6 +197,8 @@ class Reader:
         self._fetch = fetch_range
         self._lock = threading.Lock()
         self._header: Header | None = None
+        # The first read. Metadata that sits inside it needs no second request.
+        self._first = b""
         self._root: list[Entry] | None = None
         self._leaves: OrderedDict[tuple[int, int], list[Entry]] = OrderedDict()
 
@@ -213,15 +215,25 @@ class Reader:
                     else self._fetch(header.root_offset, header.root_length)
                 )
                 self._root = parse_directory(decompress(raw, header.internal_compression))
+                self._first = first
                 self._header = header
             return self._header
 
     def metadata(self) -> dict[str, Any]:
-        """Return the archive's JSON metadata."""
+        """Return the archive's JSON metadata.
+
+        Writers put the metadata after the root directory, so it is usually
+        inside the first read and costs no request.
+        """
         header = self.header()
         if header.metadata_length == 0:
             return {}
-        raw = self._fetch(header.metadata_offset, header.metadata_length)
+        end = header.metadata_offset + header.metadata_length
+        raw = (
+            self._first[header.metadata_offset : end]
+            if end <= len(self._first)
+            else self._fetch(header.metadata_offset, header.metadata_length)
+        )
         value = json.loads(decompress(raw, header.internal_compression))
         return value if isinstance(value, dict) else {}
 

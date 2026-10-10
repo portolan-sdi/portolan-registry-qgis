@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -188,3 +189,18 @@ def test_walk_stops_reading_on_cancel():
     plan(fetch, root, cancelled=stop.is_set, workers=2)
     # The reads already started may finish. No new read starts.
     assert len(reads) <= 4
+
+
+def test_walk_uses_a_given_executor_and_leaves_it_open():
+    root, children, documents = fan_out(6)
+    threads = set()
+
+    def fetch(url):
+        threads.add(threading.current_thread().name)
+        return documents[url]
+
+    with ThreadPoolExecutor(2, thread_name_prefix="caller") as executor:
+        result = plan(fetch, root, executor=executor)
+        assert executor.submit(lambda: "open").result() == "open"
+    assert [f.url for f in result.files] == [root, *children]
+    assert threads and all(name.startswith("caller") for name in threads)

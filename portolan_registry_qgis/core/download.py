@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import posixpath
 import re
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Executor, ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from urllib.parse import unquote, urlsplit
@@ -109,12 +109,17 @@ def walk(
     max_documents: int = 5000,
     cancelled: Callable[[], bool] | None = None,
     workers: int = WALK_WORKERS,
+    executor: Executor | None = None,
 ) -> Iterator[Document]:
     """Read ``start`` and every catalog, collection, and item below it.
 
     The walk reads one breadth-first level at a time. A pool of ``workers``
     threads reads the documents of a level in parallel, so a level of 500
     items costs about 500 / ``workers`` round trips, not 500.
+
+    A caller whose ``fetch_json`` needs special threads passes ``executor``.
+    QGIS network requests need QThreads, for example. The walk then uses
+    that executor and does not shut it down.
 
     Args:
         fetch_json: Fetches a URL and returns the parsed JSON. It raises on
@@ -124,7 +129,9 @@ def walk(
             not be read. The walk continues past it.
         max_documents: Stops the walk after this many reads.
         cancelled: Polled before each read.
-        workers: The number of documents read at the same time.
+        workers: The number of documents read at the same time. The walk
+            ignores it when ``executor`` is given.
+        executor: Runs the reads. Defaults to a ``ThreadPoolExecutor``.
 
     Yields:
         Each document read, breadth first, in link order.
@@ -141,28 +148,34 @@ def walk(
     level = [start]
     seen = {start}
     reads = 0
-    pool = ThreadPoolExecutor(max_workers=max(1, workers), thread_name_prefix="stac-walk")
+    owned = executor is None
+    pool = executor or ThreadPoolExecutor(max(1, workers), thread_name_prefix="stac-walk")
     try:
         while level and reads < max_documents:
             level = level[: max_documents - reads]
             reads += len(level)
             following: list[str] = []
             # map() returns the results in link order, so the plan is stable.
-            for result in pool.map(read, level):
-                if result is None:
-                    return
-                if isinstance(result, tuple):
-                    failures.append(result)
-                    continue
-                yield result
-                for child in result.children:
-                    if child.href not in seen:
-                        seen.add(child.href)
-                        following.append(child.href)
+            results = pool.map(read, level)
+            try:
+                for result in results:
+                    if result is None:
+                        return
+                    if isinstance(result, tuple):
+                        failures.append(result)
+                        continue
+                    yield result
+                    for child in result.children:
+                        if child.href not in seen:
+                            seen.add(child.href)
+                            following.append(child.href)
+            finally:
+                # Closing the iterator cancels the reads that have not started.
+                results.close()  # type: ignore[attr-defined]
             level = following
     finally:
-        # A cancelled or abandoned walk drops the reads it has not started.
-        pool.shutdown(wait=True, cancel_futures=True)
+        if owned:
+            pool.shutdown(wait=True, cancel_futures=True)
 
 
 def plan(
@@ -172,6 +185,7 @@ def plan(
     max_documents: int = 5000,
     cancelled: Callable[[], bool] | None = None,
     workers: int = WALK_WORKERS,
+    executor: Executor | None = None,
 ) -> Plan:
     """Plan the download of ``start`` and everything below it.
 
@@ -183,12 +197,13 @@ def plan(
         max_documents: Stops the walk after this many reads.
         cancelled: Polled before each read.
         workers: The number of documents read at the same time.
+        executor: Runs the reads. See ``walk``.
     """
     base = root or start
     failures: list[tuple[str, str]] = []
     files: dict[str, PlannedFile] = {}
     reads = 0
-    for document in walk(fetch_json, start, failures, max_documents, cancelled, workers):
+    for document in walk(fetch_json, start, failures, max_documents, cancelled, workers, executor):
         reads += 1
         for planned in files_of(document, base):
             files.setdefault(planned.url, planned)

@@ -21,16 +21,23 @@ from qgis.core import (
     QgsVectorLayer,
     QgsWkbTypes,
 )
-from qgis.PyQt.QtCore import QDate, QMetaType, QSize, QVariant
+from qgis.PyQt.QtCore import QDate, QMetaType, QSize, QThread, QVariant, qInstallMessageHandler
 from qgis.PyQt.QtGui import QColor, QImage
 
 from portolan_registry_qgis.core import parquet_query
-from portolan_registry_qgis.core.download import Plan, PlannedFile, local_path, plan
+from portolan_registry_qgis.core.download import (
+    WALK_WORKERS,
+    Plan,
+    PlannedFile,
+    local_path,
+    plan,
+)
 from portolan_registry_qgis.core.stac import read_document
 from portolan_registry_qgis.qgis_io import downloader, layers, parquet_layer
 from portolan_registry_qgis.qgis_io.downloader import DownloadJob, target_path
 from portolan_registry_qgis.qgis_io.network import (
     NetworkError,
+    QtExecutor,
     fetch_bytes,
     fetch_json,
     fetch_range,
@@ -676,14 +683,26 @@ def test_cancel_frees_every_slot_once(catalog, tmp_path):
 
 def test_plan_reads_the_catalog_from_a_task(catalog):
     # The dock plans inside a QgsTask, and the walk reads from its own
-    # threads. fetch_json must work from those threads.
-    results = []
-    run_task(
-        "plan",
-        lambda task: plan(fetch_json, catalog["url"], cancelled=task.isCanceled),
-        lambda result, error: results.append((result, error)),
-    )
-    wait_for(lambda: results)
+    # threads. Qt timers, which QGIS network requests use, only work on a
+    # QThread. A plain Python thread makes Qt print a warning per thread.
+    messages = []
+    previous = qInstallMessageHandler(lambda _kind, _context, text: messages.append(text))
+    try:
+        results = []
+        run_task(
+            "plan",
+            lambda task: plan(
+                fetch_json,
+                catalog["url"],
+                cancelled=task.isCanceled,
+                executor=QtExecutor(WALK_WORKERS),
+            ),
+            lambda result, error: results.append((result, error)),
+        )
+        wait_for(lambda: results)
+    finally:
+        qInstallMessageHandler(previous)
+    assert [m for m in messages if "QThread" in m] == []
     result, error = results[0]
     assert error is None
     assert isinstance(result, Plan)
@@ -691,3 +710,36 @@ def test_plan_reads_the_catalog_from_a_task(catalog):
     assert paths[:2] == ["catalog.json", "points/collection.json"]
     assert "points/relief.tif" in paths
     assert [url for url, _ in result.failures] == [f"{catalog['base']}/missing/collection.json"]
+
+
+def test_qt_executor_runs_on_qthreads_and_reports_errors():
+    executor = QtExecutor(4)
+    try:
+        assert list(executor.map(lambda n: n * 2, range(10))) == list(range(0, 20, 2))
+        main = QThread.currentThread()
+        threads = list(executor.map(lambda _n: QThread.currentThread(), range(8)))
+        assert all(thread is not main for thread in threads)
+        future = executor.submit(lambda: 1 / 0)
+        with pytest.raises(ZeroDivisionError):
+            future.result(timeout=10)
+    finally:
+        executor.shutdown()
+
+
+def test_qt_executor_cancels_queued_work():
+    executor = QtExecutor(1)
+    started = threading.Event()
+    release = threading.Event()
+
+    def hold():
+        started.set()
+        return release.wait(10)
+
+    running = executor.submit(hold)
+    assert started.wait(10)
+    queued = [executor.submit(lambda: "ran") for _ in range(3)]
+    executor.shutdown(wait=False, cancel_futures=True)
+    release.set()
+    executor.shutdown()
+    assert running.result() is True
+    assert all(future.cancelled() for future in queued)

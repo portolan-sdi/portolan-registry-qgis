@@ -67,7 +67,12 @@ from portolan_registry_qgis.gui.widgets import (
 from portolan_registry_qgis.qgis_io import layers as layer_io
 from portolan_registry_qgis.qgis_io import parquet_layer
 from portolan_registry_qgis.qgis_io.downloader import DownloadJob, DownloadReport
-from portolan_registry_qgis.qgis_io.network import fetch_bytes, fetch_json, run_task
+from portolan_registry_qgis.qgis_io.network import (
+    QtExecutor,
+    fetch_bytes,
+    fetch_json,
+    run_task,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -1001,7 +1006,13 @@ class RegistryDock(QDockWidget):
         self._show_progress(0, 0, f"Listing everything below {document.title}…")
 
         def build(task: Any) -> download.Plan:
-            return download.plan(fetch_json, document.href, root, cancelled=task.isCanceled)
+            executor = QtExecutor(download.WALK_WORKERS)
+            try:
+                return download.plan(
+                    fetch_json, document.href, root, cancelled=task.isCanceled, executor=executor
+                )
+            finally:
+                executor.shutdown(cancel_futures=True)
 
         def planned(result: object, error: BaseException | None) -> None:
             self._hide_progress()

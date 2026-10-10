@@ -8,11 +8,12 @@ main thread, which is where ``run_task`` sends it.
 from __future__ import annotations
 
 import json
+from concurrent.futures import Executor, Future
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from qgis.core import QgsApplication, QgsBlockingNetworkRequest, QgsFeedback, QgsTask
-from qgis.PyQt.QtCore import Qt, QUrl
+from qgis.PyQt.QtCore import QRunnable, Qt, QThreadPool, QUrl
 from qgis.PyQt.QtNetwork import QNetworkRequest
 
 if TYPE_CHECKING:
@@ -192,3 +193,53 @@ def run_task(
     _RUNNING.add(task)
     QgsApplication.taskManager().addTask(task)
     return task
+
+
+class _Job(QRunnable):
+    def __init__(self, future: Future[Any], function: Callable[[], Any]):
+        super().__init__()
+        self._future = future
+        self._function = function
+
+    def run(self) -> None:
+        # A job whose future was cancelled before it started does nothing.
+        if not self._future.set_running_or_notify_cancel():
+            return
+        try:
+            result = self._function()
+        except BaseException as error:  # noqa: BLE001 - the future carries it
+            self._future.set_exception(error)
+        else:
+            self._future.set_result(result)
+
+
+class QtExecutor(Executor):
+    """Run functions on QThreads, so QGIS network requests can use them.
+
+    ``QgsBlockingNetworkRequest`` needs Qt timers, and Qt timers work only on
+    a QThread. A ``ThreadPoolExecutor`` thread is a plain Python thread. The
+    executor has its own ``QThreadPool``, so a task that waits for it cannot
+    take every thread of the global pool.
+    """
+
+    def __init__(self, workers: int):
+        self._pool = QThreadPool()
+        self._pool.setMaxThreadCount(max(1, workers))
+        self._futures: set[Future[Any]] = set()
+
+    def submit(self, fn: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Future[Any]:
+        """Queue ``fn(*args, **kwargs)`` and return its future."""
+        future: Future[Any] = Future()
+        self._futures.add(future)
+        future.add_done_callback(self._futures.discard)
+        self._pool.start(_Job(future, lambda: fn(*args, **kwargs)))
+        return future
+
+    def shutdown(self, wait: bool = True, *, cancel_futures: bool = False) -> None:
+        """Wait for the running functions when ``wait`` is true."""
+        if cancel_futures:
+            # A cancelled future's job returns at once when its turn comes.
+            for future in list(self._futures):
+                future.cancel()
+        if wait:
+            self._pool.waitForDone()

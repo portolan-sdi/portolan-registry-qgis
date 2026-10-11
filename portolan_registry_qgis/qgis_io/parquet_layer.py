@@ -5,16 +5,23 @@ schema and estimates the number of features, so the panel can ask before a
 large load. ``prepare`` has DuckDB copy the features into a GeoPackage in
 the plugin's scratch folder. No Python code touches a feature, so a load of
 millions of features stays within the memory DuckDB uses. ``build`` runs on
-the main thread and opens the GeoPackage through OGR.
+the main thread and opens the GeoPackage through OGR. A file with no
+geometry column becomes a table with no geometry.
+
+A copy can keep only the features in a box or in a polygon. The layer keeps
+both in the file's CRS, in ``BBOX_PROPERTY`` and ``AREA_PROPERTY``.
 
 Each QGIS session writes into its own folder. ``sweep`` deletes the files
 that no layer in the project reads, and the plugin calls it when layers are
 removed. ``remove_stale`` deletes the folders that an earlier session left.
+The mosaics of ``mosaic`` write their VRT files into the same folders, so
+the same functions clean them.
 
 A saved project keeps the path of a file that a later session no longer
 has. ``restore_path`` gives QGIS an empty placeholder in its place, so the
-layer opens. ``restore`` then copies the features again from the URL and
-the box that the layer keeps, and ``reopen`` points the layer at the copy.
+layer opens. ``restore`` then copies the features again from the URL, the
+box, and the area that the layer keeps, and ``reopen`` points the layer at
+the copy.
 """
 
 from __future__ import annotations
@@ -37,8 +44,10 @@ from qgis.core import (
     QgsCoordinateReferenceSystem,
     QgsCoordinateTransform,
     QgsFields,
+    QgsGeometry,
     QgsProject,
     QgsProviderRegistry,
+    QgsRasterLayer,
     QgsRectangle,
     QgsVectorFileWriter,
     QgsVectorLayer,
@@ -58,15 +67,32 @@ SOURCE_PROPERTY = "portolan/parquet_url"
 # The box of the copy in the file's CRS, as "west,south,east,north", or
 # empty for the whole file.
 BBOX_PROPERTY = "portolan/parquet_bbox"
+# The polygon of the copy in the file's CRS, as WKT, or empty when the copy
+# has no polygon.
+AREA_PROPERTY = "portolan/parquet_area"
 # A session folder with no file newer than this belongs to a session that
 # ended without cleaning up.
 STALE_SECONDS = 7 * 24 * 3600
 _SESSION_PREFIX = "session-"
 _PLACEHOLDER = "placeholder.gpkg"
-# A copy's path, and the "|layername=..." part of an OGR source after it.
-_SCRATCH_FILE = re.compile(r"portolan_registry/layers/(session-[^/]+)/([0-9a-f]{32}\.gpkg)(\|.*)?$")
-# SQLite keeps these next to a GeoPackage while a connection is open.
-_SIDECARS = ("", "-wal", "-shm", "-journal")
+_PLACEHOLDER_VRT = "placeholder.vrt"
+# A raster with one empty pixel. It stands in for a mosaic a saved project lost.
+_EMPTY_VRT = (
+    '<VRTDataset rasterXSize="1" rasterYSize="1">'
+    "<SRS>EPSG:4326</SRS><GeoTransform>0, 1, 0, 0, 0, -1</GeoTransform>"
+    '<VRTRasterBand dataType="Byte" band="1"><NoDataValue>0</NoDataValue></VRTRasterBand>'
+    "</VRTDataset>\n"
+)
+# The file types the session folders hold: GeoParquet copies and mosaics.
+_SUFFIXES = (".gpkg", ".vrt")
+# A copy's or a mosaic's path, and the "|layername=..." part of an OGR
+# source after it.
+_SCRATCH_FILE = re.compile(
+    r"portolan_registry/layers/(session-[^/]+)/([0-9a-f]{32}\.(?:gpkg|vrt))(\|.*)?$"
+)
+# SQLite keeps the first four next to a GeoPackage while a connection is
+# open. GDAL writes raster statistics to the last.
+_SIDECARS = ("", "-wal", "-shm", "-journal", ".aux.xml")
 _lock = threading.Lock()
 _session: Path | None = None
 _pending: set[Path] = set()
@@ -81,6 +107,9 @@ class Planned:
     crs: QgsCoordinateReferenceSystem
     bbox: tuple[float, float, float, float] | None
     estimate: int | None
+    # A Polygon or MultiPolygon WKT in the file's CRS. ``bbox`` is then its
+    # envelope.
+    area: str | None = None
 
 
 @dataclass(frozen=True)
@@ -91,6 +120,7 @@ class Prepared:
     path: Path
     written: parquet_query.Written
     bbox: tuple[float, float, float, float] | None = None
+    area: str | None = None
 
 
 def crs_for(plan: ReadPlan) -> QgsCoordinateReferenceSystem:
@@ -135,6 +165,30 @@ def file_bbox(
     return (rect.xMinimum(), rect.yMinimum(), rect.xMaximum(), rect.yMaximum())
 
 
+def file_area(
+    area: str,
+    file_crs: QgsCoordinateReferenceSystem,
+    context: QgsCoordinateTransformContext,
+) -> tuple[str, tuple[float, float, float, float]]:
+    """Transform a polygon in EPSG:4326 into the file's CRS.
+
+    Returns:
+        The polygon as WKT in the file's CRS, and its envelope.
+
+    Raises:
+        ValueError: ``area`` is not a Polygon or MultiPolygon WKT, or the
+            transform fails.
+    """
+    geometry = QgsGeometry.fromWkt(area)
+    if geometry.isNull() or geometry.type() != Qgis.GeometryType.Polygon:
+        raise ValueError(f"Not a Polygon or MultiPolygon: {area[:80]}")
+    transform = QgsCoordinateTransform(QgsCoordinateReferenceSystem("EPSG:4326"), file_crs, context)
+    if geometry.transform(transform) != Qgis.GeometryOperationResult.Success:
+        raise ValueError(f"Cannot transform the area into {file_crs.authid() or 'the file CRS'}")
+    rect = geometry.boundingBox()
+    return geometry.asWkt(), (rect.xMinimum(), rect.yMinimum(), rect.xMaximum(), rect.yMaximum())
+
+
 def plan(
     url: str,
     context: QgsCoordinateTransformContext,
@@ -142,28 +196,37 @@ def plan(
     extent_crs: QgsCoordinateReferenceSystem | None = None,
     extension_dir: str | None = None,
     cancelled: Callable[[], bool] | None = None,
+    area: str | None = None,
 ) -> Planned:
     """Read a GeoParquet file's schema and estimate its features. Safe off the main thread.
 
     Args:
         url: The file's URL or local path.
-        context: The project's transform context, for the extent.
+        context: The project's transform context, for the extent and the area.
         extent: Keep only features that intersect this rectangle.
         extent_crs: The CRS of ``extent``.
         extension_dir: Where DuckDB installs extensions if its default
             folder is read-only.
         cancelled: Polled while the queries run. When it returns True, the
             running query stops and raises ``duckdb.InterruptException``.
+        area: Keep only features that intersect this Polygon or
+            MultiPolygon WKT in EPSG:4326. It replaces ``extent``.
 
     Raises:
         parquet_query.DuckDBMissingError: DuckDB is absent or too old.
         GeoParquetError: The file has no geometry column.
+        ValueError: ``area`` is not a polygon the file's CRS can hold.
     """
     con = parquet_query.connection(extension_dir)
     read = parquet_query.read_plan(con, url, cancelled)
     crs = crs_for(read)
-    bbox = file_bbox(extent, extent_crs, crs, context)
-    return Planned(url, read, crs, bbox, parquet_query.estimate(con, url, read, bbox, cancelled))
+    if area is None:
+        bbox = file_bbox(extent, extent_crs, crs, context)
+        count = parquet_query.estimate(con, url, read, bbox, cancelled)
+        return Planned(url, read, crs, bbox, count)
+    wkt, bbox = file_area(area, crs, context)
+    count = parquet_query.estimate(con, url, read, bbox, cancelled, area=wkt)
+    return Planned(url, read, crs, bbox, count, wkt)
 
 
 def prepare(
@@ -180,20 +243,26 @@ def prepare(
             stops and raises ``duckdb.InterruptException``.
     """
     con = parquet_query.connection(extension_dir)
-    path = _new_path()
+    path = new_path(".gpkg")
     srs = planned.crs.authid() or planned.plan.crs or None
+    # Without an area the call leaves out the argument, so a stand-in for
+    # write_gpkg with the older signature still works.
+    extra = {} if planned.area is None else {"area": planned.area}
     try:
         written = parquet_query.write_gpkg(
-            con, planned.url, planned.plan, str(path), planned.bbox, srs, cancelled
+            con, planned.url, planned.plan, str(path), planned.bbox, srs, cancelled, **extra
         )
     except BaseException:
         discard_path(path)
         raise
-    return Prepared(planned.url, path, written, planned.bbox)
+    return Prepared(planned.url, path, written, planned.bbox, planned.area)
 
 
 def build(prepared: Prepared, name: str) -> tuple[QgsVectorLayer, int]:
     """Open the GeoPackage as a layer. Call on the main thread.
+
+    A copy of a file with no geometry column holds an attribute table. It
+    opens as a layer with no geometry.
 
     Returns:
         The layer, and how many features the copy left out because their
@@ -202,15 +271,17 @@ def build(prepared: Prepared, name: str) -> tuple[QgsVectorLayer, int]:
     Raises:
         OSError: QGIS cannot open the GeoPackage.
     """
-    layer = QgsVectorLayer(str(prepared.path), name, "ogr")
+    # The layer name selects the table. A GeoPackage that holds only an
+    # attribute table has no geometry layer for OGR to pick first.
+    layer = QgsVectorLayer(f"{prepared.path}|layername={LAYER}", name, "ogr")
     if not layer.isValid():
         discard_path(prepared.path)
         raise OSError(f"QGIS could not open {prepared.path}: {layer.error().summary()}")
-    with _lock:
-        _pending.discard(prepared.path)
+    release_path(prepared.path)
     layer.setCustomProperty(SOURCE_PROPERTY, prepared.url)
     bbox = prepared.bbox
     layer.setCustomProperty(BBOX_PROPERTY, ",".join(repr(v) for v in bbox) if bbox else "")
+    layer.setCustomProperty(AREA_PROPERTY, prepared.area or "")
     return layer, prepared.written.refused
 
 
@@ -237,12 +308,33 @@ def placeholder() -> Path:
     return path
 
 
-def restore_path(path: str) -> str:
-    """Map a copy's path in a saved project to a file that exists.
+def placeholder_vrt() -> Path:
+    """Return a one-pixel empty raster that stands in for a mosaic a saved project lost."""
+    path = scratch_folder() / _PLACEHOLDER_VRT
+    if not path.exists():
+        path.write_text(_EMPTY_VRT, encoding="utf-8")
+    return path
 
-    QGIS calls this for every path it reads from a project. The path of a
-    copy stays when the file exists. Otherwise the placeholder takes its
-    place, and ``needs_restore`` then reports the layer.
+
+def is_placeholder(path: Path) -> bool:
+    """Return whether ``path`` is one of the placeholders of ``restore_path``."""
+    folder = scratch_folder(create=False)
+    return path in {folder / _PLACEHOLDER, folder / _PLACEHOLDER_VRT}
+
+
+def is_lost_copy(path: Path) -> bool:
+    """Return whether ``path`` is a placeholder, or a scratch file that is gone."""
+    if is_placeholder(path):
+        return True
+    return _SCRATCH_FILE.search(path.as_posix()) is not None and not path.exists()
+
+
+def restore_path(path: str) -> str:
+    """Map the path of a copy or a mosaic in a saved project to a file that exists.
+
+    QGIS calls this for every path it reads from a project. The path stays
+    when the file exists. Otherwise a placeholder takes its place, and
+    ``needs_restore`` or ``mosaic.needs_rebuild`` then reports the layer.
     """
     match = _SCRATCH_FILE.search(path.replace("\\", "/"))
     if match is None:
@@ -252,9 +344,10 @@ def restore_path(path: str) -> str:
     if current.exists():
         return f"{current}{suffix}"
     try:
-        return f"{placeholder()}{suffix}"
+        stand_in = placeholder_vrt() if current.suffix == ".vrt" else placeholder()
     except OSError:
         return path
+    return f"{stand_in}{suffix}"
 
 
 def _source_path(layer: QgsVectorLayer) -> Path | None:
@@ -276,11 +369,7 @@ def needs_restore(layer: object) -> bool:
     ):
         return False
     path = _source_path(layer)
-    if path is None:
-        return False
-    if path == scratch_folder(create=False) / _PLACEHOLDER:
-        return True
-    return _SCRATCH_FILE.search(path.as_posix()) is not None and not path.exists()
+    return path is not None and is_lost_copy(path)
 
 
 def restore(
@@ -288,6 +377,7 @@ def restore(
     bbox_text: str,
     extension_dir: str | None = None,
     cancelled: Callable[[], bool] | None = None,
+    area_text: str = "",
 ) -> Prepared:
     """Copy a saved layer's features again. Safe off the main thread.
 
@@ -296,12 +386,24 @@ def restore(
         bbox_text: The value of ``BBOX_PROPERTY``.
         extension_dir: As for ``plan``.
         cancelled: As for ``prepare``.
+        area_text: The value of ``AREA_PROPERTY``. It is already in the
+            file's CRS.
     """
     con = parquet_query.connection(extension_dir)
     read = parquet_query.read_plan(con, layer_url, cancelled)
     parts = [float(part) for part in bbox_text.split(",")] if bbox_text else []
     bbox = (parts[0], parts[1], parts[2], parts[3]) if len(parts) == 4 else None
-    return prepare(Planned(layer_url, read, crs_for(read), bbox, None), extension_dir, cancelled)
+    planned = Planned(layer_url, read, crs_for(read), bbox, None, area_text or None)
+    return prepare(planned, extension_dir, cancelled)
+
+
+def saved_copy(layer: QgsVectorLayer) -> tuple[str, str, str]:
+    """Return what ``restore`` needs from a saved layer: its URL, box, and area."""
+    return (
+        str(layer.customProperty(SOURCE_PROPERTY) or ""),
+        str(layer.customProperty(BBOX_PROPERTY) or ""),
+        str(layer.customProperty(AREA_PROPERTY) or ""),
+    )
 
 
 def reopen(layer: QgsVectorLayer, prepared: Prepared) -> None:
@@ -314,8 +416,7 @@ def reopen(layer: QgsVectorLayer, prepared: Prepared) -> None:
     if not layer.isValid():
         discard_path(prepared.path)
         raise OSError(f"QGIS could not open {prepared.path}")
-    with _lock:
-        _pending.discard(prepared.path)
+    release_path(prepared.path)
     layer.triggerRepaint()
 
 
@@ -330,18 +431,34 @@ def _own_sessions() -> list[Path]:
     return [path for path in folder.glob(f"{_own_prefix()}*") if path.is_dir()]
 
 
-def _new_path() -> Path:
+def new_path(suffix: str) -> Path:
+    """Return a new file path in this session's scratch folder.
+
+    The sweep keeps the file until ``release_path`` or ``discard_path``
+    runs, because no layer reads it yet.
+
+    Args:
+        suffix: ``.gpkg`` for a GeoParquet copy, ``.vrt`` for a mosaic.
+    """
     global _session  # noqa: PLW0603 - one scratch folder per QGIS session
+    if suffix not in _SUFFIXES:
+        raise ValueError(f"The scratch folder holds no {suffix} files")
     with _lock:
         if _session is None or not _session.is_dir():
             _session = Path(tempfile.mkdtemp(prefix=_own_prefix(), dir=scratch_folder()))
-        path = _session / f"{uuid.uuid4().hex}.gpkg"
+        path = _session / f"{uuid.uuid4().hex}{suffix}"
         _pending.add(path)
         return path
 
 
+def release_path(path: Path) -> None:
+    """Let the sweep delete ``path`` once no layer reads it. Call after a layer opens it."""
+    with _lock:
+        _pending.discard(path)
+
+
 def _remove(path: Path) -> None:
-    """Delete a GeoPackage and its SQLite sidecars.
+    """Delete a scratch file and its sidecars.
 
     Windows refuses to delete a file that is still open. The next sweep, or
     ``remove_stale`` in a later session, deletes it then.
@@ -352,7 +469,7 @@ def _remove(path: Path) -> None:
 
 
 def discard_path(path: Path) -> None:
-    """Delete a GeoPackage that no layer reads."""
+    """Delete a scratch file that no layer reads."""
     with _lock:
         _pending.discard(path)
     _remove(path)
@@ -363,13 +480,18 @@ def _in_use(project: QgsProject) -> set[Path]:
     for layer in project.mapLayers().values():
         if isinstance(layer, QgsVectorLayer) and layer.providerType() == "ogr":
             path = _source_path(layer)
-            if path is not None:
-                paths.add(path)
+        elif isinstance(layer, QgsRasterLayer) and layer.providerType() == "gdal":
+            decoded = QgsProviderRegistry.instance().decodeUri("gdal", layer.source()).get("path")
+            path = Path(decoded) if decoded else None
+        else:
+            continue
+        if path is not None:
+            paths.add(path)
     return paths
 
 
 def sweep(project: QgsProject | None = None) -> None:
-    """Delete this QGIS's GeoPackages that no layer in ``project`` reads.
+    """Delete this QGIS's GeoPackages and mosaics that no layer in ``project`` reads.
 
     A layer the user duplicated reads the same file, so the file stays until
     the last layer that reads it is gone. The sweep also covers the folders
@@ -379,14 +501,15 @@ def sweep(project: QgsProject | None = None) -> None:
         keep = set(_pending)
     keep |= _in_use(project or QgsProject.instance())
     for session in _own_sessions():
-        for path in session.glob("*.gpkg"):
-            if path not in keep:
-                _remove(path)
+        for suffix in _SUFFIXES:
+            for path in session.glob(f"*{suffix}"):
+                if path not in keep:
+                    _remove(path)
 
 
 def close_session(project: QgsProject | None = None) -> None:
     """Sweep, then delete this QGIS's empty session folders. Call on unload."""
-    global _session  # noqa: PLW0603 - see _new_path
+    global _session  # noqa: PLW0603 - see new_path
     sweep(project)
     with _lock:
         _session = None

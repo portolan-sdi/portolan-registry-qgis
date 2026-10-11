@@ -8,16 +8,20 @@ import urllib.parse
 import urllib.request
 from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 import pytest
-from osgeo import gdal
+from osgeo import gdal, ogr
 from qgis.core import (
     QgsApplication,
     QgsCoordinateReferenceSystem,
     QgsCoordinateTransform,
+    QgsGeometry,
     QgsMapRendererParallelJob,
     QgsMapSettings,
+    QgsPointXY,
     QgsProject,
+    QgsRasterLayer,
     QgsRectangle,
     QgsVectorLayer,
     QgsWkbTypes,
@@ -26,6 +30,7 @@ from qgis.PyQt.QtCore import QDate, QMetaType, QSize, QThread, QVariant, qInstal
 from qgis.PyQt.QtGui import QColor, QImage
 
 from portolan_registry_qgis.core import parquet_query
+from portolan_registry_qgis.core import scope as scopes
 from portolan_registry_qgis.core.download import (
     WALK_WORKERS,
     Plan,
@@ -33,8 +38,10 @@ from portolan_registry_qgis.core.download import (
     local_path,
     plan,
 )
-from portolan_registry_qgis.core.stac import read_document
-from portolan_registry_qgis.qgis_io import downloader, layers, parquet_layer
+from portolan_registry_qgis.core.geoparquet import LAYER, GeoParquetError
+from portolan_registry_qgis.core.scope import Area, Everything, MapView
+from portolan_registry_qgis.core.stac import Asset, read_document
+from portolan_registry_qgis.qgis_io import downloader, layers, mosaic, parquet_layer
 from portolan_registry_qgis.qgis_io.downloader import DownloadJob, target_path
 from portolan_registry_qgis.qgis_io.network import (
     NetworkError,
@@ -825,3 +832,385 @@ def test_progress_names_every_busy_slot(catalog, collection, tmp_path, monkeypat
     release.set()
     wait_for(lambda: reports)
     assert reports[0].failed == []
+
+
+# ---------- CSV ----------
+
+
+def _csv_asset(catalog, name):
+    href = f"{catalog['base']}/table/{name}"
+    return Asset(name, href, None, "text/csv", ("data",), None, None, "csv")
+
+
+@pytest.mark.parametrize(
+    ("header", "expected"),
+    [
+        (b"id,lon,lat\n1,2,3\n", ("lon", "lat")),
+        (b"\xef\xbb\xbfID;Longitude;Latitude\n", ("Longitude", "Latitude")),
+        (b"name\tX\tY\n", ("X", "Y")),
+        (b'"lng","LAT"\n', ("lng", "LAT")),
+        # "lon" comes before "x" in the order of preference.
+        (b"x,y,lon,lat\n", ("lon", "lat")),
+        (b"id,lon,name\n", None),
+        (b"id,name\n", None),
+        (b"", None),
+    ],
+)
+def test_coordinate_columns(header, expected):
+    assert layers.coordinate_columns(header) == expected
+
+
+def test_csv_with_coordinates_opens_as_points(catalog):
+    gdal.VSICurlClearCache()
+    layer = layers.asset_layer(_csv_asset(catalog, "points.csv"))
+    assert layer.isValid()
+    assert layer.providerType() == "ogr"
+    assert QgsWkbTypes.displayString(layer.wkbType()) == "Point"
+    assert layer.crs().authid() == "EPSG:4326"
+    assert layer.featureCount() == 20
+    assert [f.name() for f in layer.fields()] == ["id", "Name", "Longitude", "LAT"]
+    first = next(layer.getFeatures())
+    assert first["Name"] == "p0"
+    assert first.geometry().asPoint().x() == pytest.approx(11.0)
+    assert first.geometry().asPoint().y() == pytest.approx(44.0)
+
+
+def test_csv_without_coordinates_opens_as_a_table(catalog):
+    gdal.VSICurlClearCache()
+    layer = layers.asset_layer(_csv_asset(catalog, "plain.csv"), "plain")
+    assert layer.isValid()
+    assert layer.wkbType() == QgsWkbTypes.Type.NoGeometry
+    assert layer.featureCount() == 3
+    assert [f.name() for f in layer.fields()] == ["id", "name", "score"]
+    assert [f["score"] for f in layer.getFeatures()] == [1.5, 2.5, 3.5]
+
+
+def test_csv_reads_only_the_header_range(catalog):
+    url = f"{catalog['base']}/table/points.csv"
+    whole = (catalog["root"] / "table" / "points.csv").read_bytes()
+    assert layers.csv_header(url) == whole[: layers.CSV_HEADER_BYTES]
+    assert layers.csv_header(f"{catalog['base']}/table/gone.csv") == b""
+
+
+def test_csv_with_no_header_opens_as_a_table(catalog):
+    # A server that ignores range requests gives no header to read.
+    url = f"{catalog['base']}/table/points.csv?noheader"
+    layer = layers.csv_layer(url, "points", header=lambda _url: b"")
+    assert layer.isValid()
+    assert layer.wkbType() == QgsWkbTypes.Type.NoGeometry
+    assert layer.featureCount() == 20
+
+
+# ---------- GeoParquet areas and tables ----------
+
+STRIP = "POLYGON((11.095 44.0, 11.305 44.0, 11.305 45.0, 11.095 45.0, 11.095 44.0))"
+
+
+@pytest.fixture
+def area_calls(monkeypatch):
+    """Record the area that reaches parquet_query.
+
+    Until the core stream adds the polygon filter, the stand-ins drop the
+    area and filter by its envelope. With the filter, they call it.
+    """
+    calls = []
+    estimate, write_gpkg = parquet_query.estimate, parquet_query.write_gpkg
+
+    def call(function, name, args, kwargs):
+        # estimate takes the box fourth, after the plan. write_gpkg takes
+        # the GeoPackage path there, and the box fifth.
+        bbox = args[3] if name == "estimate" else args[4]
+        calls.append((name, bbox, kwargs.get("area")))
+        try:
+            return function(*args, **kwargs)
+        except NotImplementedError:
+            kwargs.pop("area", None)
+            return function(*args, **kwargs)
+
+    monkeypatch.setattr(parquet_query, "estimate", lambda *a, **k: call(estimate, "estimate", a, k))
+    monkeypatch.setattr(
+        parquet_query, "write_gpkg", lambda *a, **k: call(write_gpkg, "write_gpkg", a, k)
+    )
+    return calls
+
+
+def test_parquet_layer_area(catalog, area_calls):
+    context = QgsProject.instance().transformContext()
+    # The area replaces the extent.
+    elsewhere = QgsRectangle(0, 0, 1, 1)
+    wgs84 = QgsCoordinateReferenceSystem("EPSG:4326")
+    planned = parquet_layer.plan(_parquet_url(catalog), context, elsewhere, wgs84, area=STRIP)
+    assert planned.bbox == pytest.approx((11.095, 44.0, 11.305, 45.0))
+    assert QgsGeometry.fromWkt(planned.area).equals(QgsGeometry.fromWkt(STRIP))
+    assert planned.estimate == 21
+    prepared = parquet_layer.prepare(planned)
+    assert prepared.area == planned.area
+    assert [name for name, _, _ in area_calls] == ["estimate", "write_gpkg"]
+    assert all(area == planned.area for _, _, area in area_calls)
+    assert all(bbox == planned.bbox for _, bbox, _ in area_calls)
+    layer, _ = parquet_layer.build(prepared, "strip")
+    assert sorted(f["id"] for f in layer.getFeatures()) == list(range(10, 31))
+    assert layer.customProperty(parquet_layer.AREA_PROPERTY) == planned.area
+
+    # A saved project copies the same area again.
+    area_calls.clear()
+    url, bbox, area = parquet_layer.saved_copy(layer)
+    assert area == planned.area
+    restored = parquet_layer.restore(url, bbox, area_text=area)
+    assert restored.area == planned.area
+    assert area_calls == [("write_gpkg", planned.bbox, planned.area)]
+    parquet_layer.discard_path(prepared.path)
+    parquet_layer.discard_path(restored.path)
+
+
+def test_parquet_layer_without_area_keeps_its_property_empty(catalog, area_calls):
+    planned, prepared = _load(_parquet_url(catalog))
+    assert planned.area is None
+    assert all(area is None for _, _, area in area_calls)
+    layer, _ = parquet_layer.build(prepared, "points")
+    assert layer.customProperty(parquet_layer.AREA_PROPERTY) == ""
+    assert parquet_layer.saved_copy(layer)[2] == ""
+
+
+def test_file_area_transforms_to_the_file_crs():
+    context = QgsProject.instance().transformContext()
+    mercator = QgsCoordinateReferenceSystem("EPSG:3857")
+    wkt, bbox = parquet_layer.file_area(STRIP, mercator, context)
+    expected = QgsCoordinateTransform(
+        QgsCoordinateReferenceSystem("EPSG:4326"), mercator, context
+    ).transformBoundingBox(QgsRectangle(11.095, 44.0, 11.305, 45.0))
+    assert bbox == pytest.approx(
+        (expected.xMinimum(), expected.yMinimum(), expected.xMaximum(), expected.yMaximum())
+    )
+    assert QgsGeometry.fromWkt(wkt).boundingBox().xMinimum() == pytest.approx(bbox[0])
+    with pytest.raises(ValueError, match="Not a Polygon"):
+        parquet_layer.file_area("LINESTRING(0 0, 1 1)", mercator, context)
+    with pytest.raises(ValueError, match="Not a Polygon"):
+        parquet_layer.file_area("not wkt", mercator, context)
+
+
+def _attribute_table(path, rows):
+    """Write a GeoPackage that holds one attribute table and no geometry."""
+    source = ogr.GetDriverByName("GPKG").CreateDataSource(str(path))
+    table = source.CreateLayer(LAYER, geom_type=ogr.wkbNone)
+    table.CreateField(ogr.FieldDefn("id", ogr.OFTInteger))
+    table.CreateField(ogr.FieldDefn("name", ogr.OFTString))
+    for i in range(rows):
+        feature = ogr.Feature(table.GetLayerDefn())
+        feature.SetField("id", i)
+        feature.SetField("name", f"r{i}")
+        table.CreateFeature(feature)
+    source = None
+
+
+def test_build_opens_a_table_without_geometry():
+    path = parquet_layer.new_path(".gpkg")
+    _attribute_table(path, 30)
+    prepared = parquet_layer.Prepared(
+        "https://x.test/plain.parquet", path, parquet_query.Written(30, "None", 0)
+    )
+    layer, refused = parquet_layer.build(prepared, "plain")
+    assert refused == 0
+    assert layer.isValid()
+    assert layer.wkbType() == QgsWkbTypes.Type.NoGeometry
+    assert layer.featureCount() == 30
+    assert [f.name() for f in layer.fields()] == ["fid", "id", "name"]
+    project = QgsProject.instance()
+    project.addMapLayer(layer)
+    parquet_layer.sweep(project)
+    assert path.exists()
+    project.removeMapLayer(layer.id())
+    parquet_layer.sweep(project)
+    assert not path.exists()
+
+
+def test_parquet_without_geometry_loads_as_a_table(catalog):
+    url = f"{catalog['base']}/table/plain.parquet"
+    try:
+        planned = parquet_layer.plan(url, QgsProject.instance().transformContext())
+    except GeoParquetError:
+        pytest.skip("The core stream adds the read plan for Parquet with no geometry")
+    prepared = parquet_layer.prepare(planned)
+    layer, _ = parquet_layer.build(prepared, "plain")
+    assert layer.isValid()
+    assert layer.wkbType() == QgsWkbTypes.Type.NoGeometry
+    assert layer.featureCount() == 30
+    assert sorted(f["id"] for f in layer.getFeatures()) == list(range(30))
+
+
+def test_new_path_refuses_other_files():
+    with pytest.raises(ValueError, match="no .txt files"):
+        parquet_layer.new_path(".txt")
+
+
+# ---------- COG mosaics ----------
+
+
+def _scope_bbox(scope):
+    return None if isinstance(scope, Everything) else scope.bbox
+
+
+def _overlaps(bbox, scope):
+    box = _scope_bbox(scope)
+    if box is None or bbox is None:
+        return True
+    return bbox[0] <= box[2] and bbox[2] >= box[0] and bbox[1] <= box[3] and bbox[3] >= box[1]
+
+
+@pytest.fixture
+def envelopes(monkeypatch):
+    """Stand in for core.scope until the core stream implements it."""
+    try:
+        scopes.bbox_of(Everything())
+    except NotImplementedError:
+        monkeypatch.setattr(scopes, "bbox_of", _scope_bbox)
+        monkeypatch.setattr(scopes, "intersects", _overlaps)
+
+
+@pytest.fixture
+def tiles(catalog):
+    href = f"{catalog['base']}/tiles/collection.json"
+    return read_document(fetch_json(href), href)
+
+
+def _tile(catalog, key):
+    return f"{catalog['base']}/tiles/{key}/{key}.tif"
+
+
+# Scopes in EPSG:4326 around the two items of the tiles collection.
+WEST_VIEW = MapView((10.9, 43.9, 11.5, 44.7))
+EAST_AREA = Area(
+    "POLYGON((12.1 44.1, 12.3 44.1, 12.3 44.3, 12.1 44.1))",
+    (12.1, 44.1, 12.3, 44.3),
+)
+# The envelope touches both items. East of 12.0 the triangle stays north of
+# item b, so it touches only item a.
+TRIANGLE = Area(
+    "POLYGON((11.5 44.3, 12.3 44.9, 11.5 44.9, 11.5 44.3))",
+    (11.5, 44.3, 12.3, 44.9),
+)
+
+
+@pytest.mark.usefixtures("envelopes")
+def test_item_hrefs_from_the_mirror(catalog, tiles, monkeypatch):
+    def no_walk(*_args, **_kwargs):
+        raise AssertionError("The mirror must answer without a walk")
+
+    monkeypatch.setattr(mosaic, "walk", no_walk)
+    assert mosaic.mirror_href(tiles) == f"{catalog['base']}/tiles/items.parquet"
+    both = [_tile(catalog, "a"), _tile(catalog, "b")]
+    assert mosaic.item_hrefs_in(tiles, Everything(), fetch_json) == both
+    assert mosaic.item_hrefs_in(tiles, WEST_VIEW, fetch_json) == both[:1]
+    assert mosaic.item_hrefs_in(tiles, EAST_AREA, fetch_json) == both[1:]
+    # DuckDB tests the item geometry against the polygon, not its envelope.
+    assert mosaic.item_hrefs_in(tiles, TRIANGLE, fetch_json) == both[:1]
+
+
+@pytest.mark.usefixtures("envelopes")
+def test_item_hrefs_by_walk(catalog, tiles, monkeypatch):
+    monkeypatch.setattr(parquet_query, "duckdb_status", lambda: (False, None))
+    both = [_tile(catalog, "a"), _tile(catalog, "b")]
+    assert mosaic.item_hrefs_in(tiles, Everything(), fetch_json) == both
+    executor = QtExecutor(WALK_WORKERS)
+    try:
+        assert mosaic.item_hrefs_in(tiles, WEST_VIEW, fetch_json, executor) == both[:1]
+        assert mosaic.item_hrefs_in(tiles, EAST_AREA, fetch_json, executor) == both[1:]
+    finally:
+        executor.shutdown()
+    assert mosaic.item_hrefs_in(tiles, Everything(), fetch_json, cancelled=lambda: True) == []
+
+
+@pytest.mark.usefixtures("envelopes")
+def test_item_hrefs_fall_back_to_the_walk(catalog, tiles):
+    (mirror,) = tiles.assets
+    broken = replace(tiles, assets=(replace(mirror, href=f"{catalog['base']}/tiles/gone.parquet"),))
+    assert mosaic.item_hrefs_in(broken, WEST_VIEW, fetch_json) == [_tile(catalog, "a")]
+
+
+@pytest.mark.usefixtures("envelopes")
+def test_mirror_query_reads_a_list_bbox():
+    sql, params = mosaic.mirror_query(
+        {"bbox": "DOUBLE[]", "assets": "STRUCT(a STRUCT(href VARCHAR))"}, WEST_VIEW
+    )
+    assert "bbox[1]" in sql
+    assert "links" not in sql
+    assert params == [10.9, 11.5, 43.9, 44.7]
+    sql, params = mosaic.mirror_query({"bbox": "STRUCT(xmin DOUBLE)", "assets": "x"}, Everything())
+    assert "WHERE" not in sql
+    assert params == []
+    with pytest.raises(ValueError, match="no bbox or assets"):
+        mosaic.mirror_query({"id": "VARCHAR"}, Everything())
+
+
+def _sample(layer, x, y):
+    value, ok = layer.dataProvider().sample(QgsPointXY(x, y), 1)
+    return value if ok else None
+
+
+def test_build_mosaic(catalog):
+    hrefs = [_tile(catalog, "a"), _tile(catalog, "b")]
+    layer = mosaic.build_mosaic(hrefs, "tiles")
+    assert layer.isValid()
+    assert layer.providerType() == "gdal"
+    assert layer.name() == "tiles"
+    assert layer.bandCount() == 1
+    extent = layer.extent()
+    assert extent.xMinimum() == pytest.approx(11.0)
+    assert extent.xMaximum() == pytest.approx(12.64)
+    assert _sample(layer, 11.3, 44.3) == 50
+    assert _sample(layer, 12.3, 44.3) == 150
+    assert mosaic.sources(layer) == hrefs
+    path = Path(layer.source())
+    assert path.suffix == ".vrt"
+    assert path.parent.parent == parquet_layer.scratch_folder()
+    assert not mosaic.needs_rebuild(layer)
+
+    project = QgsProject.instance()
+    project.addMapLayer(layer)
+    parquet_layer.sweep(project)
+    assert path.exists()
+    project.removeMapLayer(layer.id())
+    parquet_layer.sweep(project)
+    assert not path.exists()
+
+
+def test_build_mosaic_errors(catalog):
+    with pytest.raises(layers.LayerError, match="No file"):
+        mosaic.build_mosaic([], "nothing")
+    with pytest.raises(layers.LayerError, match="could not build"):
+        mosaic.build_mosaic([f"{catalog['base']}/tiles/gone.tif"], "gone")
+    with pytest.raises(mosaic.MosaicCancelledError):
+        mosaic.write_vrt([_tile(catalog, "a")], cancelled=lambda: True)
+    session = parquet_layer.new_path(".vrt").parent
+    assert list(session.glob("*.vrt")) == []
+
+
+def test_rebuild_a_saved_mosaic(catalog):
+    hrefs = [_tile(catalog, "a"), _tile(catalog, "b")]
+    layer = mosaic.build_mosaic(hrefs, "tiles")
+    gone = Path(layer.source())
+    parquet_layer.discard_path(gone)
+    # A saved project reads the placeholder in place of the lost VRT.
+    stand_in = parquet_layer.restore_path(str(gone))
+    assert Path(stand_in).name == "placeholder.vrt"
+    layer.setDataSource(stand_in, layer.name(), "gdal")
+    assert layer.isValid()
+    assert mosaic.needs_rebuild(layer)
+    mosaic.rebuild(layer)
+    assert layer.isValid()
+    assert not mosaic.needs_rebuild(layer)
+    assert Path(layer.source()) != gone
+    assert _sample(layer, 12.3, 44.3) == 150
+    assert mosaic.sources(layer) == hrefs
+    parquet_layer.discard_path(Path(layer.source()))
+
+
+def test_needs_rebuild_finds_a_missing_vrt(tmp_path):
+    # On QGIS 3.34 the layer keeps the path of the missing VRT.
+    gone = tmp_path / "portolan_registry" / "layers" / "session-1-x" / ("0" * 32 + ".vrt")
+    layer = QgsRasterLayer(str(gone), "gone", "gdal")
+    assert not mosaic.needs_rebuild(layer)
+    layer.setCustomProperty(mosaic.SOURCES_PROPERTY, "https://x.test/a.tif")
+    assert mosaic.needs_rebuild(layer)
+    with pytest.raises(layers.LayerError, match="keeps no mosaic sources"):
+        mosaic.rebuild(QgsRasterLayer(str(gone), "bare", "gdal"))

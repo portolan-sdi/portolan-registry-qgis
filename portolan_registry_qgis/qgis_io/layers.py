@@ -2,7 +2,7 @@
 
 PMTiles become native vector tile layers through the loopback tile server.
 Each layer carries every collection MapLibre style that draws its archive, as
-a named QGIS style. GeoJSON and FlatGeobuf open through OGR,
+a named QGIS style. GeoJSON, FlatGeobuf, and CSV open through OGR,
 COGs through GDAL, and COPC through the point cloud provider, all over HTTP
 range requests without a download. GeoParquet goes through DuckDB instead, in
 ``parquet_layer``.
@@ -10,18 +10,21 @@ range requests without a download. GeoParquet goes through DuckDB instead, in
 
 from __future__ import annotations
 
+import csv
 import json
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urljoin, urlsplit
 
 from qgis.core import (
+    QgsCoordinateReferenceSystem,
     QgsDataSourceUri,
     QgsMapBoxGlStyleConversionContext,
     QgsMapBoxGlStyleConverter,
     QgsMapLayer,
     QgsMapLayerStyle,
     QgsPointCloudLayer,
+    QgsProviderRegistry,
     QgsRasterLayer,
     QgsVectorLayer,
     QgsVectorTileLayer,
@@ -30,6 +33,7 @@ from qgis.core import (
 from portolan_registry_qgis.core.diagnose import open_failure
 from portolan_registry_qgis.core.hrefs import vsicurl_path
 from portolan_registry_qgis.core.parquet_query import is_flatpak
+from portolan_registry_qgis.qgis_io.network import NetworkError, fetch_range
 from portolan_registry_qgis.qgis_io.tileserver import Archive, TileServer, open_archive
 
 if TYPE_CHECKING:
@@ -40,6 +44,14 @@ if TYPE_CHECKING:
 PMTILES_PROPERTY = "portolan/pmtiles_url"
 DEFAULT_STYLE_NAME = "QGIS default style"
 _PMTILES_SCHEME = "pmtiles://"
+# Header names that hold point coordinates in EPSG:4326, in order of
+# preference. The comparison ignores case.
+LONGITUDE_NAMES = ("lon", "lng", "longitude", "x")
+LATITUDE_NAMES = ("lat", "latitude", "y")
+# The first request for a CSV reads this many bytes, enough for the header.
+CSV_HEADER_BYTES = 16384
+# The separators that GDAL's CSV driver detects in the header line.
+_CSV_SEPARATORS = (",", ";", "\t", "|")
 
 
 class LayerError(RuntimeError):
@@ -332,6 +344,84 @@ def _sprite(
     return cache[root]
 
 
+def coordinate_columns(header: bytes) -> tuple[str, str] | None:
+    """Find the longitude and latitude columns in the first line of a CSV.
+
+    Args:
+        header: The start of the file. Only the first line is read.
+
+    Returns:
+        The exact names of the longitude and latitude columns, or None when
+        the header does not name both.
+    """
+    lines = header.decode("utf-8-sig", errors="replace").splitlines()[:1]
+    if not lines:
+        return None
+    separator = max(_CSV_SEPARATORS, key=lines[0].count)
+    names = [name.strip() for name in next(csv.reader(lines, delimiter=separator))]
+    by_folded: dict[str, str] = {}
+    for name in names:
+        by_folded.setdefault(name.casefold(), name)
+    lon = next((by_folded[n] for n in LONGITUDE_NAMES if n in by_folded), None)
+    lat = next((by_folded[n] for n in LATITUDE_NAMES if n in by_folded), None)
+    if lon is None or lat is None:
+        return None
+    return lon, lat
+
+
+def csv_header(url: str) -> bytes:
+    """Return the first bytes of a CSV, or nothing when the server cannot send them.
+
+    A range request keeps a large file from downloading in full. A server
+    that ignores ranges gives no header, and the CSV opens as a table.
+    """
+    try:
+        return fetch_range(url, 0, CSV_HEADER_BYTES)
+    except NetworkError:
+        return b""
+
+
+def csv_source(url: str, columns: tuple[str, str] | None) -> str:
+    """Return the OGR source that reads a CSV over HTTP.
+
+    The QGIS delimited text provider reads local files only. Thus the CSV
+    goes through the GDAL CSV driver over ``/vsicurl/``. The ``CSV:`` prefix
+    selects the driver when the URL does not end in ``.csv``. The driver
+    detects the separator and the column types.
+
+    Args:
+        url: The CSV.
+        columns: The longitude and latitude columns, or None for a table
+            with no geometry.
+    """
+    options = ["AUTODETECT_TYPE=YES"]
+    if columns is not None:
+        options += [f"X_POSSIBLE_NAMES={columns[0]}", f"Y_POSSIBLE_NAMES={columns[1]}"]
+    parts = {"path": f"CSV:{vsicurl_path(url)}", "openOptions": options}
+    return str(QgsProviderRegistry.instance().encodeUri("ogr", parts))
+
+
+def csv_layer(url: str, title: str, header: Callable[[str], bytes] = csv_header) -> QgsVectorLayer:
+    """Open a CSV over HTTP, as points when its header names coordinates.
+
+    A header with longitude and latitude columns gives a point layer in
+    EPSG:4326. Any other CSV opens as a table with no geometry.
+
+    Args:
+        url: The CSV.
+        title: The layer name.
+        header: Returns the first bytes of the file. Call off the main
+            thread when the server is slow, and pass the bytes in.
+    """
+    columns = coordinate_columns(header(url))
+    layer = QgsVectorLayer(csv_source(url, columns), title, "ogr")
+    if columns is not None and layer.isValid():
+        # A CSV has no CRS of its own. STAC gives coordinates as longitude
+        # and latitude.
+        layer.setCrs(QgsCoordinateReferenceSystem("EPSG:4326"))
+    return layer
+
+
 def asset_layer(asset: Asset, name: str | None = None) -> QgsMapLayer:
     """Open a data asset as a layer, read in place over HTTP.
 
@@ -343,6 +433,8 @@ def asset_layer(asset: Asset, name: str | None = None) -> QgsMapLayer:
     layer: QgsMapLayer
     if asset.format in {"geojson", "flatgeobuf"}:
         layer = QgsVectorLayer(path, title, "ogr")
+    elif asset.format == "csv":
+        layer = csv_layer(asset.href, title)
     elif asset.format == "cog":
         layer = QgsRasterLayer(path, title, "gdal")
     elif asset.format == "copc":

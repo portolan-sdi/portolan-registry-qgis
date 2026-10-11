@@ -345,6 +345,29 @@ def test_view_on_map_adds_the_tiles_and_load_full_data_the_parquet(iface, server
     window.disconnect_canvas()
 
 
+def test_a_layer_outside_the_map_moves_the_map(iface, server, catalog):
+    # The partido of Pergamino loaded, but the map showed another place, so
+    # the layer looked as if it did not load. QGIS zooms to a new layer only
+    # in an empty project.
+    window = open_window(iface, server, catalog)
+    open_collection(window)
+    QgsProject.instance().addMapLayer(QgsVectorLayer("Point?crs=EPSG:4326", "other", "memory"))
+    far = QgsRectangle(100, 0, 101, 1)
+    iface.canvas.setExtent(far)
+    window._add_file(asset_row(window, "geojson").data(0, window_module._ROLE).asset)
+    added = QgsProject.instance().mapLayersByName("geojson")[0]
+    assert iface.canvas.extent().intersects(added.extent())
+    assert any("The map moved to show it." in item.text() for item in iface.bar.items())
+    # A layer that the map shows already leaves the map where it is.
+    view = QgsRectangle(added.extent())
+    view.grow(0.5)
+    iface.canvas.setExtent(view)
+    before = iface.canvas.extent()
+    window._add_file(asset_row(window, "geojson").data(0, window_module._ROLE).asset)
+    assert iface.canvas.extent() == before
+    window.disconnect_canvas()
+
+
 def test_buttons_fall_back_to_other_formats(iface, server, catalog, monkeypatch):
     # Without PMTiles, View on map adds the COG. Without DuckDB, Load full
     # data adds the GeoJSON instead of the GeoParquet.

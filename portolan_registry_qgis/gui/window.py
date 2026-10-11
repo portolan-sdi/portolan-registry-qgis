@@ -117,6 +117,8 @@ if TYPE_CHECKING:
 LOG_TAG = "Portolan Registry"
 _ROLE = ROLE
 _WGS84 = "EPSG:4326"
+# The message after an add that moved the map to the new layers.
+_ZOOMED = " The map moved to show it."
 # The lists show this many rows, then a row that shows the next page. The
 # tree reads the child documents of each page it shows, for their icons.
 CATALOG_PAGE = 25
@@ -1346,9 +1348,10 @@ class RegistryWindow(QDialog):
                 return
             for note in warnings:
                 _log(note, Qgis.MessageLevel.Warning)
-            for layer in layers:
-                QgsProject.instance().addMapLayer(layer)
-            self._info(f"Added {len(layers)} vector tile layer(s) from {document.title}.")
+            moved = self._add_layers(layers)
+            self._info(
+                f"Added {len(layers)} vector tile layer(s) from {document.title}.{_ZOOMED * moved}"
+            )
 
         run_task(f"Open vector tiles of {document.title}", prepare, done)
 
@@ -1358,8 +1361,8 @@ class RegistryWindow(QDialog):
         except layer_io.LayerError as failure:
             self._warn(str(failure))
             return
-        QgsProject.instance().addMapLayer(layer)
-        self._info(f"Added {asset.label}.")
+        moved = self._add_layers([layer])
+        self._info(f"Added {asset.label}.{_ZOOMED * moved}")
 
     def _parquet_scope(self) -> tuple[Scope, dict[str, Any]] | None:
         """Return the scope and the ``parquet_layer.plan`` arguments it gives.
@@ -1461,9 +1464,9 @@ class RegistryWindow(QDialog):
             except OSError as failure:
                 self._warn(str(failure))
                 return
-            QgsProject.instance().addMapLayer(layer)
+            moved = self._add_layers([layer])
             unit = "features" if planned.plan.has_geometry else "rows"
-            notes = [f"Added {result.written.features:,} {unit} from {name}."]
+            notes = [f"Added {result.written.features:,} {unit} from {name}.{_ZOOMED * moved}"]
             if refused:
                 notes.append(
                     f"{refused:,} of them have no geometry, because their geometry type "
@@ -1498,6 +1501,46 @@ class RegistryWindow(QDialog):
         )
         box.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         box.exec()
+
+    def _add_layers(self, layers: list[Any]) -> bool:
+        """Add ``layers`` to the project, and show them when the map shows none of them.
+
+        QGIS zooms to a new layer only in an empty project. A layer that
+        lands outside the map looks as if it did not load, so the map moves
+        to the layers. A table has no extent and does not move the map.
+
+        Returns:
+            Whether the map moved.
+        """
+        project = QgsProject.instance()
+        canvas = self._iface.mapCanvas()
+        target = canvas.mapSettings().destinationCrs()
+        view = canvas.extent()
+        union = QgsRectangle()
+        union.setNull()
+        for layer in layers:
+            project.addMapLayer(layer)
+        for layer in layers:
+            if not layer.isSpatial() or layer.extent().isNull():
+                continue
+            transform = QgsCoordinateTransform(layer.crs(), target, project)
+            try:
+                extent = transform.transformBoundingBox(layer.extent())
+            except Exception as error:  # noqa: BLE001 - see canvas_bbox
+                _log(f"Could not place {layer.name()} on the map: {error}")
+                continue
+            if extent.intersects(view):
+                return False
+            union.combineExtentWith(extent)
+        if union.isNull():
+            return False
+        if union.isEmpty():
+            # One point has no size, so the map keeps its scale.
+            canvas.setCenter(union.center())
+        else:
+            canvas.setExtent(union.buffered(max(union.width(), union.height()) * 0.05))
+        canvas.refresh()
+        return True
 
     def _zoom(self) -> None:
         document = self._document
@@ -1592,8 +1635,10 @@ class RegistryWindow(QDialog):
             except layer_io.LayerError as failure:
                 self._warn(str(failure))
                 return
-            QgsProject.instance().addMapLayer(layer)
-            self._info(f"Added {count(len(hrefs), 'file')} of {name} as one layer.")
+            moved = self._add_layers([layer])
+            self._info(
+                f"Added {count(len(hrefs), 'file')} of {name} as one layer.{_ZOOMED * moved}"
+            )
 
         self._info(f"Building a mosaic of {count(len(hrefs), 'file')}…")
         run_task(f"Build a mosaic of {name}", write, done)

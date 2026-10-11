@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 import threading
 import time
@@ -1152,6 +1153,44 @@ def test_build_mosaic_errors(catalog):
         mosaic.write_vrt([_tile(catalog, "a")], cancelled=lambda: True)
     session = parquet_layer.new_path(".vrt").parent
     assert list(session.glob("*.vrt")) == []
+
+
+def test_a_mosaic_says_why_gdal_left_a_file_out(catalog, monkeypatch):
+    # BuildVRT reports only "Can't open <path>. Skipping it." The mosaic asks
+    # GDAL for the reason, such as the HTTP status.
+    logged = []
+    monkeypatch.setattr(mosaic, "_log", logged.append)
+    gone = f"{catalog['base']}/tiles/gone-{id(logged)}.tif"
+    with pytest.raises(layers.LayerError) as failure:
+        mosaic.write_vrt([gone])
+    assert f"GDAL could not open {gone}" in str(failure.value)
+    assert "404" in str(failure.value)
+    # With one good file, the mosaic holds it and the log names the other.
+    path = mosaic.write_vrt([_tile(catalog, "a"), gone])
+    assert path.exists()
+    assert any(
+        entry.startswith(f"The mosaic left out {gone}:") and "404" in entry for entry in logged
+    )
+    parquet_layer.discard_path(path)
+
+
+def test_a_failed_read_does_not_stay_failed(catalog):
+    # GDAL remembers a failed request for the life of the process. A file
+    # that a busy server refused once must open when it answers again.
+    name = f"later-{id(catalog)}.tif"
+    href = f"{catalog['base']}/tiles/{name}"
+    with pytest.raises(layers.LayerError):
+        mosaic.write_vrt([href])
+    target = catalog["root"] / "tiles" / name
+    shutil.copy(catalog["root"] / "tiles" / "a" / "a.tif", target)
+    try:
+        path = mosaic.write_vrt([href])
+        assert path.exists()
+        parquet_layer.discard_path(path)
+        cog = Asset(name, href, None, "image/tiff", ("data",), None, None, "cog")
+        assert layers.asset_layer(cog).isValid()
+    finally:
+        target.unlink()
 
 
 def test_rebuild_a_saved_mosaic(catalog):

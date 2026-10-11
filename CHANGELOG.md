@@ -23,6 +23,9 @@
 - In such a collection, **All files** lists one row for every file of the items, then the COG file of each item, one page at a time.
 - **Add as one layer** adds the COG files of a collection's items in the area as one VRT mosaic. A saved project builds the VRT again.
 - **Download > Everything in** leaves out the items outside the area.
+- When a new layer lands outside the map, the map moves to it, and the message says so. Before, the layer showed in the Layers panel only.
+- A COG that failed to open once opens on the next try. GDAL kept a failed request for the life of the QGIS session. COG reads now retry HTTP 429, 500, 502, 503, and 504.
+- When a mosaic leaves a file out, the message log gives GDAL's reason, such as an HTTP status.
 - With a map view or an area, **Download > Selected files** saves a GeoParquet file as a GeoPackage of the features in the area.
 - GeoParquet loads through a GeoPackage that DuckDB writes. A million polygons from a local file load in 2 seconds instead of 19, QGIS stays responsive, and memory use drops from 1.9 GB to 380 MB.
 - GeoParquet files with date or timestamp columns load their features. Before, the layer was empty.

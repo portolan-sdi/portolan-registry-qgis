@@ -29,7 +29,7 @@ from portolan_registry_qgis.core.geoparquet import quote
 from portolan_registry_qgis.core.hrefs import asset_href, vsicurl_path
 from portolan_registry_qgis.core.stac import asset_format
 from portolan_registry_qgis.qgis_io import parquet_layer
-from portolan_registry_qgis.qgis_io.layers import LayerError
+from portolan_registry_qgis.qgis_io.layers import LayerError, gdal_open_error, remote_reads
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -263,7 +263,8 @@ def write_vrt(hrefs: list[str], cancelled: Callable[[], bool] | None = None) -> 
     one or more requests per file. Safe off the main thread.
 
     GDAL leaves out a file whose CRS or band count differs from the first
-    file's.
+    file's, and a file it cannot open. The message log names each file left
+    out and GDAL's reason, such as an HTTP status.
 
     Raises:
         MosaicCancelledError: ``cancelled`` returned True.
@@ -277,22 +278,42 @@ def write_vrt(hrefs: list[str], cancelled: Callable[[], bool] | None = None) -> 
         return 0 if cancelled is not None and cancelled() else 1
 
     options = gdal.BuildVRTOptions(callback=progress)
+    paths = [vsicurl_path(h) for h in hrefs]
     error = ""
+    # BuildVRT says only "Can't open <path>. Skipping it." for a file it
+    # cannot open. The handler keeps those paths, to ask GDAL why.
+    skipped: list[str] = []
+
+    def keep(_level: int, _number: int, message: str) -> None:
+        if message.startswith("Can't open ") and message.endswith(". Skipping it"):
+            skipped.append(message[len("Can't open ") : -len(". Skipping it")])
+
+    gdal.PushErrorHandler(keep)
     try:
-        dataset = gdal.BuildVRT(str(path), [vsicurl_path(h) for h in hrefs], options=options)
-        bands = dataset.RasterCount if dataset is not None else 0
-        if dataset is None:
-            error = gdal.GetLastErrorMsg()
-        # Closing the dataset writes the file.
-        dataset = None
+        with remote_reads(paths):
+            dataset = gdal.BuildVRT(str(path), paths, options=options)
+            bands = dataset.RasterCount if dataset is not None else 0
+            if dataset is None:
+                error = gdal.GetLastErrorMsg()
+            # Closing the dataset writes the file.
+            dataset = None
+            reasons = {skip: gdal_open_error(skip) for skip in skipped}
     except RuntimeError as failure:
-        bands, error = 0, str(failure)
+        bands, error, reasons = 0, str(failure), {}
+    finally:
+        gdal.PopErrorHandler()
+    by_path = dict(zip(paths, hrefs, strict=True))
+    for skip, reason in reasons.items():
+        _log(f"The mosaic left out {by_path.get(skip, skip)}: {reason}")
     if cancelled is not None and cancelled():
         parquet_layer.discard_path(path)
         raise MosaicCancelledError("Cancelled")
     if bands == 0 or not path.exists():
         parquet_layer.discard_path(path)
-        raise LayerError(f"GDAL could not build a mosaic of {len(hrefs)} files: {error}")
+        if reasons:
+            first, reason = next(iter(reasons.items()))
+            error = f"GDAL could not open {by_path.get(first, first)}: {reason}"
+        raise LayerError(f"GDAL could not build a mosaic of {len(hrefs)} files. {error}")
     return path
 
 

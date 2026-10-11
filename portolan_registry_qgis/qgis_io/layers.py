@@ -10,12 +10,14 @@ range requests without a download. GeoParquet goes through DuckDB instead, in
 
 from __future__ import annotations
 
+import contextlib
 import csv
 import json
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urljoin, urlsplit
 
+from osgeo import gdal
 from qgis.core import (
     QgsCoordinateReferenceSystem,
     QgsDataSourceUri,
@@ -37,7 +39,7 @@ from portolan_registry_qgis.qgis_io.network import NetworkError, fetch_range
 from portolan_registry_qgis.qgis_io.tileserver import Archive, TileServer, open_archive
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
 
     from portolan_registry_qgis.core.stac import Asset, Document
 
@@ -59,6 +61,55 @@ _CSV_SEPARATORS = (",", ";", "\t", "|")
 
 class LayerError(RuntimeError):
     """QGIS could not open the asset as a layer."""
+
+
+# GDAL retries HTTP 429, 500, 502, 503, and 504 with these settings. A
+# setting that the user gave in the QGIS options wins.
+_HTTP_RETRY = {"GDAL_HTTP_MAX_RETRY": "3", "GDAL_HTTP_RETRY_DELAY": "1"}
+
+
+@contextlib.contextmanager
+def remote_reads(paths: list[str]) -> Iterator[None]:
+    """Open ``/vsicurl`` paths with retries, and without a remembered failure.
+
+    GDAL keeps the result of a failed request for the life of the process.
+    One busy moment on the server then fails every later open of the file
+    until QGIS restarts. The function drops that result for ``paths``. The
+    retry settings apply to the calling thread only.
+    """
+    clear = getattr(gdal, "VSICurlPartialClearCache", None)
+    if clear is not None:
+        for path in paths:
+            clear(path)
+    earlier = {key: gdal.GetThreadLocalConfigOption(key, None) for key in _HTTP_RETRY}
+    for key, value in _HTTP_RETRY.items():
+        if gdal.GetConfigOption(key) is None:
+            gdal.SetThreadLocalConfigOption(key, value)
+    try:
+        yield
+    finally:
+        for key, value in earlier.items():
+            gdal.SetThreadLocalConfigOption(key, value)
+
+
+def gdal_open_error(path: str) -> str:
+    """Open ``path`` with GDAL and return its error, or "" when it opens.
+
+    The error handler and the last error are local to the thread, so the
+    function does not change what other threads report.
+    """
+    gdal.PushErrorHandler("CPLQuietErrorHandler")
+    try:
+        gdal.ErrorReset()
+        try:
+            dataset = gdal.Open(path)
+        except RuntimeError as error:
+            return str(error)
+        if dataset is not None:
+            return ""
+        return gdal.GetLastErrorMsg() or "GDAL gave no reason"
+    finally:
+        gdal.PopErrorHandler()
 
 
 @dataclass
@@ -466,7 +517,8 @@ def asset_layer(asset: Asset, name: str | None = None) -> QgsMapLayer:
     elif asset.format == "csv":
         layer = csv_layer(asset.href, title)
     elif asset.format == "cog":
-        layer = QgsRasterLayer(path, title, "gdal")
+        with remote_reads([path]):
+            layer = QgsRasterLayer(path, title, "gdal")
     elif asset.format == "copc":
         layer = QgsPointCloudLayer(asset.href, title, "copc")
     else:

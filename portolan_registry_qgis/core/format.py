@@ -35,12 +35,17 @@ _MEDIA_LABELS = {
 }
 
 
-def format_label(format: str | None, media_type: str | None, href: str) -> str:
+def format_label(
+    format: str | None, media_type: str | None, href: str, tabular: bool = False
+) -> str:
     """Return a short name for an asset's format.
 
-    A detected format names itself. Otherwise the label comes from the media
+    A detected format names itself. Parquet with no geometry column is
+    "Parquet", not "GeoParquet". Otherwise the label comes from the media
     type, then from the file extension, and is "File" when neither helps.
     """
+    if format == "parquet" and tabular:
+        return "Parquet"
     if format in _FORMAT_LABELS:
         return _FORMAT_LABELS[format]
     media = (media_type or "").split(";")[0].strip().lower()

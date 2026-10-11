@@ -87,6 +87,9 @@ class Asset:
     size: int | None
     checksum: str | None
     format: AssetFormat | None
+    # True for a Parquet file whose ``table:columns`` list no geometry
+    # column. The spec calls this a tabular collection.
+    tabular: bool = False
 
     @property
     def label(self) -> str:
@@ -349,13 +352,58 @@ def _account(raw: dict[str, Any], fallback: str | None) -> str | None:
     return fallback
 
 
+_GEOMETRY_NAMES = frozenset({"geometry", "geom", "the_geom", "wkb_geometry", "shape", "geog"})
+_GEOMETRY_TYPES = (
+    "geometry",
+    "geography",
+    "wkb",
+    "point",
+    "linestring",
+    "polygon",
+    "multipoint",
+    "multilinestring",
+    "multipolygon",
+)
+
+
+def is_geometry_column(column: object) -> bool:
+    """Return whether a ``table:columns`` entry describes a geometry column.
+
+    The table extension has no geometry type. Publishers write the GeoParquet
+    type, such as ``geometry``, or the storage type ``binary`` under a common
+    geometry name.
+    """
+    if not isinstance(column, dict):
+        return False
+    name = str(column.get("name") or "").lower()
+    kind = str(column.get("type") or "").lower()
+    return name in _GEOMETRY_NAMES or kind.startswith(_GEOMETRY_TYPES)
+
+
+def is_tabular(columns: object) -> bool:
+    """Return whether ``table:columns`` list columns and none of them is a geometry.
+
+    A missing or empty list returns False, because it tells nothing.
+    """
+    if not isinstance(columns, list) or not columns:
+        return False
+    return not any(is_geometry_column(column) for column in columns)
+
+
 def assets_of(document: dict[str, Any], base: str) -> tuple[Asset, ...]:
-    """Return a document's assets with resolved hrefs and detected formats."""
+    """Return a document's assets with resolved hrefs and detected formats.
+
+    A Parquet asset is tabular when its own ``table:columns``, else the
+    document's or the item properties', list no geometry column.
+    """
     raw_assets = document.get("assets")
     if not isinstance(raw_assets, dict):
         return ()
     properties = document.get("properties")
     item_account = _account(properties, None) if isinstance(properties, dict) else None
+    shared_columns = document.get("table:columns")
+    if shared_columns is None and isinstance(properties, dict):
+        shared_columns = properties.get("table:columns")
     assets = []
     for key, raw in raw_assets.items():
         if not isinstance(raw, dict) or not isinstance(raw.get("href"), str):
@@ -368,6 +416,8 @@ def assets_of(document: dict[str, Any], base: str) -> tuple[Asset, ...]:
         title = raw.get("title")
         media = raw.get("type")
         checksum = raw.get("file:checksum")
+        detected = asset_format(href, media if isinstance(media, str) else None)
+        columns = raw.get("table:columns", shared_columns)
         assets.append(
             Asset(
                 key=str(key),
@@ -379,7 +429,8 @@ def assets_of(document: dict[str, Any], base: str) -> tuple[Asset, ...]:
                 else (),
                 size=_int_or_none(raw.get("file:size")),
                 checksum=checksum if isinstance(checksum, str) else None,
-                format=asset_format(href, media if isinstance(media, str) else None),
+                format=detected,
+                tabular=detected == "parquet" and is_tabular(columns),
             )
         )
     return tuple(assets)

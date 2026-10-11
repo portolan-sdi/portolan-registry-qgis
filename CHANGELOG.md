@@ -15,6 +15,7 @@
 - Right-click a publisher to open its catalog in the browser. The QGIS setting `PortolanRegistry/browser_url` points the links at a browser mirror.
 - CSV files open over HTTP, as points when the header names longitude and latitude columns.
 - A Parquet file with no geometry column loads as a table.
+- A Parquet file whose `table:columns` name no geometry column shows as **Parquet**, not **GeoParquet**. Its button reads **Load table**, and the area picker hides.
 - An area picker replaces **Read GeoParquet in the map extent only**. It offers everything, the map view, a drawn polygon, or the polygons of a layer.
 - A GeoParquet load with a polygon keeps only the features that intersect the polygon. A saved project copies the same area again.
 - A collection whose children are all items shows one **N files** row in the tree.

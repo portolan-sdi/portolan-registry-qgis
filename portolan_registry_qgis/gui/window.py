@@ -124,6 +124,7 @@ CONFIRM_FILES = 500
 # The two primary buttons. Each adds the first file of its formats, in order.
 VIEW_TIP = "Fast. Draws with the publisher's style."
 LOAD_TIP = "All features and attributes, for analysis."
+TABLE_TIP = "All rows and columns, as a table with no geometry."
 VIEW_FORMATS = ("pmtiles", "cog")
 LOAD_FORMATS = ("parquet", "flatgeobuf", "geojson", "csv")
 BROWSER_LINK = "See all files and metadata in the browser"
@@ -994,7 +995,7 @@ class RegistryWindow(QDialog):
             if asset is None:
                 row.setData(0, BADGE_ROLE, ("PMTiles", "pmtiles", ""))
             else:
-                badge = format_label(asset.format, asset.type, asset.href)
+                badge = format_label(asset.format, asset.type, asset.href, asset.tabular)
                 row.setData(0, BADGE_ROLE, (badge, asset.format, human_size(asset.size)))
             self.assets.addTopLevelItem(row)
         if only_items(document):
@@ -1014,9 +1015,12 @@ class RegistryWindow(QDialog):
         # shows how to install DuckDB.
         formats = LOAD_FORMATS if parquet_query.duckdb_status()[0] else LOAD_FORMATS[1:]
         self._load_target = _first(loadable, formats) or _first(loadable, ("parquet",))
+        # A table has no geometry, so it loads whole and says so.
+        table = self._load_target is not None and _is_table(self._load_target)
+        self.load_button.setText("Load table" if table else "Load full data")
         for button, target, tip in (
             (self.view_button, self._view_target, VIEW_TIP),
-            (self.load_button, self._load_target, LOAD_TIP),
+            (self.load_button, self._load_target, TABLE_TIP if table else LOAD_TIP),
         ):
             button.setVisible(target is not None)
             if target is not None:
@@ -1031,7 +1035,7 @@ class RegistryWindow(QDialog):
         self.tile_styles.setStyleSheet(f"color: {muted(self.palette()).name()};")
         self.tile_styles.setVisible(bool(styles and layer_io.archive_urls(document)))
         # The scope limits GeoParquet reads, mosaics, and the walk of a download.
-        has_parquet = any(item.format == "parquet" for item in loadable)
+        has_parquet = any(item.format == "parquet" and not _is_table(item) for item in loadable)
         self.scope_row.setVisible(has_parquet or bool(document.children))
 
     def _hide_actions(self) -> None:
@@ -1826,12 +1830,17 @@ def _item_cog(item: Document) -> Asset | None:
     return next((asset for asset in item.data_assets if asset.format == "cog"), None)
 
 
+def _is_table(item: Loadable) -> bool:
+    """Return whether ``item`` is a Parquet file with no geometry column."""
+    return item.asset is not None and item.asset.tabular
+
+
 def _format_name(item: Loadable) -> str:
     """Return the format of a file in plain words, such as "GeoParquet"."""
     asset = item.asset
     if asset is None:
         return "PMTiles"
-    return format_label(asset.format, asset.type, asset.href)
+    return format_label(asset.format, asset.type, asset.href, asset.tabular)
 
 
 def _loadable_tip(item: Loadable, on_map: bool = False) -> str:

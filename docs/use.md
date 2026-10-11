@@ -29,7 +29,7 @@ Select the catalog header to see the catalog's own details again.
 
 ## Add data to the map
 
-**Add to map** shows up to two buttons. **View on map** adds the PMTiles, or a COG when there are no PMTiles. Use it to look at the data, because it reads only the tiles on screen and draws with the publisher's style. **Load full data** adds the GeoParquet, else the FlatGeobuf, GeoJSON, or CSV. Use it for analysis, because it gives every feature with its full attributes.
+**Add to map** shows up to two buttons. **View on map** adds the PMTiles, or a COG when there are no PMTiles. Use it to look at the data, because it reads only the tiles on screen and draws with the publisher's style. **Load full data** adds the GeoParquet, else the FlatGeobuf, GeoJSON, or CSV. Use it for analysis, because it gives every feature with its full attributes. When the collection's `table:columns` name no geometry column, the badge says **Parquet** instead of **GeoParquet**, and the button reads **Load table**.
 
 To add a different file, select one or more rows under **All files**, then select **Add selected**. A double-click on a row adds it too. When a collection opens, the window selects the file that **View on map** adds. **All files** lists each file once, and leaves out styles, thumbnails, upstream `source` files, and the `collection-mirror` index.
 

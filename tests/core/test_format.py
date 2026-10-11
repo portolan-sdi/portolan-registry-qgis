@@ -30,6 +30,10 @@ def test_human_size(size, text):
     ("args", "label"),
     [
         (("parquet", None, "https://x/a.parquet"), "GeoParquet"),
+        (("parquet", None, "https://x/a.parquet", False), "GeoParquet"),
+        (("parquet", None, "https://x/a.parquet", True), "Parquet"),
+        # Only Parquet has a tabular name.
+        (("geojson", None, "https://x/a.geojson", True), "GeoJSON"),
         (("pmtiles", None, "https://x/a.pmtiles"), "PMTiles"),
         ((None, "application/json; charset=utf-8", "https://x/a"), "JSON"),
         ((None, "image/svg+xml", "https://x/a"), "SVG"),

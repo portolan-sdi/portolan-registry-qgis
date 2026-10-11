@@ -20,6 +20,7 @@ from portolan_registry_qgis.core.stac import (
     collection_bbox,
     horizontal_bbox,
     is_image,
+    is_tabular,
     links_of,
     read_document,
 )
@@ -249,6 +250,72 @@ def test_assets_resolve_storage_options():
         ("a", "https://acct.blob.core.windows.net/box/a.parquet", "parquet"),
         ("b", "https://x.blob.core.windows.net/box/b.parquet", "parquet"),
     ]
+
+
+# Zoning Descriptions in the Philadelphia catalog: a lookup table that a
+# spatial catalog publishes as plain Parquet.
+_TABLE_COLUMNS = [
+    {"name": "objectid", "type": "int32"},
+    {"name": "new_code", "type": "string"},
+    {"name": "code_description", "type": "string"},
+]
+
+
+@pytest.mark.parametrize(
+    ("columns", "tabular"),
+    [
+        (_TABLE_COLUMNS, True),
+        ([*_TABLE_COLUMNS, {"name": "geometry", "type": "binary"}], False),
+        ([{"name": "id"}, {"name": "geom"}], False),
+        ([{"name": "id"}, {"name": "footprint", "type": "geometry"}], False),
+        ([{"name": "id"}, {"name": "where", "type": "MultiPolygon"}], False),
+        ([{"name": "id"}, {"name": "raw", "type": "WKB"}], False),
+        ([], False),
+        (None, False),
+        ("not a list", False),
+        (["not a dict"], True),
+    ],
+)
+def test_is_tabular(columns, tabular):
+    assert is_tabular(columns) is tabular
+
+
+def test_parquet_without_a_geometry_column_is_tabular():
+    def collection(columns, asset_columns=None):
+        asset = {"href": "data.parquet", "type": "application/vnd.apache.parquet"}
+        if asset_columns is not None:
+            asset["table:columns"] = asset_columns
+        raw = {
+            "type": "Collection",
+            "id": "c",
+            "links": [],
+            "assets": {"data": asset, "csv": {"href": "data.csv"}},
+        }
+        if columns is not None:
+            raw["table:columns"] = columns
+        return read_document(raw, "https://example.com/c/collection.json")
+
+    def flags(document):
+        return {asset.key: asset.tabular for asset in document.assets}
+
+    assert flags(collection(_TABLE_COLUMNS)) == {"data": True, "csv": False}
+    spatial = [*_TABLE_COLUMNS, {"name": "geometry", "type": "binary"}]
+    assert flags(collection(spatial)) == {"data": False, "csv": False}
+    # Without columns, nothing says the file is a table, so it stays GeoParquet.
+    assert flags(collection(None)) == {"data": False, "csv": False}
+    # The asset's own columns win over the collection's.
+    assert flags(collection(spatial, _TABLE_COLUMNS))["data"] is True
+    # An item lists its columns in its properties.
+    item = read_document(
+        {
+            "type": "Feature",
+            "id": "i",
+            "properties": {"table:columns": _TABLE_COLUMNS},
+            "assets": {"data": {"href": "data.parquet"}},
+        },
+        "https://example.com/i.json",
+    )
+    assert flags(item) == {"data": True}
 
 
 def test_asset_label_and_style_detection():

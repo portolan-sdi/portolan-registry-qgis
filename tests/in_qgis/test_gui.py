@@ -800,6 +800,46 @@ def open_tiles(iface, server, catalog):
     return window, collection
 
 
+def test_plain_parquet_is_a_table(iface, server, catalog):
+    # Zoning Descriptions in the Philadelphia catalog is a lookup table. Its
+    # columns name no geometry, so it is Parquet, not GeoParquet.
+    window = open_window(iface, server, catalog)
+    window.catalogs.itemClicked.emit(window.catalogs.item(0))
+    href = f"{catalog['base']}/table/collection.json"
+    raw = {
+        "type": "Collection",
+        "id": "plain",
+        "title": "Plain table",
+        "links": [],
+        "table:columns": [
+            {"name": "id", "type": "int64"},
+            {"name": "name", "type": "string"},
+            {"name": "score", "type": "double"},
+        ],
+        "assets": {
+            "plain": {
+                "href": "plain.parquet",
+                "type": "application/vnd.apache.parquet",
+                "roles": ["data"],
+            }
+        },
+    }
+    window._show_document(window_module.read_document(raw, href))
+    row = asset_row(window, "plain")
+    assert row.data(0, BADGE_ROLE)[0] == "Parquet"
+    assert window.load_button.text() == "Load table"
+    assert window_module.TABLE_TIP in window.load_button.toolTip()
+    assert "plain (Parquet)" in window.load_button.toolTip()
+    # A table has no geometry, so no area applies to it.
+    assert window.scope_row.isHidden()
+    window.load_button.click()
+    wait_for(lambda: len(QgsProject.instance().mapLayers()) == 1, timeout=60)
+    (layer,) = QgsProject.instance().mapLayers().values()
+    assert not layer.isSpatial()
+    assert layer.featureCount() == 30
+    window.disconnect_canvas()
+
+
 def test_item_collection_adds_one_mosaic(iface, server, catalog):
     window, collection = open_tiles(iface, server, catalog)
     # The two items show as one row.

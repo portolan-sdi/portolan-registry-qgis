@@ -24,6 +24,8 @@
 - **Add as one layer** adds the COG files of a collection's items in the area as one VRT mosaic. A saved project builds the VRT again.
 - **Download > Everything in** leaves out the items outside the area.
 - When a new layer lands outside the map, the map moves to it, and the message says so. Before, the layer showed in the Layers panel only.
+- A click that must wait for a running mosaic or download says so. An error after a task ends goes to the message log. Before, both did nothing visible.
+- **All files** starts closed.
 - A COG that failed to open once opens on the next try. GDAL kept a failed request for the life of the QGIS session. COG reads now retry HTTP 429, 500, 502, 503, and 504.
 - When a mosaic leaves a file out, the message log gives GDAL's reason, such as an HTTP status.
 - A mosaic from a stac-geoparquet item index resolves each COG href against its item document, found by the item ID in the collection's item links. Before, the GHSL population tiles resolved against the index file and returned HTTP 404.

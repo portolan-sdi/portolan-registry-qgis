@@ -8,11 +8,19 @@ main thread, which is where ``run_task`` sends it.
 from __future__ import annotations
 
 import json
+import traceback
 from concurrent.futures import Executor, Future
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from qgis.core import QgsApplication, QgsBlockingNetworkRequest, QgsFeedback, QgsTask
+from qgis.core import (
+    Qgis,
+    QgsApplication,
+    QgsBlockingNetworkRequest,
+    QgsFeedback,
+    QgsMessageLog,
+    QgsTask,
+)
 from qgis.PyQt.QtCore import QRunnable, Qt, QThreadPool, QUrl
 from qgis.PyQt.QtNetwork import QNetworkRequest
 
@@ -184,7 +192,17 @@ def run_task(
         _RUNNING.discard(task)
         if exception is None and result is None and task.isCanceled():
             exception = NetworkError("Cancelled")
-        on_done(None if exception else result, exception)
+        try:
+            on_done(None if exception else result, exception)
+        except Exception:  # noqa: BLE001 - QGIS drops an error that leaves this function
+            # QGIS swallows an exception in a task's finished handler. Then
+            # an action that fails looks like an action that did nothing.
+            report = traceback.format_exc()
+            QgsMessageLog.logMessage(
+                f"{description} failed after the task ended:\n{report}",
+                "Portolan Registry",
+                Qgis.MessageLevel.Critical,
+            )
 
     flags = QgsTask.Flag.CanCancel
     if hidden:

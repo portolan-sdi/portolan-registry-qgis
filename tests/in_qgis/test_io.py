@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 from osgeo import gdal, ogr
 from qgis.core import (
+    Qgis,
     QgsApplication,
     QgsCoordinateReferenceSystem,
     QgsCoordinateTransform,
@@ -99,6 +100,31 @@ def test_run_task_reports_on_main_thread(catalog):
     wait_for(lambda: failures)
     assert failures[0][0] is None
     assert isinstance(failures[0][1], NetworkError)
+
+
+def test_run_task_logs_an_error_in_its_callback(catalog):
+    # QGIS drops an exception in a task's finished handler. The failure goes
+    # to the message log instead, so it does not pass in silence.
+    logged = []
+
+    def log(message, tag, level):
+        if tag == "Portolan Registry":
+            logged.append((message, level))
+
+    QgsApplication.messageLog().messageReceived.connect(log)
+    try:
+
+        def broken(_result, _error):
+            raise ValueError("broken on purpose")
+
+        run_task("broken", lambda _task: 1, broken)
+        wait_for(lambda: logged)
+    finally:
+        QgsApplication.messageLog().messageReceived.disconnect(log)
+    message, level = logged[0]
+    assert "broken failed after the task ended" in message
+    assert "ValueError: broken on purpose" in message
+    assert level == Qgis.MessageLevel.Critical
 
 
 def test_archive_header_and_tiles(catalog):

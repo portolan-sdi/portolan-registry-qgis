@@ -183,15 +183,19 @@ def _first(loadable: tuple[Loadable, ...], formats: tuple[str, ...]) -> Loadable
     return None
 
 
-def _section(title: str, name: str) -> tuple[QgsCollapsibleGroupBox, QVBoxLayout]:
+def _section(
+    title: str, name: str, collapsed: bool = False
+) -> tuple[QgsCollapsibleGroupBox, QVBoxLayout]:
     """Return a collapsible section and the layout for its content.
 
-    The section keeps its open state in the QGIS settings under ``name``. The
+    The section starts closed when ``collapsed`` is True and the user has not
+    opened it before. The section keeps its open state in the QGIS settings under ``name``. The
     content goes in one inner widget. A collapse hides the direct children of
     the section, so the widgets that the window shows and hides must not be
     direct children.
     """
     box = QgsCollapsibleGroupBox(title)
+    box.setCollapsed(collapsed)
     box.setSettingGroup(SETTINGS_GROUP)
     # Set the name after the group. The box reads its saved state when its
     # name changes.
@@ -456,7 +460,10 @@ class RegistryWindow(QDialog):
         add.addWidget(self.scope_row)
         layout.addWidget(self.add_box)
 
-        self.files_box, files = _section("All files", "files")
+        # The buttons in "Add to map" cover most needs. The list of every file
+        # starts closed. A new setting name lets the closed start reach users
+        # who opened the section before.
+        self.files_box, files = _section("All files", "all_files", collapsed=True)
         self.assets = QTreeWidget()
         self.assets.setHeaderHidden(True)
         self.assets.setRootIsDecorated(False)
@@ -1270,6 +1277,19 @@ class RegistryWindow(QDialog):
         """Return whether a mosaic search, a download listing, or a download runs."""
         return self._job is not None or self._listing or self._mosaic_busy
 
+    def _refuse_when_busy(self) -> bool:
+        """Say why an action waits, and return True, while another task runs."""
+        if not self._busy():
+            return False
+        if self._mosaic_busy:
+            what = "the mosaic"
+        elif self._listing:
+            what = "the list of files to download"
+        else:
+            what = "the download"
+        self._info(f"Wait for {what} to finish, or cancel it.")
+        return True
+
     def _sync_buttons(self) -> None:
         tiles, assets = self._selected()
         every = self._all_items_selected()
@@ -1566,7 +1586,7 @@ class RegistryWindow(QDialog):
     def _add_mosaic(self) -> None:
         """Add the COG files of the open collection's items in the scope as one layer."""
         document = self._document
-        if document is None or not only_items(document) or self._busy():
+        if document is None or not only_items(document) or self._refuse_when_busy():
             return
         try:
             scope = self._scope()
@@ -1588,7 +1608,16 @@ class RegistryWindow(QDialog):
                 executor.shutdown(cancel_futures=True)
 
         def found(result: object, error: BaseException | None) -> None:
+            try:
+                searched(result, error)
+            except BaseException:
+                # The flag must not stay set, or every later click does nothing.
+                self._mosaic_done()
+                raise
+
+        def searched(result: object, error: BaseException | None) -> None:
             self._hide_progress()
+            # A cancelled walk returns the partial list it has. Drop it.
             if task.isCanceled():
                 self._mosaic_done()
                 self._info(f"Stopped the search for the files of {title}.")
@@ -1698,7 +1727,7 @@ class RegistryWindow(QDialog):
         GeoPackage that holds only the features in the scope.
         """
         document = self._document
-        if document is None or self._busy():
+        if document is None or self._refuse_when_busy():
             return
         if self._all_items_selected():
             # The walk of the collection holds every selected file too.
@@ -1774,7 +1803,7 @@ class RegistryWindow(QDialog):
 
     def _download_all(self) -> None:
         document = self._document
-        if document is None or self._busy():
+        if document is None or self._refuse_when_busy():
             return
         try:
             scope = self._scope()

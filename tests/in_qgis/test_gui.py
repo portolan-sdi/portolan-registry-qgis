@@ -613,7 +613,8 @@ def test_sections_collapse_and_remember(iface, server, catalog):
         assert isinstance(box, QgsCollapsibleGroupBox)
         assert box.title() == title
         assert box.settingGroup() == window_module.SETTINGS_GROUP
-        assert not box.isCollapsed()
+        # The list of every file starts closed. The buttons cover most needs.
+        assert box.isCollapsed() is (box is window.files_box)
     open_collection(window)
     window.show()
     QgsApplication.processEvents()
@@ -939,6 +940,37 @@ def test_one_task_uses_the_progress_bar_at_a_time(iface, server, catalog):
         setattr(window, flag, None if flag == "_job" else False)
         window._sync_buttons()
     assert window.mosaic_button.isEnabled()
+    window.disconnect_canvas()
+
+
+def test_a_busy_window_says_why_a_click_waits(iface, server, catalog):
+    # Before, a click while a task ran did nothing and said nothing.
+    window, collection = open_tiles(iface, server, catalog)
+    window.tree.setCurrentItem(collection.child(0))
+    wait_for(lambda: window._document is not None and window.mosaic_button.isEnabled())
+    window._mosaic_busy = True
+    window._add_mosaic()
+    assert any("Wait for the mosaic to finish" in item.text() for item in iface.bar.items())
+    window._mosaic_busy = False
+    window.disconnect_canvas()
+
+
+def test_a_failed_mosaic_search_does_not_leave_the_window_busy(iface, server, catalog, monkeypatch):
+    # An error in the callback left the busy flag set, so every later
+    # "Add as one layer" did nothing.
+    window, collection = open_tiles(iface, server, catalog)
+    window.tree.setCurrentItem(collection.child(0))
+    wait_for(lambda: window._document is not None and window.mosaic_button.isEnabled())
+
+    def broken(*_args):
+        raise RuntimeError("broken on purpose")
+
+    monkeypatch.setattr(window, "_build_mosaic", broken)
+    window.mosaic_button.click()
+    wait_for(lambda: not window._mosaic_busy, timeout=60)
+    monkeypatch.undo()
+    window.mosaic_button.click()
+    wait_for(lambda: len(QgsProject.instance().mapLayers()) == 1, timeout=60)
     window.disconnect_canvas()
 
 

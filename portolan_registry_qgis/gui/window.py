@@ -1,9 +1,12 @@
 """The Portolan Registry window.
 
-The window has two pages. The first lists the registry's catalogs, each with
-a map of its extent and its logo. A click opens the second page, which shows
-the catalog's tree and the chosen node's picture, details, and assets, with
-the actions that add them to the map or download them.
+A header with the Portolan mark runs across the top. Below it, a splitter
+holds two panes. The left pane has two pages. The first lists the registry's
+publishers, each with a map of its extent and its logo. A click opens the
+second page, which shows the publisher's tree. The right pane shows the
+chosen node in collapsible sections: its picture and description, the ways to
+add it to the map, its files, and its details. The action bar runs across the
+bottom, with the actions that add data to the map or download it.
 """
 
 from __future__ import annotations
@@ -21,13 +24,14 @@ from qgis.core import (
     QgsMessageLog,
     QgsProject,
     QgsRectangle,
+    QgsSettings,
 )
-from qgis.PyQt.QtCore import QSize, Qt, pyqtSignal
+from qgis.gui import QgsCollapsibleGroupBox
+from qgis.PyQt.QtCore import QByteArray, QEvent, QSize, Qt, pyqtSignal
 from qgis.PyQt.QtGui import QBrush, QColor, QIcon, QImage, QPalette
 from qgis.PyQt.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
-    QComboBox,
     QDialog,
     QFileDialog,
     QFrame,
@@ -53,7 +57,16 @@ from qgis.PyQt.QtWidgets import (
 from portolan_registry_qgis.core import download, parquet_query, registry
 from portolan_registry_qgis.core.format import count, format_label, human_size
 from portolan_registry_qgis.core.stac import Asset, Document, Node, read_document
-from portolan_registry_qgis.gui.pictures import ACCENT, ImageCache, WorldMap, mix, muted, pixmap
+from portolan_registry_qgis.gui.pictures import (
+    ACCENT,
+    ImageCache,
+    WorldMap,
+    decode,
+    logomark,
+    mix,
+    muted,
+    pixmap,
+)
 from portolan_registry_qgis.gui.widgets import (
     BADGE_ROLE,
     ROLE,
@@ -100,7 +113,14 @@ _KIND_ICONS = {
     "item": "/mIconFile.svg",
 }
 _ICON_SIZE = QSize(18, 18)
+_LOGOMARK_SIZE = QSize(20, 20)
 _REGISTRY_PAGE, _CATALOG_PAGE = 0, 1
+# The window keeps its size, its splitter, and the open state of each
+# section in these QGIS settings, from one session to the next.
+SETTINGS_GROUP = "PortolanRegistry"
+GEOMETRY_SETTING = f"{SETTINGS_GROUP}/geometry"
+SPLITTER_SETTING = f"{SETTINGS_GROUP}/splitter"
+DEFAULT_SIZE = QSize(1000, 700)
 
 
 def _log(message: str, level: Any = None) -> None:
@@ -111,12 +131,27 @@ def _kind_icon(kind: str) -> QIcon:
     return QgsApplication.getThemeIcon(_KIND_ICONS.get(kind, _KIND_ICONS["item"]))
 
 
-def _heading(text: str) -> QLabel:
-    label = QLabel(text)
-    font = label.font()
-    font.setBold(True)
-    label.setFont(font)
-    return label
+def _section(title: str, name: str) -> tuple[QgsCollapsibleGroupBox, QVBoxLayout]:
+    """Return a collapsible section and the layout for its content.
+
+    The section keeps its open state in the QGIS settings under ``name``. The
+    content goes in one inner widget. A collapse hides the direct children of
+    the section, so the widgets that the window shows and hides must not be
+    direct children.
+    """
+    box = QgsCollapsibleGroupBox(title)
+    box.setSettingGroup(SETTINGS_GROUP)
+    # Set the name after the group. The box reads its saved state when its
+    # name changes.
+    box.setObjectName(name)
+    body = QWidget()
+    content = QVBoxLayout(body)
+    content.setContentsMargins(0, 0, 0, 0)
+    content.setSpacing(8)
+    outer = QVBoxLayout(box)
+    outer.setContentsMargins(6, 6, 6, 6)
+    outer.addWidget(body)
+    return box, content
 
 
 class RegistryWindow(QDialog):
@@ -133,7 +168,7 @@ class RegistryWindow(QDialog):
         self.setWindowTitle("Portolan Registry")
         self.setObjectName("PortolanRegistryWindow")
         self.setModal(False)
-        self.resize(1000, 700)
+        self.resize(DEFAULT_SIZE)
         self._iface = iface
         self._server = server
         self._registry_url = registry_url
@@ -145,7 +180,9 @@ class RegistryWindow(QDialog):
         self._job: DownloadJob | None = None
         self.images = ImageCache(self)
         self.world = WorldMap(self)
+        self.logomark_file: Path | None = None
         self._build()
+        self._restore_layout()
         self.reload()
 
     # ---------- layout ----------
@@ -154,37 +191,88 @@ class RegistryWindow(QDialog):
         self.pages = QStackedWidget()
         self.pages.addWidget(self._registry_page())
         self.pages.addWidget(self._catalog_page())
+        self.splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.splitter.setChildrenCollapsible(False)
+        self.splitter.addWidget(self.pages)
+        self.splitter.addWidget(self._details_panel())
+        self.splitter.setStretchFactor(0, 2)
+        self.splitter.setStretchFactor(1, 3)
+        self.splitter.setSizes([400, 600])
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self.pages)
+        layout.setSpacing(0)
+        layout.addWidget(self._header())
+        layout.addWidget(self.splitter, 1)
+        layout.addWidget(self._action_bar())
         self._connect()
         self._sync_buttons()
+
+    def _header(self) -> QWidget:
+        header = QWidget()
+        layout = QHBoxLayout(header)
+        layout.setContentsMargins(10, 8, 8, 8)
+        layout.setSpacing(8)
+        self.logo = QLabel()
+        self.logo.setFixedSize(_LOGOMARK_SIZE)
+        layout.addWidget(self.logo)
+        name = QLabel("Portolan")
+        font = name.font()
+        font.setBold(True)
+        font.setPointSizeF(font.pointSizeF() * 1.15)
+        name.setFont(font)
+        layout.addWidget(name)
+        self.tagline = QLabel("Open data registry")
+        layout.addWidget(self.tagline)
+        layout.addStretch(1)
+        # Hidden until the window can build the browser link of a node.
+        self.open_browser = QToolButton()
+        self.open_browser.setText("Open in browser")
+        self.open_browser.setToolTip("See all files and metadata in the Portolan browser")
+        self.open_browser.setAutoRaise(True)
+        self.open_browser.hide()
+        layout.addWidget(self.open_browser)
+        self.refresh = QToolButton()
+        self.refresh.setIcon(QgsApplication.getThemeIcon("/mActionRefresh.svg"))
+        self.refresh.setAutoRaise(True)
+        self.refresh.setToolTip("Read the registry again")
+        layout.addWidget(self.refresh)
+        self._show_logomark()
+        return header
+
+    def _show_logomark(self) -> None:
+        """Show the logomark that suits the theme, and mute the tagline."""
+        palette = self.palette()
+        path = logomark(palette)
+        self.logomark_file = path
+        picture = decode(path.read_bytes())
+        if picture is not None:
+            text = palette.color(QPalette.ColorRole.Text)
+            self.logo.setPixmap(pixmap(picture, _LOGOMARK_SIZE, text, self.devicePixelRatioF()))
+        self.tagline.setStyleSheet(f"color: {muted(palette).name()};")
+
+    def changeEvent(self, event: Any) -> None:
+        """Show the logomark again when the theme changes."""
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.PaletteChange and hasattr(self, "tagline"):
+            self._show_logomark()
 
     def _registry_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(6, 6, 6, 0)
+        layout.setContentsMargins(6, 6, 0, 0)
         layout.setSpacing(6)
-        self.search = QLineEdit(placeholderText="Search by name, ID, or license")
+        self.search = QLineEdit(placeholderText="Search publishers by name or license")
         self.search.setClearButtonEnabled(True)
         layout.addWidget(self.search)
 
         filters = QHBoxLayout()
         filters.setSpacing(8)
-        self.status = QComboBox()
-        self.status.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
         self.in_extent = QCheckBox("In map extent")
-        self.in_extent.setToolTip("Show only catalogs whose extent overlaps the map")
+        self.in_extent.setToolTip("Show only publishers whose data overlaps the map")
         self.shown = QLabel()
-        self.refresh = QToolButton()
-        self.refresh.setIcon(QgsApplication.getThemeIcon("/mActionRefresh.svg"))
-        self.refresh.setAutoRaise(True)
-        self.refresh.setToolTip("Read the registry again")
-        filters.addWidget(self.status)
         filters.addWidget(self.in_extent)
         filters.addStretch(1)
         filters.addWidget(self.shown)
-        filters.addWidget(self.refresh)
         layout.addLayout(filters)
 
         self.catalogs = QListWidget()
@@ -206,7 +294,7 @@ class RegistryWindow(QDialog):
         nav = QHBoxLayout()
         nav.setContentsMargins(2, 2, 6, 0)
         self.back = QToolButton()
-        self.back.setText("All catalogs")
+        self.back.setText("All publishers")
         self.back.setArrowType(Qt.ArrowType.LeftArrow)
         self.back.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.back.setAutoRaise(True)
@@ -223,15 +311,7 @@ class RegistryWindow(QDialog):
         self.tree.setIconSize(_ICON_SIZE)
         self.tree.setItemDelegate(RoomyDelegate(self.tree))
         self.tree.setAnimated(True)
-
-        splitter = QSplitter(Qt.Orientation.Vertical)
-        splitter.setChildrenCollapsible(False)
-        splitter.addWidget(self.tree)
-        splitter.addWidget(self._details_panel())
-        splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 1)
-        layout.addWidget(splitter, 1)
-        layout.addWidget(self._action_bar())
+        layout.addWidget(self.tree, 1)
         return page
 
     def _details_panel(self) -> QScrollArea:
@@ -239,8 +319,12 @@ class RegistryWindow(QDialog):
         layout = QVBoxLayout(body)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(8)
-        self.hero = HeroView(self.world)
-        layout.addWidget(self.hero)
+
+        self.empty = QLabel("Choose a publisher on the left to see its data here.")
+        self.empty.setWordWrap(True)
+        self.empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.empty.setStyleSheet(f"color: {muted(self.palette()).name()};")
+        layout.addWidget(self.empty, 1)
 
         self.title = QLabel()
         self.title.setWordWrap(True)
@@ -251,23 +335,31 @@ class RegistryWindow(QDialog):
         self.title.setFont(font)
         layout.addWidget(self.title)
 
+        self.about_box, about = _section("About", "about")
+        self.hero = HeroView(self.world)
+        about.addWidget(self.hero)
         self.description = QLabel()
         self.description.setWordWrap(True)
         self.description.setTextFormat(Qt.TextFormat.MarkdownText)
         self.description.setOpenExternalLinks(True)
         self.description.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
-        layout.addWidget(self.description)
+        about.addWidget(self.description)
+        layout.addWidget(self.about_box)
 
-        self.facts = QLabel()
-        self.facts.setWordWrap(True)
-        self.facts.setTextFormat(Qt.TextFormat.RichText)
-        self.facts.setOpenExternalLinks(True)
-        self.facts.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
-        layout.addWidget(self.facts)
+        self.add_box, add = _section("Add to map", "add")
+        self.tile_styles = QLabel()
+        self.tile_styles.setWordWrap(True)
+        add.addWidget(self.tile_styles)
+        self.parquet_extent = QCheckBox("Read GeoParquet in the map extent only")
+        self.parquet_extent.setChecked(True)
+        self.parquet_extent.setToolTip(
+            "DuckDB copies only the features that intersect the current map extent. "
+            "Clear the box to copy the whole file."
+        )
+        add.addWidget(self.parquet_extent)
+        layout.addWidget(self.add_box)
 
-        self.assets_heading = _heading("Assets")
-        layout.addSpacing(4)
-        layout.addWidget(self.assets_heading)
+        self.files_box, files = _section("All files", "files")
         self.assets = QTreeWidget()
         self.assets.setHeaderHidden(True)
         self.assets.setRootIsDecorated(False)
@@ -276,24 +368,23 @@ class RegistryWindow(QDialog):
         self.assets.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.assets.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.assets.setItemDelegate(AssetDelegate(self.assets))
-        self.assets.setToolTip("Select assets, then add them to the map or download them")
-        layout.addWidget(self.assets)
+        self.assets.setToolTip("Select files, then add them to the map or download them")
+        files.addWidget(self.assets)
         self.no_assets = QLabel()
         self.no_assets.setWordWrap(True)
-        layout.addWidget(self.no_assets)
+        files.addWidget(self.no_assets)
+        layout.addWidget(self.files_box)
 
-        self.tile_styles = QLabel()
-        self.tile_styles.setWordWrap(True)
-        layout.addWidget(self.tile_styles)
-
-        self.parquet_extent = QCheckBox("Read GeoParquet in the map extent only")
-        self.parquet_extent.setChecked(True)
-        self.parquet_extent.setToolTip(
-            "DuckDB copies only the features that intersect the current map extent. "
-            "Clear the box to copy the whole file."
-        )
-        layout.addWidget(self.parquet_extent)
+        self.details_box, details = _section("Details", "details")
+        self.facts = QLabel()
+        self.facts.setWordWrap(True)
+        self.facts.setTextFormat(Qt.TextFormat.RichText)
+        self.facts.setOpenExternalLinks(True)
+        self.facts.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+        details.addWidget(self.facts)
+        layout.addWidget(self.details_box)
         layout.addStretch(1)
+        self._show_sections(False)
 
         scroll = QScrollArea()
         scroll.setWidget(body)
@@ -301,6 +392,32 @@ class RegistryWindow(QDialog):
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         return scroll
+
+    def _show_sections(self, visible: bool) -> None:
+        """Show the title and sections, or the hint when no node is chosen."""
+        self.empty.setVisible(not visible)
+        self.title.setVisible(visible)
+        self.about_box.setVisible(visible)
+        self.files_box.setVisible(visible)
+        self.details_box.setVisible(visible)
+        self.add_box.setVisible(
+            visible and not (self.tile_styles.isHidden() and self.parquet_extent.isHidden())
+        )
+
+    def _restore_layout(self) -> None:
+        """Restore the size and splitter that the window had when it last hid."""
+        settings = QgsSettings()
+        geometry = settings.value(GEOMETRY_SETTING)
+        if isinstance(geometry, QByteArray) and not geometry.isEmpty():
+            self.restoreGeometry(geometry)
+        splitter = settings.value(SPLITTER_SETTING)
+        if isinstance(splitter, QByteArray) and not splitter.isEmpty():
+            self.splitter.restoreState(splitter)
+
+    def _save_layout(self) -> None:
+        settings = QgsSettings()
+        settings.setValue(GEOMETRY_SETTING, self.saveGeometry())
+        settings.setValue(SPLITTER_SETTING, self.splitter.saveState())
 
     def _action_bar(self) -> QWidget:
         bar = QFrame()
@@ -356,7 +473,6 @@ class RegistryWindow(QDialog):
 
     def _connect(self) -> None:
         self.search.textChanged.connect(self._show_catalogs)
-        self.status.currentIndexChanged.connect(self._show_catalogs)
         self.in_extent.toggled.connect(self._show_catalogs)
         self.refresh.clicked.connect(self.reload)
         self._iface.mapCanvas().extentsChanged.connect(self._extent_changed)
@@ -382,7 +498,8 @@ class RegistryWindow(QDialog):
         self.visibility_changed.emit(True)
 
     def hideEvent(self, event: Any) -> None:
-        """Report that the window hides."""
+        """Save the window's layout, and report that the window hides."""
+        self._save_layout()
         super().hideEvent(event)
         self.visibility_changed.emit(False)
 
@@ -414,15 +531,6 @@ class RegistryWindow(QDialog):
             self._warn(f"Could not read the Portolan registry: {error}")
             return
         self._entries = result
-        current = self.status.currentData()
-        self.status.blockSignals(True)
-        self.status.clear()
-        self.status.addItem("All statuses", None)
-        for status in registry.statuses(result):
-            self.status.addItem(status.capitalize(), status)
-        index = self.status.findData(current)
-        self.status.setCurrentIndex(max(index, 0))
-        self.status.blockSignals(False)
         self._show_catalogs()
 
     def _extent_changed(self) -> None:
@@ -445,19 +553,17 @@ class RegistryWindow(QDialog):
 
     def _show_catalogs(self) -> None:
         bbox = self.canvas_bbox() if self.in_extent.isChecked() else None
-        shown = registry.filter_entries(
-            self._entries, self.search.text(), self.status.currentData(), bbox
-        )
+        shown = registry.filter_entries(self._entries, self.search.text(), bbox=bbox)
         self.catalogs.clear()
         self._list_catalogs(shown)
         total = len(self._entries)
         if len(shown) == total:
-            self.shown.setText(count(total, "catalog"))
+            self.shown.setText(count(total, "publisher"))
         else:
-            self.shown.setText(f"{len(shown):,} of {count(total, 'catalog')}")
+            self.shown.setText(f"{len(shown):,} of {count(total, 'publisher')}")
         self.shown.setStyleSheet(f"color: {muted(self.palette()).name()};")
         if not shown and self._entries:
-            self._placeholder("No catalog matches these filters.")
+            self._placeholder("No publisher matches these filters.")
 
     def _list_catalogs(self, entries: list[CatalogEntry]) -> None:
         """Add one page of ``entries``, and a row that lists the rest."""
@@ -472,7 +578,7 @@ class RegistryWindow(QDialog):
         rest = entries[CATALOG_PAGE:]
         if rest:
             more = More(tuple(rest))
-            item = QListWidgetItem(more.label(CATALOG_PAGE))
+            item = QListWidgetItem(more.label(CATALOG_PAGE, "publisher"))
             item.setData(_ROLE, more)
             self.catalogs.addItem(item)
 
@@ -666,6 +772,7 @@ class RegistryWindow(QDialog):
         self._fit_assets()
         self.hero.show_extent(None)
         self.hero.hide()
+        self._show_sections(True)
         self._sync_buttons()
 
         def opened(document: object, error: BaseException | None) -> None:
@@ -697,6 +804,20 @@ class RegistryWindow(QDialog):
         entry = self._catalog
         return entry.bbox if entry is not None and entry.url == document.href else None
 
+    def _size(self, document: Document) -> int | None:
+        """Return the sum of the asset sizes that the document declares.
+
+        A document with no sized assets returns None. When it is the open
+        catalog, the registry's total size stands in.
+        """
+        sizes = [asset.size for asset in document.assets if asset.size is not None]
+        if sizes:
+            return sum(sizes)
+        entry = self._catalog
+        if entry is not None and entry.url == document.href:
+            return entry.total_size_bytes
+        return None
+
     def _show_document(self, document: Document) -> None:
         self._document = document
         bbox = self._extent(document)
@@ -714,7 +835,9 @@ class RegistryWindow(QDialog):
         self.title.setText(document.title)
         self.description.setText(document.description)
         self.description.setVisible(bool(document.description))
-        self.facts.setText(_facts_html(document, bbox, muted(self.palette())))
+        publisher = self._catalog.title if self._catalog is not None else None
+        size = self._size(document)
+        self.facts.setText(_facts_html(document, publisher, size, muted(self.palette())))
         self.download_all.setText(f"Everything in {_short(document.title)}…")
 
         self.assets.clear()
@@ -740,13 +863,14 @@ class RegistryWindow(QDialog):
 
         styles = len(document.styles)
         self.tile_styles.setText(
-            f"The collection has {count(styles, 'style')} for its vector tiles. "
+            f"The publisher made {count(styles, 'style')} for these vector tiles. "
             "After you add the tiles, switch styles from the layer's Styles menu."
         )
         self.tile_styles.setStyleSheet(f"color: {muted(self.palette()).name()};")
         self.tile_styles.setVisible(bool(styles and layer_io.archive_urls(document)))
         self.parquet_extent.setVisible(any(a.format == "parquet" for a in document.assets))
         self.add.setToolTip(advice)
+        self._show_sections(True)
         self._sync_buttons()
 
     def _select_preferred(self, document: Document) -> None:
@@ -765,17 +889,16 @@ class RegistryWindow(QDialog):
         """Size the asset list to its rows, so the details panel scrolls instead."""
         rows = self.assets.topLevelItemCount()
         self.assets.setVisible(rows > 0)
-        self.assets_heading.setVisible(rows > 0)
-        self.assets_heading.setText(f"Assets ({rows})")
+        self.files_box.setTitle(f"All files ({rows})" if rows else "All files")
         if rows:
             height = sum(self.assets.sizeHintForRow(i) for i in range(rows))
             self.assets.setFixedHeight(height + 2 * self.assets.frameWidth() + 2)
         document = self._document
         if document is not None and not rows:
             self.no_assets.setText(
-                "This catalog has no files of its own. Open a collection in the tree above."
+                "This publisher has no files of its own. Choose a dataset in the tree."
                 if document.children
-                else "This entry lists no assets."
+                else "This entry lists no files."
             )
             self.no_assets.setStyleSheet(f"color: {muted(self.palette()).name()};")
             self.no_assets.show()
@@ -1129,14 +1252,20 @@ def _asset_tip(href: str, label: str, value: str, note: str = "") -> str:
     return "<br>".join(lines)
 
 
-def _facts_html(document: Document, bbox: Bbox | None, label_color: QColor) -> str:
-    """Return the document's facts as a two-column table, then its links."""
-    facts = [("Type", document.kind.capitalize()), ("ID", document.id)]
+def _facts_html(
+    document: Document, publisher: str | None, size: int | None, label_color: QColor
+) -> str:
+    """Return the document's facts as a two-column table, then its links.
+
+    The facts leave out the values that are not known.
+    """
+    facts = []
+    if publisher:
+        facts.append(("Publisher", publisher))
     if document.license:
         facts.append(("License", document.license))
-    if bbox is not None:
-        west, south, east, north = bbox
-        facts.append(("Extent", f"{west:.4f}, {south:.4f} to {east:.4f}, {north:.4f}"))
+    if size:
+        facts.append(("Size", human_size(size)))
     color = label_color.name()
     rows = "".join(
         f'<tr><td style="color: {color}; padding-right: 10px;">{html.escape(key)}</td>'

@@ -43,6 +43,11 @@ FORMAT_COLORS = {
     "parquet": QColor("#2f7d63"),
     "cog": QColor("#b06e2a"),
 }
+# The Portolan logomark in the brand blue, for a light theme, and in
+# off-white, for a dark theme.
+_IMAGES = Path(__file__).resolve().parent.parent / "images"
+LOGOMARK_LIGHT = _IMAGES / "portolan-logomark-4163cc.svg"
+LOGOMARK_DARK = _IMAGES / "portolan-logomark-fcfcfa.svg"
 _WORLD_SIZE = QSize(2048, 1024)
 _LARGEST_IMAGE = 720
 _LARGEST_SVG = 192
@@ -72,6 +77,11 @@ def muted(palette: QPalette, selected: bool = False) -> QColor:
 def is_dark(palette: QPalette) -> bool:
     """Return whether the theme draws views on a dark background."""
     return palette.color(QPalette.ColorRole.Base).lightness() < 128
+
+
+def logomark(palette: QPalette) -> Path:
+    """Return the Portolan logomark file that shows on ``palette``."""
+    return LOGOMARK_DARK if is_dark(palette) else LOGOMARK_LIGHT
 
 
 @dataclass(frozen=True)

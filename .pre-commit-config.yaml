@@ -60,6 +60,13 @@ repos:
 
   # Pre-push stage: the slower quality gates. CI runs these too
   # (reusable-python-ci.yml, "pre-push stage" step).
+  # Relative links and anchors, with the org rules. No network access.
+  # CI checks external links weekly. See portolan-ops norms/ci.md.
+  - repo: https://github.com/portolan-sdi/portolan-ops
+    rev: v1.12.0
+    hooks:
+      - id: lychee
+
   - repo: local
     hooks:
       - id: mypy

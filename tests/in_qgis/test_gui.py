@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 import time
+from html import escape as html_escape
 from pathlib import Path
 
 import pytest
@@ -687,10 +688,42 @@ def test_browser_links_of_the_open_node(iface, server, catalog, monkeypatch):
     window.open_browser.click()
     assert opened[-1] == link
     # Details link to the browser, the license, and the publisher's docs,
-    # but not to the raw STAC document.
+    # but not to the raw STAC document. Each is one row of the table.
     facts = window.facts.text()
+    assert ">More<" in facts
     assert window_module.BROWSER_LINK in facts and link in facts
     assert "STAC document" not in facts
+    assert "<p>" not in facts
+    window.disconnect_canvas()
+
+
+def test_details_are_one_list_of_facts(iface, server, catalog):
+    # The Philadelphia collections repeat a license link and title every
+    # license link "License". Each fact shows once, as one row.
+    window = open_window(iface, server, catalog)
+    open_collection(window)
+    href = f"{catalog['base']}/points/collection.json"
+    raw = window_module.fetch_json(href)
+    raw["license"] = "other"
+    terms = "https://metadata.phila.gov/#help/help-faqs/what-are-the-terms-of-use/"
+    portal = "https://opendataphilly.org/datasets/city-council-districts/"
+    raw["links"] += [
+        {"rel": "license", "href": portal, "title": "License"},
+        {"rel": "describedby", "href": "./README.md", "title": "Human-readable documentation"},
+        {"rel": "license", "href": terms, "title": "License"},
+        {"rel": "license", "href": portal, "title": "License"},
+        {"rel": "via", "href": "https://opendataphilly.org/datasets/land-use/"},
+    ]
+    window._show_document(window_module.read_document(raw, href))
+    facts = window.facts.text()
+    keys = [cell.split("</td>")[0].rsplit(">", 1)[-1] for cell in facts.split("<tr>")[1:]]
+    assert keys == ["Publisher", "License", "Size", "Documentation", "More"]
+    assert facts.count(">License<") == 1
+    assert "Custom terms: " in facts
+    assert facts.count(portal) == 1 and facts.count(html_escape(terms)) == 1
+    assert ">opendataphilly.org<" in facts and ">metadata.phila.gov<" in facts
+    assert ">Human-readable documentation<" in facts
+    assert "land-use" not in facts
     window.disconnect_canvas()
 
 

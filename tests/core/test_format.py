@@ -7,6 +7,8 @@ from portolan_registry_qgis.core.format import (
     count,
     format_label,
     human_size,
+    license_name,
+    link_label,
 )
 
 
@@ -62,3 +64,46 @@ def test_count():
 )
 def test_catalog_summary(args, text):
     assert catalog_summary(*args) == text
+
+
+@pytest.mark.parametrize(
+    ("value", "name"),
+    [
+        (None, ""),
+        ("", ""),
+        ("other", "Custom terms"),
+        ("Proprietary", "Proprietary"),
+        ("various", "Various"),
+        ("CC-BY-4.0", "CC-BY-4.0"),
+    ],
+)
+def test_license_name(value, name):
+    assert license_name(value) == name
+
+
+@pytest.mark.parametrize(
+    ("href", "title", "label"),
+    [
+        # Philadelphia's license links are both titled "License".
+        (
+            "https://metadata.phila.gov/#help/help-faqs/what-are-the-terms-of-use/",
+            "License",
+            "metadata.phila.gov",
+        ),
+        (
+            "https://www.opendataphilly.org/datasets/city-council-districts/",
+            "License",
+            "opendataphilly.org",
+        ),
+        (
+            "https://x.org/c/README.md",
+            "Human-readable documentation",
+            "Human-readable documentation",
+        ),
+        ("https://x.org/c/README.md", None, "README.md"),
+        ("https://x.org/c/README.md", "Documentation", "README.md"),
+        ("https://x.org/terms", "  Terms of use ", "Terms of use"),
+    ],
+)
+def test_link_label(href, title, label):
+    assert link_label(href, title) == label

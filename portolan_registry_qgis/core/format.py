@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from urllib.parse import urlsplit
+
 _UNITS = ("B", "KB", "MB", "GB", "TB", "PB")
 
 
@@ -81,3 +83,36 @@ def catalog_summary(
     elif licenses:
         parts.append(count(len(licenses), "license"))
     return ", ".join(parts)
+
+
+# STAC license values that name no license. The details say what they mean.
+_LICENSE_WORDS = {
+    "other": "Custom terms",
+    "proprietary": "Proprietary",
+    "various": "Various",
+}
+# Link titles that only repeat the row name, such as "License".
+_GENERIC_TITLES = frozenset({"license", "licence", "terms", "documentation", "link"})
+
+
+def license_name(value: str | None) -> str:
+    """Return a STAC license value in plain words, or "" when there is none."""
+    if not value:
+        return ""
+    return _LICENSE_WORDS.get(value.strip().lower(), value)
+
+
+def link_label(href: str, title: str | None) -> str:
+    """Return a short name for a link.
+
+    A title that says more than the row name is used. Otherwise the label is
+    the file name of a document such as README.md, or the host of a page.
+    """
+    if title and title.strip().lower() not in _GENERIC_TITLES:
+        return title.strip()
+    parts = urlsplit(href)
+    name = parts.path.rsplit("/", 1)[-1]
+    if "." in name and not parts.fragment:
+        return name
+    host = parts.hostname or href
+    return host.removeprefix("www.")

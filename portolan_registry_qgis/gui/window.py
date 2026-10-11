@@ -64,7 +64,13 @@ from qgis.PyQt.QtWidgets import (
 )
 
 from portolan_registry_qgis.core import download, parquet_query, registry
-from portolan_registry_qgis.core.format import count, format_label, human_size
+from portolan_registry_qgis.core.format import (
+    count,
+    format_label,
+    human_size,
+    license_name,
+    link_label,
+)
 from portolan_registry_qgis.core.hrefs import BROWSER_URL, browser_url, vsicurl_path
 from portolan_registry_qgis.core.scope import Area, Everything, MapView, Scope
 from portolan_registry_qgis.core.stac import Asset, Document, Loadable, Node, read_document
@@ -127,7 +133,7 @@ LOAD_TIP = "All features and attributes, for analysis."
 TABLE_TIP = "All rows and columns, as a table with no geometry."
 VIEW_FORMATS = ("pmtiles", "cog")
 LOAD_FORMATS = ("parquet", "flatgeobuf", "geojson", "csv")
-BROWSER_LINK = "See all files and metadata in the browser"
+BROWSER_LINK = "All files and metadata in the Portolan browser"
 _KIND_ICONS = {
     "catalog": "/mIconFolder.svg",
     "collection": "/mIconLayerTree.svg",
@@ -1882,30 +1888,52 @@ def _facts_html(
     label_color: QColor,
     browser: str | None = None,
 ) -> str:
-    """Return the document's facts as a two-column table, then its links.
+    """Return the document's facts as one two-column table.
 
-    The facts leave out the values that are not known. The links are the
-    license, the publisher's documentation, and the browser page, which
-    shows the rest of the STAC metadata.
+    Each fact is one row, and a row leaves out what is not known. The
+    license links make the License row, the publisher's documentation makes
+    the Documentation row, and the browser page makes the More row. A link
+    that two STAC links repeat shows once.
     """
-    facts = []
+
+    def anchor(href: str, text: str) -> str:
+        return f'<a href="{html.escape(href)}">{html.escape(text)}</a>'
+
+    def hrefs(rel: str) -> list[tuple[str, str | None]]:
+        found: dict[str, str | None] = {}
+        for link in document.links:
+            if link.rel == rel and link.href not in found:
+                found[link.href] = link.title
+        return list(found.items())
+
+    rows: list[tuple[str, str]] = []
     if publisher:
-        facts.append(("Publisher", publisher))
-    if document.license:
-        facts.append(("License", document.license))
+        rows.append(("Publisher", html.escape(publisher)))
+    name = license_name(document.license)
+    licenses = hrefs("license")
+    if len(licenses) == 1:
+        rows.append(("License", anchor(licenses[0][0], name or link_label(*licenses[0]))))
+    elif licenses:
+        linked = ", ".join(anchor(href, link_label(href, title)) for href, title in licenses)
+        rows.append(("License", f"{html.escape(name)}: {linked}" if name else linked))
+    elif name:
+        rows.append(("License", html.escape(name)))
     if size:
-        facts.append(("Size", human_size(size)))
-    color = label_color.name()
-    rows = "".join(
-        f'<tr><td style="color: {color}; padding-right: 10px;">{html.escape(key)}</td>'
-        f"<td>{html.escape(value)}</td></tr>"
-        for key, value in facts
-    )
-    links = [
-        f'<a href="{html.escape(link.href)}">{html.escape(link.title or link.rel.capitalize())}</a>'
-        for link in document.links
-        if link.rel in {"describedby", "license"}
-    ]
+        rows.append(("Size", html.escape(human_size(size))))
+    docs = hrefs("describedby")
+    if docs:
+        rows.append(
+            (
+                "Documentation",
+                ", ".join(anchor(href, link_label(href, title)) for href, title in docs),
+            )
+        )
     if browser:
-        links.append(f'<a href="{html.escape(browser)}">{BROWSER_LINK}</a>')
-    return f"<table>{rows}</table><p>{'&nbsp;&nbsp;&nbsp;'.join(links)}</p>"
+        rows.append(("More", anchor(browser, BROWSER_LINK)))
+    color = label_color.name()
+    cells = "".join(
+        f'<tr><td style="color: {color}; padding-right: 10px;">{html.escape(key)}</td>'
+        f"<td>{value}</td></tr>"
+        for key, value in rows
+    )
+    return f"<table>{cells}</table>"

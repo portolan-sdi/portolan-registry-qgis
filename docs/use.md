@@ -23,7 +23,7 @@ The right pane shows the chosen node in four sections. Select a section's title 
 - **About** shows the thumbnail, or a map of the extent when there is no thumbnail, and the description.
 - **Add to map** holds the buttons that add the data and the area that limits them.
 - **All files** lists the files QGIS can open. A badge on each file shows its format, and a check mark shows that a layer in the project already reads it.
-- **Details** names the publisher, the license, and the total size. Its links lead to the license, the publisher's documentation, and the browser.
+- **Details** is one list: **Publisher**, **License**, **Size**, **Documentation**, and **More**, which links to the browser. The license and the documentation link to the publisher's pages. A license value of `other` shows as **Custom terms**, and a link that the catalog repeats shows once.
 
 Select the catalog header to see the catalog's own details again.
 

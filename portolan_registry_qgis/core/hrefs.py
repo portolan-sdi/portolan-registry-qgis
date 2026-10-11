@@ -88,8 +88,40 @@ def vsicurl_path(url: str) -> str:
     an external ``.ovr`` or ``.aux.xml`` opens without it.
 
     GDAL needs the URL percent-encoded in this form, query string included.
+
+    GDAL refuses this form when the setting
+    ``CPL_VSIL_CURL_ALLOWED_EXTENSIONS`` is set, whatever it lists. Use
+    ``plain_vsicurl_path`` then.
     """
     return f"/vsicurl?empty_dir=yes&url={quote(url, safe='')}"
+
+
+def plain_vsicurl_path(url: str) -> str:
+    """Return the GDAL path that reads ``url`` with no ``/vsicurl`` options."""
+    return f"/vsicurl/{url}"
+
+
+def url_extension(url: str) -> str:
+    """Return the extension of the file a URL names, in lower case, without the dot."""
+    name = urlsplit(url).path.rsplit("/", 1)[-1]
+    return name.rsplit(".", 1)[-1].lower() if "." in name else ""
+
+
+def allowed_extensions(setting: str) -> tuple[str, ...]:
+    """Return the entries of ``CPL_VSIL_CURL_ALLOWED_EXTENSIONS``.
+
+    GDAL splits the value at commas and spaces, and compares each entry with
+    the end of the file name, ignoring case.
+    """
+    return tuple(entry for entry in setting.replace(",", " ").split() if entry)
+
+
+def extension_blocked(url: str, setting: str | None) -> bool:
+    """Return whether ``CPL_VSIL_CURL_ALLOWED_EXTENSIONS`` keeps GDAL from reading ``url``."""
+    if not setting:
+        return False
+    name = urlsplit(url).path.rsplit("/", 1)[-1].lower()
+    return not any(name.endswith(entry.lower()) for entry in allowed_extensions(setting))
 
 
 def folder_name(href: str) -> str:

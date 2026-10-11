@@ -27,10 +27,16 @@ from portolan_registry_qgis.core import parquet_query
 from portolan_registry_qgis.core import scope as scopes
 from portolan_registry_qgis.core.download import walk
 from portolan_registry_qgis.core.geoparquet import quote
-from portolan_registry_qgis.core.hrefs import asset_href, vsicurl_path
+from portolan_registry_qgis.core.hrefs import asset_href
 from portolan_registry_qgis.core.stac import asset_format
 from portolan_registry_qgis.qgis_io import parquet_layer
-from portolan_registry_qgis.qgis_io.layers import LayerError, gdal_open_error, remote_reads
+from portolan_registry_qgis.qgis_io.layers import (
+    LayerError,
+    blocked_message,
+    gdal_open_error,
+    gdal_path,
+    remote_reads,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -310,7 +316,12 @@ def write_vrt(hrefs: list[str], cancelled: Callable[[], bool] | None = None) -> 
         return 0 if cancelled is not None and cancelled() else 1
 
     options = gdal.BuildVRTOptions(callback=progress)
-    paths = [vsicurl_path(h) for h in hrefs]
+    # A file that the GDAL settings block would draw nothing. Say so first.
+    blocked = next((message for h in hrefs if (message := blocked_message(h))), None)
+    if blocked is not None:
+        parquet_layer.discard_path(path)
+        raise LayerError(blocked)
+    paths = [gdal_path(h) for h in hrefs]
     error = ""
     # BuildVRT says only "Can't open <path>. Skipping it." for a file it
     # cannot open. The handler keeps those paths, to ask GDAL why.
@@ -322,7 +333,7 @@ def write_vrt(hrefs: list[str], cancelled: Callable[[], bool] | None = None) -> 
 
     gdal.PushErrorHandler(keep)
     try:
-        with remote_reads(paths):
+        with remote_reads(hrefs):
             dataset = gdal.BuildVRT(str(path), paths, options=options)
             bands = dataset.RasterCount if dataset is not None else 0
             if dataset is None:

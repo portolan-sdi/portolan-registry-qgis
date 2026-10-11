@@ -10,8 +10,11 @@ from portolan_registry_qgis.core.hrefs import (
     asset_href,
     browser_url,
     catalog_href,
+    extension_blocked,
     folder_name,
     is_http_url,
+    plain_vsicurl_path,
+    url_extension,
     vsicurl_path,
 )
 
@@ -139,6 +142,33 @@ def test_is_http_url(value, expected):
 )
 def test_vsicurl_path_skips_directory_listing(url, path):
     assert vsicurl_path(url) == path
+
+
+def test_plain_vsicurl_path():
+    url = "https://example.com/a/relief.tif?x=1"
+    assert plain_vsicurl_path(url) == "/vsicurl/https://example.com/a/relief.tif?x=1"
+
+
+@pytest.mark.parametrize(
+    ("url", "setting", "blocked"),
+    [
+        # A QGIS 3.40 session set the value TIF, which blocks GeoParquet.
+        ("https://x.test/a/b.parquet", "TIF", True),
+        ("https://x.test/a/b.tif", "TIF", False),
+        ("https://x.test/a/b.TIF?sig=1", ".tif", False),
+        ("https://x.test/a/b.fgb", ".tif, .fgb", False),
+        ("https://x.test/a/b.fgb", ".tif .geojson", True),
+        ("https://x.test/a/b.fgb", None, False),
+        ("https://x.test/a/b.fgb", "", False),
+    ],
+)
+def test_extension_blocked(url, setting, blocked):
+    assert extension_blocked(url, setting) is blocked
+
+
+def test_url_extension():
+    assert url_extension("https://x.test/a/B.TIF?x=y.z") == "tif"
+    assert url_extension("https://x.test/a/noext") == ""
 
 
 # The expected paths follow toBrowserPath in portolan-browser's

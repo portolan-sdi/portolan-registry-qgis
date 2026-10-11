@@ -33,7 +33,12 @@ from qgis.core import (
 )
 
 from portolan_registry_qgis.core.diagnose import open_failure
-from portolan_registry_qgis.core.hrefs import vsicurl_path
+from portolan_registry_qgis.core.hrefs import (
+    extension_blocked,
+    plain_vsicurl_path,
+    url_extension,
+    vsicurl_path,
+)
 from portolan_registry_qgis.core.parquet_query import is_flatpak
 from portolan_registry_qgis.qgis_io.network import NetworkError, fetch_range
 from portolan_registry_qgis.qgis_io.tileserver import Archive, TileServer, open_archive
@@ -68,19 +73,48 @@ class LayerError(RuntimeError):
 _HTTP_RETRY = {"GDAL_HTTP_MAX_RETRY": "3", "GDAL_HTTP_RETRY_DELAY": "1"}
 
 
+_ALLOWED = "CPL_VSIL_CURL_ALLOWED_EXTENSIONS"
+
+
+def gdal_path(url: str) -> str:
+    """Return the GDAL path that reads ``url`` in this QGIS session.
+
+    The path with the ``empty_dir`` option opens faster. GDAL refuses that
+    path when ``CPL_VSIL_CURL_ALLOWED_EXTENSIONS`` is set, as a QGIS 3.40
+    session with the value ``TIF`` showed. The plain path works then.
+    """
+    if gdal.GetConfigOption(_ALLOWED):
+        return plain_vsicurl_path(url)
+    return vsicurl_path(url)
+
+
+def blocked_message(url: str) -> str | None:
+    """Return why the GDAL settings keep the reads of ``url`` from working, or None."""
+    setting = gdal.GetConfigOption(_ALLOWED)
+    if not extension_blocked(url, setting):
+        return None
+    extension = url_extension(url) or "files with no extension"
+    return (
+        f"QGIS could not open {url}. The GDAL setting {_ALLOWED} is {setting!r}, "
+        f"so GDAL reads no {extension} file over HTTP. Remove the setting, or add "
+        f"{extension} to it, in Settings > Options, under System > Environment or GDAL. "
+        "Then restart QGIS."
+    )
+
+
 @contextlib.contextmanager
-def remote_reads(paths: list[str]) -> Iterator[None]:
-    """Open ``/vsicurl`` paths with retries, and without a remembered failure.
+def remote_reads(urls: list[str]) -> Iterator[None]:
+    """Open the files at ``urls`` with retries, and without a remembered failure.
 
     GDAL keeps the result of a failed request for the life of the process.
     One busy moment on the server then fails every later open of the file
-    until QGIS restarts. The function drops that result for ``paths``. The
-    retry settings apply to the calling thread only.
+    until QGIS restarts. The function drops that result for ``urls``. The retry
+    settings apply to the calling thread only.
     """
     clear = getattr(gdal, "VSICurlPartialClearCache", None)
     if clear is not None:
-        for path in paths:
-            clear(path)
+        for url in urls:
+            clear(gdal_path(url))
     earlier = {key: gdal.GetThreadLocalConfigOption(key, None) for key in _HTTP_RETRY}
     for key, value in _HTTP_RETRY.items():
         if gdal.GetConfigOption(key) is None:
@@ -478,7 +512,7 @@ def csv_source(url: str, columns: tuple[str, str] | None) -> str:
     options = ["AUTODETECT_TYPE=YES"]
     if columns is not None:
         options += [f"X_POSSIBLE_NAMES={columns[0]}", f"Y_POSSIBLE_NAMES={columns[1]}"]
-    parts = {"path": f"CSV:{vsicurl_path(url)}", "openOptions": options}
+    parts = {"path": f"CSV:{gdal_path(url)}", "openOptions": options}
     return str(QgsProviderRegistry.instance().encodeUri("ogr", parts))
 
 
@@ -510,19 +544,24 @@ def asset_layer(asset: Asset, name: str | None = None) -> QgsMapLayer:
         LayerError: The asset has no supported format, or QGIS cannot open it.
     """
     title = name or asset.label
-    path = vsicurl_path(asset.href)
+    # QGIS draws on other threads, which keep the user's GDAL settings. A
+    # file that the settings block would open here and then draw nothing.
+    blocked = blocked_message(asset.href) if asset.format != "copc" else None
+    if blocked is not None:
+        raise LayerError(blocked)
+    path = gdal_path(asset.href)
     layer: QgsMapLayer
-    if asset.format in {"geojson", "flatgeobuf"}:
-        layer = QgsVectorLayer(path, title, "ogr")
-    elif asset.format == "csv":
-        layer = csv_layer(asset.href, title)
-    elif asset.format == "cog":
-        with remote_reads([path]):
+    with remote_reads([asset.href]):
+        if asset.format in {"geojson", "flatgeobuf"}:
+            layer = QgsVectorLayer(path, title, "ogr")
+        elif asset.format == "csv":
+            layer = csv_layer(asset.href, title)
+        elif asset.format == "cog":
             layer = QgsRasterLayer(path, title, "gdal")
-    elif asset.format == "copc":
-        layer = QgsPointCloudLayer(asset.href, title, "copc")
-    else:
-        raise LayerError(f"{asset.label} has no format QGIS can open in place")
+        elif asset.format == "copc":
+            layer = QgsPointCloudLayer(asset.href, title, "copc")
+        else:
+            raise LayerError(f"{asset.label} has no format QGIS can open in place")
     if not layer.isValid():
         raise LayerError(open_failure(asset.href, layer.error().summary(), is_flatpak()))
     return layer

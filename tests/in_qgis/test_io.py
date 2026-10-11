@@ -391,6 +391,37 @@ def test_asset_layers_read_only_the_asset(catalog, collection):
         assert layer.source().startswith("/vsicurl?empty_dir=yes&url=")
 
 
+@pytest.fixture
+def tif_only():
+    # A QGIS 3.40 session set CPL_VSIL_CURL_ALLOWED_EXTENSIONS to TIF. GDAL
+    # then refused every /vsicurl?empty_dir=yes path, so no COG opened.
+    gdal.SetConfigOption("CPL_VSIL_CURL_ALLOWED_EXTENSIONS", "TIF")
+    gdal.VSICurlClearCache()
+    yield
+    gdal.SetConfigOption("CPL_VSIL_CURL_ALLOWED_EXTENSIONS", None)
+    gdal.VSICurlClearCache()
+
+
+def test_a_tif_only_setting_still_opens_cogs(catalog, collection, tiles, tif_only):
+    by_key = {asset.key: asset for asset in collection.assets}
+    raster = layers.asset_layer(by_key["relief"])
+    assert raster.isValid()
+    assert raster.source() == f"/vsicurl/{by_key['relief'].href}"
+    path = mosaic.write_vrt([_tile(catalog, "a"), _tile(catalog, "b")])
+    assert path.exists()
+    parquet_layer.discard_path(path)
+
+
+def test_a_tif_only_setting_explains_a_blocked_file(catalog, collection, tif_only):
+    by_key = {asset.key: asset for asset in collection.assets}
+    with pytest.raises(layers.LayerError) as failure:
+        layers.asset_layer(by_key["geojson"])
+    message = str(failure.value)
+    assert "CPL_VSIL_CURL_ALLOWED_EXTENSIONS is 'TIF'" in message
+    assert "so GDAL reads no geojson file over HTTP" in message
+    assert "Settings > Options" in message
+
+
 def _parquet_url(catalog):
     return f"{catalog['base']}/points.parquet"
 

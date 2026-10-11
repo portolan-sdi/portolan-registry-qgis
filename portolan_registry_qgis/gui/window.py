@@ -71,7 +71,12 @@ from portolan_registry_qgis.core.format import (
     license_name,
     link_label,
 )
-from portolan_registry_qgis.core.hrefs import BROWSER_URL, browser_url, vsicurl_path
+from portolan_registry_qgis.core.hrefs import (
+    BROWSER_URL,
+    browser_url,
+    plain_vsicurl_path,
+    vsicurl_path,
+)
 from portolan_registry_qgis.core.scope import Area, Everything, MapView, Scope
 from portolan_registry_qgis.core.stac import Asset, Document, Loadable, Node, read_document
 from portolan_registry_qgis.gui.pictures import (
@@ -1213,9 +1218,10 @@ class RegistryWindow(QDialog):
             item = row.data(0, _ROLE)
             if not isinstance(item, Loadable):
                 continue
-            path = vsicurl_path(item.href)
+            # The path form depends on the GDAL settings of the session.
+            paths = (vsicurl_path(item.href), plain_vsicurl_path(item.href))
             on_map = item.href in urls or any(
-                item.href == source or path in source for source in sources
+                item.href == source or any(path in source for path in paths) for source in sources
             )
             row.setData(0, ON_MAP_ROLE, on_map)
             row.setToolTip(0, _loadable_tip(item, on_map))

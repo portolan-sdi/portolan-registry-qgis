@@ -19,7 +19,7 @@ from qgis.PyQt.QtWidgets import (
     QWidget,
 )
 
-from portolan_registry_qgis.core.format import catalog_summary
+from portolan_registry_qgis.core.format import catalog_summary, count
 from portolan_registry_qgis.core.registry import CatalogEntry
 from portolan_registry_qgis.gui.pictures import (
     ACCENT,
@@ -53,10 +53,11 @@ class More:
 
     rest: tuple[Any, ...]
 
-    def label(self, page: int) -> str:
-        """Return the row's text."""
+    def label(self, page: int, noun: str = "") -> str:
+        """Return the row's text. A ``noun`` names what the rows hold."""
         shown = min(page, len(self.rest))
-        return f"Show {shown:,} more of {len(self.rest):,}"
+        total = count(len(self.rest), noun) if noun else f"{len(self.rest):,}"
+        return f"Show {shown:,} more of {total}"
 
 
 _TILE = QSize(66, 44)
@@ -345,13 +346,18 @@ class ExtentTile(QWidget):
 
 
 class HeroView(QWidget):
-    """The chosen node's thumbnail with a small extent map, or a large extent map."""
+    """The chosen node's thumbnail, or a map of its extent when it has none.
+
+    The picture and the map do not show together. ``painted_extent`` tells
+    whether the last paint drew the map.
+    """
 
     def __init__(self, world: WorldMap, parent: QWidget | None = None):
         super().__init__(parent)
         self._world = world
         self._bbox: Bbox | None = None
         self._picture: Picture | None = None
+        self.painted_extent = False
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         policy = self.sizePolicy()
         policy.setHeightForWidth(True)
@@ -359,13 +365,13 @@ class HeroView(QWidget):
         world.ready.connect(self.update)
 
     def show_extent(self, bbox: Bbox | None, picture: Picture | None = None) -> None:
-        """Show ``bbox``, under ``picture`` when there is one."""
+        """Show ``bbox``, or ``picture`` instead when there is one."""
         self._bbox = bbox
         self._picture = picture
         self.update()
 
     def set_picture(self, picture: Picture | None) -> None:
-        """Show ``picture`` over the current extent."""
+        """Show ``picture`` instead of the extent."""
         self._picture = picture
         self.update()
 
@@ -391,6 +397,7 @@ class HeroView(QWidget):
         painter = QPainter(self)
         rect = QRectF(self.rect())
         palette = self.palette()
+        self.painted_extent = self._picture is None
         if self._picture is None:
             paint_extent(painter, rect, self._bbox, self._world, palette, min_span=40.0, radius=4.0)
             painter.end()
@@ -410,15 +417,6 @@ class HeroView(QWidget):
             int(rect.center().y() - size.height() / 2),
             image,
         )
-        if self._bbox is not None:
-            inset_width = max(72.0, rect.width() * 0.26)
-            inset = QRectF(
-                rect.right() - inset_width - 8,
-                rect.bottom() - inset_width / 1.5 - 8,
-                inset_width,
-                inset_width / 1.5,
-            )
-            paint_extent(painter, inset, self._bbox, self._world, palette)
         painter.end()
 
 
@@ -448,14 +446,14 @@ class LogoView(QWidget):
 
 
 class CatalogHeader(QWidget):
-    """The open catalog: its extent, title, facts, and logo. A click shows its details."""
+    """The open publisher: its extent, title, facts, and logo. A click shows its details."""
 
     clicked = pyqtSignal()
 
     def __init__(self, world: WorldMap, parent: QWidget | None = None):
         super().__init__(parent)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setToolTip("Show the catalog's details")
+        self.setToolTip("Show the publisher's details")
         layout = QHBoxLayout(self)
         layout.setContentsMargins(_PAD, _PAD, _PAD, _PAD)
         layout.setSpacing(_PAD + 4)

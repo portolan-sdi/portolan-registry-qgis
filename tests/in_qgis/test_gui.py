@@ -14,11 +14,14 @@ from qgis.core import (
     QgsSettings,
     QgsVectorTileLayer,
 )
-from qgis.gui import QgsMapCanvas, QgsMessageBar
-from qgis.PyQt.QtWidgets import QMainWindow, QMessageBox
+from qgis.gui import QgsCollapsibleGroupBox, QgsMapCanvas, QgsMessageBar
+from qgis.PyQt.QtCore import QSize
+from qgis.PyQt.QtGui import QColor, QPalette
+from qgis.PyQt.QtWidgets import QComboBox, QMainWindow, QMessageBox
 
 import portolan_registry_qgis
 from portolan_registry_qgis import plugin as plugin_module
+from portolan_registry_qgis.gui import pictures
 from portolan_registry_qgis.gui import window as window_module
 from portolan_registry_qgis.gui.widgets import BADGE_ROLE
 from portolan_registry_qgis.gui.window import RegistryWindow
@@ -74,6 +77,24 @@ def iface():
     QgsApplication.processEvents()
 
 
+_SECTIONS_GROUP = f"QgsCollapsibleGroupBox/{window_module.SETTINGS_GROUP}"
+
+
+def _forget_layout():
+    settings = QgsSettings()
+    for key in (window_module.GEOMETRY_SETTING, window_module.SPLITTER_SETTING, _SECTIONS_GROUP):
+        settings.remove(key)
+
+
+@pytest.fixture(autouse=True)
+def fresh_layout():
+    # The window keeps its size and open sections in the QGIS settings. Each
+    # test starts from the defaults and leaves none of its own behind.
+    _forget_layout()
+    yield
+    _forget_layout()
+
+
 @pytest.fixture
 def server():
     tiles = TileServer()
@@ -110,17 +131,28 @@ def open_collection(window):
 
 def test_registry_lists_and_filters(iface, server, catalog):
     window = open_window(iface, server, catalog)
-    assert window.status.itemText(1) == "Valid"
+    assert window.shown.text() == "1 publisher"
+    assert window.search.placeholderText() == "Search publishers by name or license"
     window.search.setText("nothing like this")
-    assert rows(window.catalogs) == ["No catalog matches these filters."]
+    assert rows(window.catalogs) == ["No publisher matches these filters."]
+    assert window.shown.text() == "0 of 1 publisher"
     window.search.setText("test")
     assert rows(window.catalogs) == ["Test catalog"]
     # Far from the catalog's extent, the extent filter hides it.
     iface.canvas.setExtent(QgsRectangle(-80, 30, -70, 40))
     window.in_extent.setChecked(True)
-    assert rows(window.catalogs) == ["No catalog matches these filters."]
+    assert rows(window.catalogs) == ["No publisher matches these filters."]
     iface.canvas.setExtent(QgsRectangle(10, 43, 14, 46))
     assert rows(window.catalogs) == ["Test catalog"]
+    window.disconnect_canvas()
+
+
+def test_no_status_filter(iface, server, catalog):
+    # Users do not filter by validation status. A catalog that is not valid
+    # still shows its status in its row.
+    window = open_window(iface, server, catalog)
+    assert not hasattr(window, "status")
+    assert window.findChildren(QComboBox) == []
     window.disconnect_canvas()
 
 
@@ -147,6 +179,15 @@ def test_tree_details_and_assets(iface, server, catalog):
     assert badges["thumbnail"] == "PNG"
     assert "Test points" in shown(window)
     assert "CC-BY-4.0" in shown(window)
+    # The facts name the publisher and the total size, in plain words. They
+    # show no STAC type or ID, and no extent coordinates.
+    facts = window.facts.text()
+    assert ">Publisher<" in facts and "Test catalog" in facts
+    total = sum(asset.size for asset in window._document.assets)
+    assert ">Size<" in facts and window_module.human_size(total) in facts
+    for hidden in (">Type<", ">ID<", ">Extent<", "11.0000"):
+        assert hidden not in facts
+    assert window.files_box.title() == f"All files ({len(names)})"
     assert "2 styles" in window.tile_styles.text()
     assert not window.tile_styles.isHidden()
     assert not window.parquet_extent.isHidden()
@@ -163,8 +204,14 @@ def test_tree_details_and_assets(iface, server, catalog):
 
 def test_pictures_and_navigation(iface, server, catalog):
     window = open_window(iface, server, catalog)
+    # Before a choice, the details pane shows a hint and no sections.
+    assert not window.empty.isHidden()
+    assert window.about_box.isHidden()
     open_catalog(window)
     assert window.pages.currentIndex() == 1
+    assert window.empty.isHidden()
+    assert not window.about_box.isHidden()
+    assert window.back.text() == "All publishers"
     assert window.header.title.text() == "Test catalog"
     assert "1 collection" in window.header.summary.text()
     # The registry's logo shows in the header, and the collection's
@@ -179,6 +226,8 @@ def test_pictures_and_navigation(iface, server, catalog):
     window.header.clicked.emit()
     wait_for(lambda: window._document is not None and window._document.kind == "catalog")
     assert "no files of its own" in window.no_assets.text()
+    # The catalog lists no sized files, so the registry's total stands in.
+    assert "123.5 KB" in window.facts.text()
     window.back.click()
     assert window.pages.currentIndex() == 0
     # Opening the same catalog again keeps its tree.
@@ -442,8 +491,115 @@ def test_lists_show_one_page_at_a_time(iface, server, catalog, monkeypatch):
     # Five copies of the one registered catalog fill two pages and a half.
     window._entries = window._entries * 5
     window._show_catalogs()
-    assert rows(window.catalogs)[2] == "Show 2 more of 3"
+    assert rows(window.catalogs)[2] == "Show 2 more of 3 publishers"
     window.catalogs.itemClicked.emit(window.catalogs.item(2))
-    assert rows(window.catalogs)[2:] == ["Test catalog", "Test catalog", "Show 1 more of 1"]
-    assert window.shown.text() == "5 catalogs"
+    assert rows(window.catalogs)[2:] == [
+        "Test catalog",
+        "Test catalog",
+        "Show 1 more of 1 publisher",
+    ]
+    assert window.shown.text() == "5 publishers"
+    window.disconnect_canvas()
+
+
+def test_window_layout_defaults_and_header(iface, server, catalog):
+    window = open_window(iface, server, catalog)
+    assert window.size() == window_module.DEFAULT_SIZE
+    assert window.splitter.widget(0) is window.pages
+    assert window.splitter.widget(1).widget().isAncestorOf(window.about_box)
+    # The action bar spans both panes, below the splitter.
+    assert not window.splitter.isAncestorOf(window.add)
+    assert window.tagline.text() == "Open data registry"
+    assert not window.logo.pixmap().isNull()
+    # The browser link waits until the window can build its URL.
+    assert window.open_browser.text() == "Open in browser"
+    assert window.open_browser.isHidden()
+    assert not window.refresh.isHidden()
+    window.disconnect_canvas()
+
+
+def test_window_restores_its_layout(iface, server, catalog):
+    window = open_window(iface, server, catalog)
+    window.show()
+    window.resize(820, 560)
+    window.splitter.setSizes([300, 520])
+    QgsApplication.processEvents()
+    sizes = window.splitter.sizes()
+    window.close()
+    assert not QgsSettings().value(window_module.GEOMETRY_SETTING).isEmpty()
+    window.disconnect_canvas()
+
+    again = open_window(iface, server, catalog)
+    again.show()
+    QgsApplication.processEvents()
+    assert again.size() == QSize(820, 560)
+    assert again.splitter.sizes() == sizes
+    again.close()
+    again.disconnect_canvas()
+
+
+def test_sections_collapse_and_remember(iface, server, catalog):
+    window = open_window(iface, server, catalog)
+    boxes = {
+        "About": window.about_box,
+        "Add to map": window.add_box,
+        "All files": window.files_box,
+        "Details": window.details_box,
+    }
+    for title, box in boxes.items():
+        assert isinstance(box, QgsCollapsibleGroupBox)
+        assert box.title() == title
+        assert box.settingGroup() == window_module.SETTINGS_GROUP
+        assert not box.isCollapsed()
+    open_collection(window)
+    window.show()
+    QgsApplication.processEvents()
+    window.details_box.setCollapsed(True)
+    # A collapse hides the content, but the window's own choices stay.
+    assert not window.facts.isVisible()
+    assert not window.facts.isHidden()
+    window.close()
+    window.disconnect_canvas()
+
+    again = open_window(iface, server, catalog)
+    again.show()
+    QgsApplication.processEvents()
+    assert again.details_box.isCollapsed()
+    assert not again.about_box.isCollapsed()
+    again.details_box.setCollapsed(False)
+    again.close()
+    again.disconnect_canvas()
+
+
+def test_hero_shows_thumbnail_or_extent(iface, server, catalog):
+    window = open_window(iface, server, catalog)
+    open_catalog(window)
+    # The catalog has no thumbnail, so the hero draws its extent.
+    wait_for(lambda: window._document is not None and window._document.kind == "catalog")
+    window.hero.grab()
+    assert window.hero.painted_extent
+    window.tree.setCurrentItem(window.tree.topLevelItem(0))
+    wait_for(lambda: window.hero.has_picture)
+    # With a thumbnail, the hero draws the picture alone, with no inset map.
+    window.hero.grab()
+    assert not window.hero.painted_extent
+    window.disconnect_canvas()
+
+
+def test_logomark_follows_the_theme(iface, server, catalog):
+    for path in (pictures.LOGOMARK_LIGHT, pictures.LOGOMARK_DARK):
+        assert path.is_file()
+        assert path.parent == Path(portolan_registry_qgis.__file__).parent / "images"
+    light, dark = QPalette(), QPalette()
+    light.setColor(QPalette.ColorRole.Base, QColor("#fcfcfa"))
+    dark.setColor(QPalette.ColorRole.Base, QColor("#16170f"))
+    assert pictures.logomark(light) == pictures.LOGOMARK_LIGHT
+    assert pictures.logomark(dark) == pictures.LOGOMARK_DARK
+
+    window = open_window(iface, server, catalog)
+    window.setPalette(light)
+    assert window.logomark_file == pictures.LOGOMARK_LIGHT
+    window.setPalette(dark)
+    assert window.logomark_file == pictures.LOGOMARK_DARK
+    assert not window.logo.pixmap().isNull()
     window.disconnect_canvas()

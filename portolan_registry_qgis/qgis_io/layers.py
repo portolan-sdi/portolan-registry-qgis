@@ -40,7 +40,7 @@ from portolan_registry_qgis.core.hrefs import (
     vsicurl_path,
 )
 from portolan_registry_qgis.core.parquet_query import is_flatpak
-from portolan_registry_qgis.qgis_io.network import NetworkError, fetch_range
+from portolan_registry_qgis.qgis_io.network import NetworkError, fetch_range, http_status
 from portolan_registry_qgis.qgis_io.tileserver import Archive, TileServer, open_archive
 
 if TYPE_CHECKING:
@@ -124,6 +124,34 @@ def remote_reads(urls: list[str]) -> Iterator[None]:
     finally:
         for key, value in earlier.items():
             gdal.SetThreadLocalConfigOption(key, value)
+
+
+# GDAL gives this text for a /vsicurl path it cannot read, whatever the
+# reason. A 404, a refused path, and a network block all read the same.
+_GENERIC = "does not exist in the file system"
+
+
+def explain_open_error(url: str, message: str) -> str:
+    """Return a reason that says why GDAL could not read ``url``.
+
+    When GDAL gives only its generic text, the function looks for the cause.
+    It checks the GDAL settings first, then asks for the file through the
+    QGIS network.
+    """
+    if _GENERIC not in message:
+        return message
+    blocked = blocked_message(url)
+    if blocked is not None:
+        return blocked
+    status, error = http_status(url)
+    if status is not None and status >= 400:
+        return f"the server answered HTTP {status}"
+    if status is not None:
+        return (
+            "QGIS reads the file, but GDAL does not. A GDAL network setting, such as a "
+            "proxy or a certificate setting in Settings > Options, may block GDAL"
+        )
+    return error or message
 
 
 def gdal_open_error(path: str) -> str:
@@ -563,7 +591,12 @@ def asset_layer(asset: Asset, name: str | None = None) -> QgsMapLayer:
         else:
             raise LayerError(f"{asset.label} has no format QGIS can open in place")
     if not layer.isValid():
-        raise LayerError(open_failure(asset.href, layer.error().summary(), is_flatpak()))
+        summary = layer.error().summary()
+        if _GENERIC in summary:
+            raise LayerError(
+                f"QGIS could not open {asset.href}: {explain_open_error(asset.href, summary)}"
+            )
+        raise LayerError(open_failure(asset.href, summary, is_flatpak()))
     return layer
 
 

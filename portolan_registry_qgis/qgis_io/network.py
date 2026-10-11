@@ -57,6 +57,25 @@ def fetch_bytes(url: str, accept: bytes = _ACCEPT) -> bytes:
     return bytes(blocking.reply().content())
 
 
+def http_status(url: str) -> tuple[int | None, str]:
+    """Ask for the first byte of ``url`` and return the HTTP status and any error.
+
+    QGIS sends the request with its own proxy and certificate settings, so
+    the answer can differ from what GDAL gets.
+
+    Returns:
+        The status code, or None when no HTTP answer came, and the error text.
+    """
+    request = QNetworkRequest(QUrl(url))
+    request.setRawHeader(b"Range", b"bytes=0-0")
+    request.setAttribute(QNetworkRequest.Attribute.CacheSaveControlAttribute, False)
+    blocking = QgsBlockingNetworkRequest()
+    code = blocking.get(request, forceRefresh=True)
+    status = blocking.reply().attribute(QNetworkRequest.Attribute.HttpStatusCodeAttribute)
+    error = "" if code == QgsBlockingNetworkRequest.ErrorCode.NoError else blocking.errorMessage()
+    return (int(status) if status else None), error
+
+
 def fetch_range(url: str, offset: int, length: int) -> bytes:
     """Return ``length`` bytes of ``url`` from ``offset``.
 
@@ -168,6 +187,11 @@ def fetch_json(url: str) -> object:
         raise ValueError(f"{url} did not return JSON: {error}") from error
 
 
+def report_failure(text: str) -> None:
+    """Write a failure that no message reports to the QGIS message log."""
+    QgsMessageLog.logMessage(text, "Portolan Registry", Qgis.MessageLevel.Critical)
+
+
 def run_task(
     description: str,
     function: Callable[[QgsTask], object],
@@ -197,12 +221,7 @@ def run_task(
         except Exception:  # noqa: BLE001 - QGIS drops an error that leaves this function
             # QGIS swallows an exception in a task's finished handler. Then
             # an action that fails looks like an action that did nothing.
-            report = traceback.format_exc()
-            QgsMessageLog.logMessage(
-                f"{description} failed after the task ended:\n{report}",
-                "Portolan Registry",
-                Qgis.MessageLevel.Critical,
-            )
+            report_failure(f"{description} failed after the task ended:\n{traceback.format_exc()}")
 
     flags = QgsTask.Flag.CanCancel
     if hidden:

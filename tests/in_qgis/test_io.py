@@ -14,7 +14,6 @@ from pathlib import Path
 import pytest
 from osgeo import gdal, ogr
 from qgis.core import (
-    Qgis,
     QgsApplication,
     QgsCoordinateReferenceSystem,
     QgsCoordinateTransform,
@@ -42,7 +41,7 @@ from portolan_registry_qgis.core.download import (
 from portolan_registry_qgis.core.geoparquet import LAYER
 from portolan_registry_qgis.core.scope import Area, Everything, MapView
 from portolan_registry_qgis.core.stac import Asset, read_document
-from portolan_registry_qgis.qgis_io import downloader, layers, mosaic, parquet_layer
+from portolan_registry_qgis.qgis_io import downloader, layers, mosaic, network, parquet_layer
 from portolan_registry_qgis.qgis_io.downloader import DownloadJob, target_path
 from portolan_registry_qgis.qgis_io.network import (
     NetworkError,
@@ -102,29 +101,21 @@ def test_run_task_reports_on_main_thread(catalog):
     assert isinstance(failures[0][1], NetworkError)
 
 
-def test_run_task_logs_an_error_in_its_callback(catalog):
+def test_run_task_logs_an_error_in_its_callback(catalog, monkeypatch):
     # QGIS drops an exception in a task's finished handler. The failure goes
-    # to the message log instead, so it does not pass in silence.
+    # to the message log instead, so it does not pass in silence. QGIS 4
+    # emits no messageReceived signal without a GUI, so the test reads the
+    # report itself.
     logged = []
+    monkeypatch.setattr(network, "report_failure", logged.append)
 
-    def log(message, tag, level):
-        if tag == "Portolan Registry":
-            logged.append((message, level))
+    def broken(_result, _error):
+        raise ValueError("broken on purpose")
 
-    QgsApplication.messageLog().messageReceived.connect(log)
-    try:
-
-        def broken(_result, _error):
-            raise ValueError("broken on purpose")
-
-        run_task("broken", lambda _task: 1, broken)
-        wait_for(lambda: logged)
-    finally:
-        QgsApplication.messageLog().messageReceived.disconnect(log)
-    message, level = logged[0]
-    assert "broken failed after the task ended" in message
-    assert "ValueError: broken on purpose" in message
-    assert level == Qgis.MessageLevel.Critical
+    run_task("broken", lambda _task: 1, broken)
+    wait_for(lambda: logged)
+    assert "broken failed after the task ended" in logged[0]
+    assert "ValueError: broken on purpose" in logged[0]
 
 
 def test_archive_header_and_tiles(catalog):
@@ -1270,6 +1261,55 @@ def test_a_failed_read_does_not_stay_failed(catalog):
         assert layers.asset_layer(cog).isValid()
     finally:
         target.unlink()
+
+
+def _alpha(layer, x, y):
+    """Return the alpha of the pixel at ``(x, y)``: 255 inside the clip, 0 outside."""
+    value, ok = layer.dataProvider().sample(QgsPointXY(x, y), layer.bandCount())
+    return value if ok else None
+
+
+def test_a_clipped_mosaic_shows_only_the_area(catalog):
+    # Users expect "data inside the polygon", not every file the polygon
+    # touches. TRIANGLE touches both files. The mosaic shows only its pixels.
+    hrefs = [_tile(catalog, "a"), _tile(catalog, "b")]
+    layer = mosaic.build_mosaic(hrefs, "clipped", TRIANGLE.wkt)
+    assert layer.isValid()
+    assert mosaic.clip_of(layer) == TRIANGLE.wkt
+    # The file holds the mosaic and the cutline. No other scratch file.
+    path = Path(layer.source())
+    assert "<Cutline>" in path.read_text() or "Cutline" in path.read_text()
+    # The extent is the triangle's envelope, not the extent of the two files.
+    # North of the files, the envelope holds transparent pixels.
+    extent = layer.extent()
+    assert (extent.xMinimum(), extent.xMaximum()) == (
+        pytest.approx(11.5, abs=0.01),
+        pytest.approx(12.3, abs=0.01),
+    )
+    assert (extent.yMinimum(), extent.yMaximum()) == (
+        pytest.approx(44.3, abs=0.01),
+        pytest.approx(44.9, abs=0.01),
+    )
+    # The files have no nodata value, so the clip adds an alpha band.
+    assert layer.bandCount() == 2
+    assert _sample(layer, 11.55, 44.6) == 50
+    assert _alpha(layer, 11.55, 44.6) == 255
+    # Inside the envelope but outside the triangle.
+    assert _alpha(layer, 12.25, 44.35) == 0
+    parquet_layer.discard_path(path)
+
+
+def test_a_saved_clipped_mosaic_rebuilds_clipped(catalog):
+    hrefs = [_tile(catalog, "a"), _tile(catalog, "b")]
+    layer = mosaic.build_mosaic(hrefs, "clipped", TRIANGLE.wkt)
+    gone = Path(layer.source())
+    parquet_layer.discard_path(gone)
+    mosaic.rebuild(layer)
+    assert layer.isValid()
+    assert Path(layer.source()) != gone
+    assert layer.bandCount() == 2
+    assert _alpha(layer, 12.25, 44.35) == 0
+    assert layer.extent().xMaximum() == pytest.approx(12.3, abs=0.01)
 
 
 def test_rebuild_a_saved_mosaic(catalog):

@@ -208,10 +208,11 @@ class PortolanRegistryPlugin:
         GDAL opens each COG to write the VRT, so the write runs in a task.
         """
         hrefs = mosaic.sources(layer)
+        clip = mosaic.clip_of(layer)
         name = layer.name()
 
         def write(task: Any) -> Path:
-            return mosaic.write_vrt(hrefs, task.isCanceled)
+            return mosaic.write_vrt(hrefs, task.isCanceled, clip)
 
         def done(result: object, error: BaseException | None) -> None:
             if not isinstance(result, Path):

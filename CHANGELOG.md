@@ -17,20 +17,25 @@
 - CSV files open over HTTP, as points when the header names longitude and latitude columns.
 - A Parquet file with no geometry column loads as a table.
 - A Parquet file whose `table:columns` name no geometry column shows as **Parquet**, not **GeoParquet**. Its button reads **Load table**, and the area picker hides.
-- An area picker replaces **Read GeoParquet in the map extent only**. It offers everything, the map view, a drawn polygon, or the polygons of a layer.
+- An area picker replaces **Read GeoParquet in the map extent only**. It offers everything, the map extent, a drawn polygon, or the polygons of a layer.
 - A GeoParquet load with a polygon keeps only the features that intersect the polygon. A saved project copies the same area again.
 - A collection whose children are all items shows one **N files** row in the tree.
 - In such a collection, **All files** lists one row for every file of the items, then the COG file of each item, one page at a time.
 - **Add as one layer** adds the COG files of a collection's items in the area as one VRT mosaic. A saved project builds the VRT again.
-- **Download > Everything in** leaves out the items outside the area.
+- **Download** leaves out the items outside the area.
 - When a new layer lands outside the map, the map moves to it, and the message says so. Before, the layer showed in the Layers panel only.
 - A click that must wait for a running mosaic or download says so. An error after a task ends goes to the message log. Before, both did nothing visible.
 - **All files** starts closed.
+- **Add as one layer** clips the mosaic to the area of interest, so the layer shows only the pixels inside it. A saved project clips it again.
+- Each section holds its own buttons. **Add to map** starts with the area of interest, then **View on map**, **Load full data**, **Add as one layer**, and **Download**, which all read the area. **All files** has **Add selected** and **Download selected**, which act on the selected files, whole. The bottom bar shows only the progress of a running task.
+- **Zoom to** and **Open in Portolan browser ↗** sit next to the name of the open dataset.
+- The area choices read **Area of interest** and **Map extent**.
+- The tooltips of **View on map** and **Load full data** name the format first, such as PMTiles or GeoParquet.
 - COGs open when the GDAL setting `CPL_VSIL_CURL_ALLOWED_EXTENSIONS` is set. GDAL refuses the `/vsicurl?empty_dir=yes` path then, so the plugin uses the plain `/vsicurl/` path. A file that the setting blocks gets a message that names the setting.
 - A COG that failed to open once opens on the next try. GDAL kept a failed request for the life of the QGIS session. COG reads now retry HTTP 429, 500, 502, 503, and 504.
 - When a mosaic leaves a file out, the message log gives GDAL's reason, such as an HTTP status.
 - A mosaic from a stac-geoparquet item index resolves each COG href against its item document, found by the item ID in the collection's item links. Before, the GHSL population tiles resolved against the index file and returned HTTP 404.
-- With a map view or an area, **Download > Selected files** saves a GeoParquet file as a GeoPackage of the features in the area.
+- With a map extent or an area, **Download** saves a GeoParquet file as a GeoPackage of the features in the area.
 - GeoParquet loads through a GeoPackage that DuckDB writes. A million polygons from a local file load in 2 seconds instead of 19, QGIS stays responsive, and memory use drops from 1.9 GB to 380 MB.
 - GeoParquet files with date or timestamp columns load their features. Before, the layer was empty.
 - A GeoParquet load has no feature limit. When it holds more than 1,000,000 features, the panel asks first.

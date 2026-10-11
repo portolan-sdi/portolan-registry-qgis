@@ -16,11 +16,12 @@ the COG URLs. A saved project that lost its VRT reads a placeholder, and
 from __future__ import annotations
 
 import json
+import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
-from osgeo import gdal
+from osgeo import gdal, ogr
 from qgis.core import Qgis, QgsMessageLog, QgsProviderRegistry, QgsRasterLayer
 
 from portolan_registry_qgis.core import parquet_query
@@ -33,6 +34,7 @@ from portolan_registry_qgis.qgis_io import parquet_layer
 from portolan_registry_qgis.qgis_io.layers import (
     LayerError,
     blocked_message,
+    explain_open_error,
     gdal_open_error,
     gdal_path,
     remote_reads,
@@ -49,6 +51,9 @@ if TYPE_CHECKING:
 # The layer keeps the COG URLs here, one per line, so a saved project can
 # build the VRT again.
 SOURCES_PROPERTY = "portolan/mosaic_sources"
+# The polygon that clips a mosaic, as WKT in EPSG:4326, so a saved project
+# clips it again.
+CLIP_PROPERTY = "portolan/mosaic_clip"
 # The role of a collection asset that holds every item as stac-geoparquet.
 MIRROR_ROLE = "collection-mirror"
 # The walk stops after this many documents.
@@ -294,11 +299,20 @@ def _first_cog(assets: object, base: str) -> str | None:
     return None
 
 
-def write_vrt(hrefs: list[str], cancelled: Callable[[], bool] | None = None) -> Path:
+def write_vrt(
+    hrefs: list[str],
+    cancelled: Callable[[], bool] | None = None,
+    clip: str | None = None,
+) -> Path:
     """Write a VRT over the COGs at ``hrefs`` into the session folder.
 
     GDAL opens each COG to read its size and georeferencing, so this sends
     one or more requests per file. Safe off the main thread.
+
+    With ``clip``, the file is a warped VRT that shows only the pixels
+    inside the polygon, cropped to its extent. The warp keeps the CRS and
+    the pixel grid of the COGs, so no pixel is resampled. The mosaic of the
+    COGs goes inside the file as its source, so the layer reads one file.
 
     GDAL leaves out a file whose CRS or band count differs from the first
     file's, and a file it cannot open. The message log names each file left
@@ -307,6 +321,11 @@ def write_vrt(hrefs: list[str], cancelled: Callable[[], bool] | None = None) -> 
     Raises:
         MosaicCancelledError: ``cancelled`` returned True.
         LayerError: The list is empty, or GDAL cannot build the VRT.
+
+    Args:
+        hrefs: The COG URLs.
+        cancelled: Polled while GDAL opens the files.
+        clip: A Polygon or MultiPolygon in EPSG:4326 as WKT.
     """
     if not hrefs:
         raise LayerError("No file intersects the area")
@@ -334,10 +353,14 @@ def write_vrt(hrefs: list[str], cancelled: Callable[[], bool] | None = None) -> 
     gdal.PushErrorHandler(keep)
     try:
         with remote_reads(hrefs):
-            dataset = gdal.BuildVRT(str(path), paths, options=options)
+            # A clipped mosaic builds the plain mosaic in memory first.
+            target = "" if clip else str(path)
+            dataset = gdal.BuildVRT(target, paths, options=options)
             bands = dataset.RasterCount if dataset is not None else 0
             if dataset is None:
                 error = gdal.GetLastErrorMsg()
+            elif clip:
+                _warp(dataset, path, clip)
             # Closing the dataset writes the file.
             dataset = None
             reasons = {skip: gdal_open_error(skip) for skip in skipped}
@@ -346,6 +369,8 @@ def write_vrt(hrefs: list[str], cancelled: Callable[[], bool] | None = None) -> 
     finally:
         gdal.PopErrorHandler()
     by_path = dict(zip(paths, hrefs, strict=True))
+    for skip, reason in list(reasons.items()):
+        reasons[skip] = explain_open_error(by_path.get(skip, skip), reason)
     for skip, reason in reasons.items():
         _log(f"The mosaic left out {by_path.get(skip, skip)}: {reason}")
     if cancelled is not None and cancelled():
@@ -360,7 +385,45 @@ def write_vrt(hrefs: list[str], cancelled: Callable[[], bool] | None = None) -> 
     return path
 
 
-def open_mosaic(path: Path, hrefs: list[str], name: str) -> QgsRasterLayer:
+def _warp(mosaic: Any, path: Path, clip: str) -> None:
+    """Write a warped VRT of ``mosaic`` at ``path`` that ``clip`` cuts and crops.
+
+    GDAL reads the cutline from a GeoJSON file in memory, and keeps the
+    polygon in the VRT. A band with no nodata value gets an alpha band, so
+    the pixels outside the polygon draw as transparent.
+    """
+    shape = ogr.CreateGeometryFromWkt(clip)
+    if shape is None:
+        raise RuntimeError("The clip is not WKT")
+    cutline = f"/vsimem/portolan-clip-{uuid.uuid4().hex}.geojson"
+    feature = {"type": "Feature", "properties": {}, "geometry": json.loads(shape.ExportToJson())}
+    gdal.FileFromMemBuffer(
+        cutline, json.dumps({"type": "FeatureCollection", "features": [feature]})
+    )
+    # The plain mosaic lives in memory. Its XML text is a dataset name that
+    # GDAL opens, so the warped VRT keeps the mosaic inline.
+    source = gdal.Open(mosaic.GetMetadata("xml:VRT")[0])
+    nodata = source.GetRasterBand(1).GetNoDataValue()
+    options = gdal.WarpOptions(
+        format="VRT",
+        # GeoJSON is in longitude and latitude by its specification, so the
+        # cutline needs no CRS of its own. GDAL 3.8 has no cutlineSRS option.
+        cutlineDSName=cutline,
+        cropToCutline=True,
+        dstSRS=source.GetProjection(),
+        dstNodata=nodata,
+        dstAlpha=nodata is None,
+    )
+    try:
+        warped = gdal.Warp(str(path), source, options=options)
+        if warped is None:
+            raise RuntimeError(gdal.GetLastErrorMsg() or "GDAL could not clip the mosaic")
+        warped = None
+    finally:
+        gdal.Unlink(cutline)
+
+
+def open_mosaic(path: Path, hrefs: list[str], name: str, clip: str | None = None) -> QgsRasterLayer:
     """Open a VRT that ``write_vrt`` wrote as a layer. Call on the main thread.
 
     Raises:
@@ -372,16 +435,25 @@ def open_mosaic(path: Path, hrefs: list[str], name: str) -> QgsRasterLayer:
         raise LayerError(f"QGIS could not open the mosaic: {layer.error().summary()}")
     parquet_layer.release_path(path)
     layer.setCustomProperty(SOURCES_PROPERTY, "\n".join(hrefs))
+    if clip:
+        layer.setCustomProperty(CLIP_PROPERTY, clip)
     return layer
 
 
-def build_mosaic(hrefs: list[str], name: str) -> QgsRasterLayer:
+def build_mosaic(hrefs: list[str], name: str, clip: str | None = None) -> QgsRasterLayer:
     """Write a VRT over ``hrefs`` to the scratch folder and open it as a layer.
 
     Raises:
         layers.LayerError: GDAL cannot build the VRT, or QGIS cannot open it.
     """
-    return open_mosaic(write_vrt(hrefs), hrefs, name)
+    return open_mosaic(write_vrt(hrefs, clip=clip), hrefs, name, clip)
+
+
+def clip_of(layer: object) -> str | None:
+    """Return the WKT that clips a mosaic layer, or None when it shows whole files."""
+    if not isinstance(layer, QgsRasterLayer):
+        return None
+    return str(layer.customProperty(CLIP_PROPERTY) or "") or None
 
 
 def sources(layer: object) -> list[str]:
@@ -438,7 +510,7 @@ def rebuild(layer: QgsRasterLayer, cancelled: Callable[[], bool] | None = None) 
     hrefs = sources(layer)
     if not hrefs:
         raise LayerError(f"{layer.name()} keeps no mosaic sources")
-    reopen(layer, write_vrt(hrefs, cancelled))
+    reopen(layer, write_vrt(hrefs, cancelled, clip_of(layer)))
 
 
 def _log(text: str) -> None:

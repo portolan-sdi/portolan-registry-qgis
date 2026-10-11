@@ -31,8 +31,15 @@ from portolan_registry_qgis.gui.scope import (
     view_bbox,
 )
 
-MERCATOR = QgsCoordinateReferenceSystem("EPSG:3857")
-WGS84 = QgsCoordinateReferenceSystem("EPSG:4326")
+
+# A CRS made at import time, before the qgis_app fixture starts QGIS, breaks
+# every later CRS lookup on QGIS 3.34. These functions make each CRS on use.
+def mercator():
+    return QgsCoordinateReferenceSystem("EPSG:3857")
+
+
+def wgs84():
+    return QgsCoordinateReferenceSystem("EPSG:4326")
 
 
 class FakeIface:
@@ -40,7 +47,7 @@ class FakeIface:
 
     def __init__(self):
         self.canvas = QgsMapCanvas()
-        self.canvas.setDestinationCrs(WGS84)
+        self.canvas.setDestinationCrs(wgs84())
         self.canvas.resize(400, 400)
         self.canvas.setExtent(QgsRectangle(10, 43, 14, 46))
         self.bar = QgsMessageBar()
@@ -69,7 +76,7 @@ def picker(iface):
     widget.changed.connect(lambda: events.append(widget.choice()))
     widget.events = events
     yield widget
-    widget.clear()
+    widget.release()
     widget.deleteLater()
 
 
@@ -127,11 +134,11 @@ def test_map_view(picker, iface):
 
 
 def test_view_bbox_transforms_and_limits_to_the_world():
-    box = QgsCoordinateTransform(WGS84, MERCATOR, QgsProject.instance()).transformBoundingBox(
+    box = QgsCoordinateTransform(wgs84(), mercator(), QgsProject.instance()).transformBoundingBox(
         QgsRectangle(11, 44, 12, 45)
     )
-    assert view_bbox(box, MERCATOR) == pytest.approx((11, 44, 12, 45))
-    assert view_bbox(QgsRectangle(-500, -100, 500, 100), WGS84) == (-180, -90, 180, 90)
+    assert view_bbox(box, mercator()) == pytest.approx((11, 44, 12, 45))
+    assert view_bbox(QgsRectangle(-500, -100, 500, 100), wgs84()) == (-180, -90, 180, 90)
 
 
 def _draw_square(picker, iface):
@@ -180,8 +187,8 @@ def test_double_click_finishes(picker, iface, pan):
 
 
 def test_draw_in_another_crs(picker, iface, pan):
-    iface.canvas.setDestinationCrs(MERCATOR)
-    to_mercator = QgsCoordinateTransform(WGS84, MERCATOR, QgsProject.instance())
+    iface.canvas.setDestinationCrs(mercator())
+    to_mercator = QgsCoordinateTransform(wgs84(), mercator(), QgsProject.instance())
     picker.choose(DRAW)
     tool = iface.canvas.mapTool()
     for x, y in ((11, 44), (12, 44), (12, 45)):
@@ -258,7 +265,7 @@ def test_clear_restores_the_map_tool(picker, iface, pan):
 
 def _squares(crs="EPSG:3857"):
     layer = QgsVectorLayer(f"Polygon?crs={crs}", "squares", "memory")
-    to_layer = QgsCoordinateTransform(WGS84, layer.crs(), QgsProject.instance())
+    to_layer = QgsCoordinateTransform(wgs84(), layer.crs(), QgsProject.instance())
     features = []
     for west in (11, 13):
         geometry = QgsGeometry.fromRect(QgsRectangle(west, 44, west + 1, 45))
@@ -312,7 +319,7 @@ def test_the_layer_union_is_kept_until_the_layer_changes(picker, monkeypatch):
     assert len(calls) == 1
     # A new feature changes the area.
     feature = QgsFeature()
-    to_layer = QgsCoordinateTransform(WGS84, layer.crs(), QgsProject.instance())
+    to_layer = QgsCoordinateTransform(wgs84(), layer.crs(), QgsProject.instance())
     square = QgsGeometry.fromRect(QgsRectangle(15, 44, 16, 45))
     square.transform(to_layer)
     feature.setGeometry(square)
@@ -337,7 +344,7 @@ def test_an_area_across_the_antimeridian_splits_in_two():
     pacific = QgsCoordinateReferenceSystem("EPSG:3832")
     ring = [QgsPointXY(x, y) for x, y in ((177, -19), (182, -19), (182, -16), (177, -16))]
     geometry = QgsGeometry.fromPolygonXY([[*ring, ring[0]]])
-    geometry.transform(QgsCoordinateTransform(WGS84, pacific, QgsProject.instance()))
+    geometry.transform(QgsCoordinateTransform(wgs84(), pacific, QgsProject.instance()))
     area = area_of(geometry, pacific)
     west, south, east, north = area.bbox
     assert (west, east) == (pytest.approx(177, abs=1e-6), pytest.approx(-178, abs=1e-6))
@@ -355,14 +362,14 @@ def test_an_area_across_the_antimeridian_splits_in_two():
 def test_an_area_past_180_degrees_splits_in_two():
     # A canvas in degrees, panned east past 180°.
     geometry = QgsGeometry.fromRect(QgsRectangle(177, -19, 182, -16))
-    area = area_of(geometry, WGS84)
+    area = area_of(geometry, wgs84())
     assert area.bbox == pytest.approx((177, -19, -178, -16))
     assert QgsGeometry.fromWkt(area.wkt).isMultipart()
 
 
 def test_a_wide_area_that_does_not_cross_stays_whole():
     geometry = QgsGeometry.fromRect(QgsRectangle(-170, -10, 170, 10))
-    area = area_of(geometry, WGS84)
+    area = area_of(geometry, wgs84())
     assert area.bbox == pytest.approx((-170, -10, 170, 10))
     assert not QgsGeometry.fromWkt(area.wkt).isMultipart()
 
@@ -383,13 +390,13 @@ def test_no_layer_is_a_problem(picker):
 
 def test_area_of_rejects_what_is_not_a_polygon():
     with pytest.raises(ScopeError, match="not a polygon"):
-        area_of(QgsGeometry.fromWkt("LINESTRING(0 0, 1 1)"), WGS84)
+        area_of(QgsGeometry.fromWkt("LINESTRING(0 0, 1 1)"), wgs84())
     with pytest.raises(ScopeError, match="empty"):
-        area_of(QgsGeometry(), WGS84)
-    area = area_of(QgsGeometry.fromWkt("POLYGON Z((0 0 5, 1 0 5, 1 1 5, 0 0 5))"), WGS84)
+        area_of(QgsGeometry(), wgs84())
+    area = area_of(QgsGeometry.fromWkt("POLYGON Z((0 0 5, 1 0 5, 1 1 5, 0 0 5))"), wgs84())
     assert "Z" not in area.wkt
     curved = area_of(
-        QgsGeometry.fromWkt("CURVEPOLYGON(CIRCULARSTRING(0 0, 1 1, 2 0, 1 -1, 0 0))"), WGS84
+        QgsGeometry.fromWkt("CURVEPOLYGON(CIRCULARSTRING(0 0, 1 1, 2 0, 1 -1, 0 0))"), wgs84()
     )
     assert curved.wkt.startswith("Polygon")
 

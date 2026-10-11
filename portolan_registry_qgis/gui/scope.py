@@ -32,7 +32,7 @@ DRAW = "draw"
 FROM_LAYER = "layer"
 CHOICES = (
     (EVERYTHING, "Everything"),
-    (MAP_VIEW, "Map view"),
+    (MAP_VIEW, "Map extent"),
     (DRAW, "Draw an area…"),
     (FROM_LAYER, "From a layer…"),
 )
@@ -350,7 +350,7 @@ class PolygonTool(QgsMapTool):
 class ScopePicker(QWidget):
     """Choose which part of a dataset to add or download.
 
-    The choices are "Everything", "Map view", "Draw an area", and "From a
+    The choices are "Everything", "Map extent", "Draw an area", and "From a
     layer". Drawing uses a polygon map tool on the canvas. The drawn area
     stays on the canvas until the choice changes or ``clear`` runs. Call
     ``clear`` before the picker is deleted, so that no rubber band stays on
@@ -399,6 +399,10 @@ class ScopePicker(QWidget):
         self._choice.activated.connect(self._activated)
         self._redraw.clicked.connect(self._draw)
         self._layers.layerChanged.connect(self._layer_changed)
+        model = self._layers.model()
+        model.rowsInserted.connect(self._follow_layer)
+        model.rowsRemoved.connect(self._follow_layer)
+        model.modelReset.connect(self._follow_layer)
         self._selected.toggled.connect(self._layer_input_changed)
         self._canvas.extentsChanged.connect(self._view_changed)
         self._canvas.destinationCrsChanged.connect(self._show_area)
@@ -437,6 +441,7 @@ class ScopePicker(QWidget):
             layer = self._layers.currentLayer()
             if not isinstance(layer, QgsVectorLayer):
                 raise ScopeError("Choose a polygon layer.")
+            self._follow_layer()
             if self._layer_area is None:
                 try:
                     self._layer_area = layer_area(layer, self._selected.isChecked())
@@ -472,6 +477,26 @@ class ScopePicker(QWidget):
             self.changed.emit()
         elif had_area:
             self.changed.emit()
+
+    def release(self) -> None:
+        """Stop following the canvas, the layer list, and the watched layer.
+
+        Call before the picker is deleted. A picker that lives on would keep
+        reading the polygons of a layer whenever the layer changes.
+        """
+        self.clear()
+        model = self._layers.model()
+        for signal, slot in (
+            (self._canvas.extentsChanged, self._view_changed),
+            (self._canvas.destinationCrsChanged, self._show_area),
+            (self._layers.layerChanged, self._layer_changed),
+            (model.rowsInserted, self._follow_layer),
+            (model.rowsRemoved, self._follow_layer),
+            (model.modelReset, self._follow_layer),
+        ):
+            with contextlib.suppress(TypeError, RuntimeError):
+                signal.disconnect(slot)
+        self._watch(None)
 
     def _set_current(self, key: str) -> None:
         self._current = key
@@ -569,6 +594,19 @@ class ScopePicker(QWidget):
     def _view_changed(self) -> None:
         if self._current == MAP_VIEW:
             self.changed.emit()
+
+    def _follow_layer(self, *_args: object) -> None:
+        """Watch the layer that the layer list shows.
+
+        QGIS 4 picks the first polygon layer of a new project without a
+        ``layerChanged`` signal, so the picker checks the list itself.
+        """
+        layer = self._layers.currentLayer()
+        # PyQt can return a new wrapper for the same layer, so compare IDs.
+        current = layer.id() if layer is not None else None
+        watched = self._watched.id() if self._watched is not None else None
+        if current != watched:
+            self._watch(layer)
 
     def _watch(self, layer: QgsMapLayer | None) -> None:
         self._layer_area = None

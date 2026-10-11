@@ -402,7 +402,8 @@ def tif_only():
     gdal.VSICurlClearCache()
 
 
-def test_a_tif_only_setting_still_opens_cogs(catalog, collection, tiles, tif_only):
+@pytest.mark.usefixtures("tif_only")
+def test_a_tif_only_setting_still_opens_cogs(catalog, collection, tiles):
     by_key = {asset.key: asset for asset in collection.assets}
     raster = layers.asset_layer(by_key["relief"])
     assert raster.isValid()
@@ -412,7 +413,8 @@ def test_a_tif_only_setting_still_opens_cogs(catalog, collection, tiles, tif_onl
     parquet_layer.discard_path(path)
 
 
-def test_a_tif_only_setting_explains_a_blocked_file(catalog, collection, tif_only):
+@pytest.mark.usefixtures("tif_only")
+def test_a_tif_only_setting_explains_a_blocked_file(catalog, collection):
     by_key = {asset.key: asset for asset in collection.assets}
     with pytest.raises(layers.LayerError) as failure:
         layers.asset_layer(by_key["geojson"])

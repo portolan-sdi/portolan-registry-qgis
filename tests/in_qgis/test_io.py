@@ -30,7 +30,6 @@ from qgis.PyQt.QtCore import QDate, QMetaType, QSize, QThread, QVariant, qInstal
 from qgis.PyQt.QtGui import QColor, QImage
 
 from portolan_registry_qgis.core import parquet_query
-from portolan_registry_qgis.core import scope as scopes
 from portolan_registry_qgis.core.download import (
     WALK_WORKERS,
     Plan,
@@ -38,7 +37,7 @@ from portolan_registry_qgis.core.download import (
     local_path,
     plan,
 )
-from portolan_registry_qgis.core.geoparquet import LAYER, GeoParquetError
+from portolan_registry_qgis.core.geoparquet import LAYER
 from portolan_registry_qgis.core.scope import Area, Everything, MapView
 from portolan_registry_qgis.core.stac import Asset, read_document
 from portolan_registry_qgis.qgis_io import downloader, layers, mosaic, parquet_layer
@@ -908,11 +907,7 @@ STRIP = "POLYGON((11.095 44.0, 11.305 44.0, 11.305 45.0, 11.095 45.0, 11.095 44.
 
 @pytest.fixture
 def area_calls(monkeypatch):
-    """Record the area that reaches parquet_query.
-
-    Until the core stream adds the polygon filter, the stand-ins drop the
-    area and filter by its envelope. With the filter, they call it.
-    """
+    """Record the box and the area that reach parquet_query."""
     calls = []
     estimate, write_gpkg = parquet_query.estimate, parquet_query.write_gpkg
 
@@ -921,11 +916,7 @@ def area_calls(monkeypatch):
         # the GeoPackage path there, and the box fifth.
         bbox = args[3] if name == "estimate" else args[4]
         calls.append((name, bbox, kwargs.get("area")))
-        try:
-            return function(*args, **kwargs)
-        except NotImplementedError:
-            kwargs.pop("area", None)
-            return function(*args, **kwargs)
+        return function(*args, **kwargs)
 
     monkeypatch.setattr(parquet_query, "estimate", lambda *a, **k: call(estimate, "estimate", a, k))
     monkeypatch.setattr(
@@ -1026,10 +1017,8 @@ def test_build_opens_a_table_without_geometry():
 
 def test_parquet_without_geometry_loads_as_a_table(catalog):
     url = f"{catalog['base']}/table/plain.parquet"
-    try:
-        planned = parquet_layer.plan(url, QgsProject.instance().transformContext())
-    except GeoParquetError:
-        pytest.skip("The core stream adds the read plan for Parquet with no geometry")
+    planned = parquet_layer.plan(url, QgsProject.instance().transformContext())
+    assert not planned.plan.has_geometry
     prepared = parquet_layer.prepare(planned)
     layer, _ = parquet_layer.build(prepared, "plain")
     assert layer.isValid()
@@ -1044,27 +1033,6 @@ def test_new_path_refuses_other_files():
 
 
 # ---------- COG mosaics ----------
-
-
-def _scope_bbox(scope):
-    return None if isinstance(scope, Everything) else scope.bbox
-
-
-def _overlaps(bbox, scope):
-    box = _scope_bbox(scope)
-    if box is None or bbox is None:
-        return True
-    return bbox[0] <= box[2] and bbox[2] >= box[0] and bbox[1] <= box[3] and bbox[3] >= box[1]
-
-
-@pytest.fixture
-def envelopes(monkeypatch):
-    """Stand in for core.scope until the core stream implements it."""
-    try:
-        scopes.bbox_of(Everything())
-    except NotImplementedError:
-        monkeypatch.setattr(scopes, "bbox_of", _scope_bbox)
-        monkeypatch.setattr(scopes, "intersects", _overlaps)
 
 
 @pytest.fixture
@@ -1091,7 +1059,6 @@ TRIANGLE = Area(
 )
 
 
-@pytest.mark.usefixtures("envelopes")
 def test_item_hrefs_from_the_mirror(catalog, tiles, monkeypatch):
     def no_walk(*_args, **_kwargs):
         raise AssertionError("The mirror must answer without a walk")
@@ -1106,7 +1073,6 @@ def test_item_hrefs_from_the_mirror(catalog, tiles, monkeypatch):
     assert mosaic.item_hrefs_in(tiles, TRIANGLE, fetch_json) == both[:1]
 
 
-@pytest.mark.usefixtures("envelopes")
 def test_item_hrefs_by_walk(catalog, tiles, monkeypatch):
     monkeypatch.setattr(parquet_query, "duckdb_status", lambda: (False, None))
     both = [_tile(catalog, "a"), _tile(catalog, "b")]
@@ -1120,14 +1086,12 @@ def test_item_hrefs_by_walk(catalog, tiles, monkeypatch):
     assert mosaic.item_hrefs_in(tiles, Everything(), fetch_json, cancelled=lambda: True) == []
 
 
-@pytest.mark.usefixtures("envelopes")
 def test_item_hrefs_fall_back_to_the_walk(catalog, tiles):
     (mirror,) = tiles.assets
     broken = replace(tiles, assets=(replace(mirror, href=f"{catalog['base']}/tiles/gone.parquet"),))
     assert mosaic.item_hrefs_in(broken, WEST_VIEW, fetch_json) == [_tile(catalog, "a")]
 
 
-@pytest.mark.usefixtures("envelopes")
 def test_mirror_query_reads_a_list_bbox():
     sql, params = mosaic.mirror_query(
         {"bbox": "DOUBLE[]", "assets": "STRUCT(a STRUCT(href VARCHAR))"}, WEST_VIEW

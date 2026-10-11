@@ -25,7 +25,8 @@ _IMAGE_HREF = re.compile(r"\.(png|jpe?g|webp|gif|svg)($|[?#])", re.IGNORECASE)
 STYLE_MEDIA_TYPE = "application/vnd.mapbox.style+json"
 # The order in which the panel picks an asset to add. PMTiles draw at every
 # zoom with the catalog's style. A COG or COPC is the data itself. GeoParquet
-# reads only the map extent, and FlatGeobuf and GeoJSON come last.
+# reads only the map extent, and FlatGeobuf and GeoJSON come next. A CSV comes
+# last, because it often has no geometry.
 PREFERRED_FORMATS: tuple[AssetFormat, ...] = (
     "pmtiles",
     "cog",
@@ -33,7 +34,12 @@ PREFERRED_FORMATS: tuple[AssetFormat, ...] = (
     "parquet",
     "flatgeobuf",
     "geojson",
+    "csv",
 )
+# The plugin does not add assets with these roles. A ``source`` asset is the
+# upstream file before conversion. A ``collection-mirror`` asset is a
+# GeoParquet index of the collection's items, not the data.
+_NOT_LOADABLE_ROLES = frozenset({"source", "collection-mirror"})
 
 
 def is_image(href: str, media_type: str | None) -> bool:
@@ -167,28 +173,49 @@ class Document:
         PMTiles link, and an asset with the ``source`` or
         ``collection-mirror`` role, is left out.
         """
-        raise NotImplementedError("Stage 1 core stream")
+        shared = self.pmtiles_duplicates
+        found = [
+            Loadable(link.href, link.title or "Vector tiles", "pmtiles", layers=link.layers)
+            for link in self.pmtiles
+        ]
+        found += [
+            Loadable(asset.href, asset.label, asset.format, asset=asset)
+            for asset in self.data_assets
+            if asset.format is not None
+            and asset.href not in shared
+            and not _NOT_LOADABLE_ROLES.intersection(asset.roles)
+        ]
+        return tuple(found)
+
+    @property
+    def pmtiles_duplicates(self) -> frozenset[str]:
+        """The hrefs that a ``rel: pmtiles`` link and an asset both name.
+
+        A publisher can list one archive as a link and as an asset. Each
+        caller keeps one of the two, so the archive shows and downloads once.
+        """
+        return frozenset(link.href for link in self.pmtiles) & {asset.href for asset in self.assets}
 
     def preferred_href(self, *, parquet: bool = True) -> str | None:
         """Return the href of the asset to add when the user picks nothing else.
 
         The first ``rel: pmtiles`` link wins. Publishers list the archive that
         the default style reads first. Otherwise the first data asset in
-        ``PREFERRED_FORMATS`` order wins. An upstream ``source`` asset never
-        does.
+        ``PREFERRED_FORMATS`` order wins. The candidates are those of
+        ``loadable``, so an upstream ``source`` asset never wins.
 
         Args:
             parquet: Whether the plugin can read GeoParquet, which needs DuckDB.
         """
         if self.pmtiles:
             return self.pmtiles[0].href
-        candidates = [a for a in self.data_assets if "source" not in a.roles]
+        candidates = self.loadable()
         for wanted in PREFERRED_FORMATS:
             if wanted == "parquet" and not parquet:
                 continue
-            for asset in candidates:
-                if asset.format == wanted:
-                    return asset.href
+            for candidate in candidates:
+                if candidate.format == wanted:
+                    return candidate.href
         return None
 
     @property
@@ -289,6 +316,7 @@ _FORMAT_RULES: tuple[tuple[AssetFormat, str, re.Pattern[str]], ...] = (
     ("parquet", "parquet", re.compile(r"\.(geo)?parquet($|\?)", re.IGNORECASE)),
     ("flatgeobuf", "flatgeobuf", re.compile(r"\.fgb($|\?)", re.IGNORECASE)),
     ("copc", "copc", re.compile(r"\.copc\.la[sz]($|\?)", re.IGNORECASE)),
+    ("csv", "text/csv", re.compile(r"\.csv($|\?)", re.IGNORECASE)),
 )
 
 

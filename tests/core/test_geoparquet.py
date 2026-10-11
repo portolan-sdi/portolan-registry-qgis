@@ -5,9 +5,11 @@ import json
 import pytest
 
 from portolan_registry_qgis.core.geoparquet import (
+    NO_GEOMETRY,
     GeoParquetError,
     build_copy,
     build_estimate,
+    build_first_type,
     fid_name,
     field_kind,
     geometry_name,
@@ -157,9 +159,101 @@ def test_geometry_column_choice(schema, geo, geometry):
     assert plan_read(schema, json.dumps(geo) if geo else None).geometry == geometry
 
 
-def test_no_geometry_column():
+def test_no_geometry_column_is_a_table():
+    plan = plan_read([("a", "INTEGER"), ("blob", "BLOB"), ("bbox", "DOUBLE[]")], None)
+    assert not plan.has_geometry
+    assert plan.geometry is None
+    assert plan.geometry_type == NO_GEOMETRY
+    assert plan.crs == ""
+    assert plan.covering is None
+    assert [c.name for c in plan.columns] == ["a", "blob", "bbox"]
+
+
+@pytest.mark.parametrize(
+    "geo",
+    [
+        {"primary_column": "geometry"},
+        {"columns": {"geometry": {"encoding": "WKB"}}},
+    ],
+)
+def test_metadata_without_its_geometry_column_is_an_error(geo):
+    with pytest.raises(GeoParquetError, match="metadata"):
+        plan_read([("a", "INTEGER")], json.dumps(geo))
+
+
+def test_a_file_with_no_columns_is_an_error():
+    with pytest.raises(GeoParquetError, match="no columns"):
+        plan_read([], None)
+
+
+def test_table_copy():
+    plan = plan_read([("id", "BIGINT"), ("fid", "INTEGER"), ("geom", "VARCHAR")], None)
+    sql, params = build_copy(plan, "t.gpkg", NO_GEOMETRY, (0, 0, 1, 1), "EPSG:4326")
+    assert sql == (
+        'COPY (SELECT "id" AS "id", "fid" AS "fid", CAST("geom" AS VARCHAR) AS "geom" '
+        "FROM read_parquet(?)) TO 't.gpkg' (FORMAT GDAL, DRIVER 'GPKG', "
+        "LAYER_NAME 'features', LAYER_CREATION_OPTIONS "
+        "('FID=fid_1', 'GEOMETRY_NAME=geom_1', 'SPATIAL_INDEX=NO'))"
+    )
+    # A table has no location, so a box or an area does not filter it.
+    assert params == []
+    area = "POLYGON ((0 0, 1 0, 1 1, 0 0))"
+    assert build_copy(plan, "t.gpkg", NO_GEOMETRY, (0, 0, 1, 1), area=area) == (sql, [])
+
+
+def test_table_estimate_is_exact():
+    plan = plan_read([("id", "BIGINT")], None)
+    assert build_estimate(plan) == ("SELECT count(*) FROM read_parquet(?)", [])
+    assert build_estimate(plan, (0, 1, 2, 3)) == ("SELECT count(*) FROM read_parquet(?)", [])
+
+
+def test_a_table_has_no_first_type():
     with pytest.raises(GeoParquetError):
-        plan_read([("a", "INTEGER"), ("blob", "BLOB")], None)
+        build_first_type(plan_read([("id", "BIGINT")], None))
+
+
+AREA = "POLYGON ((-75.17 39.94, -75.15 39.94, -75.16 39.96, -75.17 39.94))"
+AREA_BOX = (-75.17, 39.94, -75.15, 39.96)
+
+
+def test_copy_in_an_area():
+    plan = plan_read(LAND_USE_SCHEMA, LAND_USE_GEO)
+    sql, params = build_copy(plan, "x.gpkg", "MultiPolygon", AREA_BOX, area=AREA)
+    # The covering column skips row groups by the envelope, then the polygon tests each geometry.
+    assert '"bbox"."xmin" <= ?' in sql
+    assert 'ST_Intersects("geometry", ST_GeomFromText(?))' in sql
+    assert "ST_MakeEnvelope" not in sql
+    # The WKT is a parameter, never part of the SQL.
+    assert AREA not in sql
+    assert params == [-75.15, -75.17, 39.96, 39.94, AREA]
+
+
+def test_area_without_a_covering_column():
+    plan = plan_read([("geom", "BLOB")], None)
+    sql, params = build_copy(plan, "x.gpkg", "Point", AREA_BOX, area=AREA)
+    assert "bbox" not in sql
+    assert 'ST_Intersects(ST_GeomFromWKB("geom"), ST_GeomFromText(?))' in sql
+    assert params == [AREA]
+    sql, params = build_first_type(plan, AREA_BOX, AREA)
+    assert "ST_GeomFromText(?)" in sql
+    assert params == [AREA]
+
+
+def test_estimate_in_an_area_counts_by_its_envelope():
+    plan = plan_read(LAND_USE_SCHEMA, LAND_USE_GEO)
+    assert build_estimate(plan, AREA_BOX, AREA) == build_estimate(plan, AREA_BOX)
+    without = plan_read([("geometry", "GEOMETRY")], None)
+    assert build_estimate(without, AREA_BOX, AREA) is None
+
+
+def test_an_area_needs_its_envelope():
+    plan = plan_read(LAND_USE_SCHEMA, LAND_USE_GEO)
+    with pytest.raises(ValueError, match="envelope"):
+        build_copy(plan, "x.gpkg", "MultiPolygon", area=AREA)
+    with pytest.raises(ValueError, match="envelope"):
+        build_estimate(plan, area=AREA)
+    with pytest.raises(ValueError, match="envelope"):
+        build_first_type(plan, area=AREA)
 
 
 @pytest.mark.parametrize(

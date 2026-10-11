@@ -115,8 +115,30 @@ BROWSER_URL = "https://browser.portolan-sdi.org/"
 def browser_url(stac_href: str, base: str = BROWSER_URL) -> str:
     """Return the Portolan browser page that shows the STAC document at ``stac_href``.
 
+    The browser is a STAC Browser build with hash routing. Its
+    ``toBrowserPath`` getter names an external document
+    ``/external/<host>/<path>``. A ``http:`` segment comes before the host
+    when the document is not on HTTPS. The query string follows the path,
+    and the browser adds it to its request for the document. The fragment
+    is dropped.
+
     Args:
         stac_href: The http(s) URL of a catalog, collection, or item.
         base: The browser's root URL. A mirror can replace the default.
+
+    Raises:
+        ValueError: ``stac_href`` is not an http(s) URL.
     """
-    raise NotImplementedError("Stage 1 core stream")
+    if not is_http_url(stac_href):
+        raise ValueError(f"Not an http(s) URL: {stac_href}")
+    target = urlsplit(stac_href)
+    parts = ["/external"]
+    if target.scheme != "https":
+        parts.append(f"{target.scheme}:")
+    parts += [target.netloc, target.path.removeprefix("/")]
+    route = "/".join(parts)
+    if target.query:
+        route += f"?{target.query}"
+    root = urlsplit(base)
+    path = root.path if root.path.endswith("/") else root.path + "/"
+    return urlunsplit((root.scheme, root.netloc, path, root.query, route))

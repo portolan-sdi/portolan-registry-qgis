@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from portolan_registry_qgis.core.stac import (
+    Loadable,
     StacError,
     asset_format,
     collection_bbox,
@@ -152,6 +153,11 @@ def test_item_bbox_drops_elevation():
         ("https://example.com/a.geojson", "application/vnd.pmtiles", "pmtiles"),
         ("https://example.com/a.fgb", None, "flatgeobuf"),
         ("https://example.com/a.copc.laz", "application/vnd.laszip+copc", "copc"),
+        ("https://example.com/a.csv", None, "csv"),
+        ("https://example.com/a.CSV?raw=1", None, "csv"),
+        ("https://example.com/export", "text/csv; charset=utf-8", "csv"),
+        ("https://example.com/a.csv", "application/vnd.apache.parquet", "parquet"),
+        ("https://example.com/a.csv.zip", None, None),
         # Unresolved object-store URIs are named by no reader.
         ("abfs://us-census/2020/x.parquet", "application/x-parquet", None),
     ],
@@ -352,3 +358,56 @@ def test_preferred_href_falls_back_by_format():
     assert _with_assets(assets).preferred_href(parquet=False) == f"{base}d.geojson"
     assert _with_assets({"upstream": assets["upstream"]}).preferred_href() is None
     assert _with_assets({"thumbnail": assets["thumbnail"]}).preferred_href() is None
+
+
+def test_preferred_href_skips_a_collection_mirror():
+    assets = {"mirror": _asset("items.parquet", "collection-mirror"), "t": _asset("t.csv")}
+    assert _with_assets(assets).preferred_href() == "https://example.com/c/t.csv"
+
+
+def test_loadable_lists_the_real_archive_once():
+    href = f"{ANNCSU}/indirizzi/collection.json"
+    document = read_document(load("indirizzi/collection.json"), href)
+    tiles, data = document.loadable()
+    # The visual asset names the archive that the pmtiles link names, so only the link stays.
+    assert tiles == Loadable(
+        f"{ANNCSU}/anncsu-indirizzi.pmtiles",
+        "Tile vettoriali per la mappa",
+        "pmtiles",
+        layers=("addresses",),
+    )
+    assert (data.href, data.title, data.format) == (
+        f"{ANNCSU}/anncsu-indirizzi.parquet",
+        "Indirizzi ANNCSU (GeoParquet)",
+        "parquet",
+    )
+    assert data.asset is document.data_assets[0]
+    assert document.pmtiles_duplicates == {f"{ANNCSU}/anncsu-indirizzi.pmtiles"}
+
+
+def test_loadable_keeps_only_files_the_plugin_adds():
+    base = "https://example.com/c/"
+    assets = {
+        "upstream": _asset("u.csv", "source"),
+        "mirror": _asset("items.parquet", "collection-mirror"),
+        "table": {"href": "./t.csv", "type": "text/csv", "title": "Table", "roles": ["data"]},
+        "readme": {"href": "./README.md", "type": "text/markdown", "roles": ["data"]},
+        "style": {"href": "./s.json", "roles": ["style"]},
+        "thumbnail": _asset("t.png", "thumbnail"),
+        "cog": _asset("d.tif"),
+        "archive": _asset("other.pmtiles"),
+    }
+    links = [{"rel": "pmtiles", "href": "./main.pmtiles"}]
+    document = _with_assets(assets, links)
+    loadable = document.loadable()
+    assert [(item.href, item.title, item.format) for item in loadable] == [
+        (f"{base}main.pmtiles", "Vector tiles", "pmtiles"),
+        (f"{base}t.csv", "Table", "csv"),
+        (f"{base}d.tif", "cog", "cog"),
+        (f"{base}other.pmtiles", "archive", "pmtiles"),
+    ]
+    assert loadable[0].asset is None
+    assert loadable[1].asset is not None
+    assert loadable[1].asset.key == "table"
+    assert document.pmtiles_duplicates == frozenset()
+    assert _with_assets({}).loadable() == ()

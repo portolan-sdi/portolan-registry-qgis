@@ -19,11 +19,13 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from portolan_registry_qgis.core.geoparquet import (
+    NO_GEOMETRY,
     ReadPlan,
     build_copy,
     build_estimate,
     build_first_type,
     plan_read,
+    quote,
     type_from_first,
 )
 
@@ -174,15 +176,24 @@ def estimate(
     """Return about how many features a copy of ``url`` in ``bbox`` holds.
 
     The count is exact without a box. With a box it counts the rows whose
-    bbox overlaps it, an upper bound.
+    bbox overlaps it, an upper bound. With an area it still counts by the
+    area's envelope ``bbox``, so it stays an upper bound. A table has no
+    geometry, so its count is exact.
+
+    Args:
+        con: The DuckDB connection.
+        url: The Parquet file.
+        plan: The file's read plan.
+        bbox: The box of the copy, in the file's CRS.
+        cancelled: Polled while the query runs.
+        area: The Polygon or MultiPolygon WKT of the copy, in the file's
+            CRS. ``bbox`` must be its envelope.
 
     Returns:
         The estimate, or None when the file has no covering column to count
         a box with cheaply.
     """
-    if area is not None:
-        raise NotImplementedError("Stage 1 core stream")
-    query = build_estimate(plan, bbox)
+    query = build_estimate(plan, bbox, area)
     if query is None:
         return None
     sql, params = query
@@ -244,15 +255,44 @@ def write_gpkg(
         area: Keep only features that intersect this Polygon or
             MultiPolygon WKT, in the file's CRS. ``bbox`` must be its
             envelope, so the covering column skips row groups first.
+
+    A table, a file with no geometry column, becomes an attribute table with
+    every row. ``bbox``, ``srs``, and ``area`` do not apply to it, and its
+    ``Written.geometry_type`` is ``NO_GEOMETRY``.
+
+    Raises:
+        ValueError: ``area`` is given without ``bbox``.
     """
-    if area is not None:
-        raise NotImplementedError("Stage 1 core stream")
     with _cursor(con, cancelled) as cursor:
         layer_type = plan.geometry_type
         if layer_type == "Unknown":
-            sql, params = build_first_type(plan, bbox)
+            sql, params = build_first_type(plan, bbox, area)
             layer_type = type_from_first(cursor.execute(sql, [url, *params]).fetchone())
-        sql, params = build_copy(plan, path, layer_type, bbox, srs)
+        sql, params = build_copy(plan, path, layer_type, bbox, srs, area)
         written = cursor.execute(sql, [url, *params]).fetchone()
     features = int(written[0]) if written else 0
+    if not plan.has_geometry:
+        _drop_geometry(path)
+        return Written(features, NO_GEOMETRY, 0)
     return Written(features, layer_type, _null_geometries(path) if features else 0)
+
+
+def _drop_geometry(path: str) -> None:
+    """Turn the one layer of a GeoPackage into an attribute table.
+
+    DuckDB's GDAL writer always adds a geometry column. A table copy leaves
+    it empty and without a spatial index, so the column drops cleanly. GDAL
+    and QGIS then open the layer as a table with no geometry.
+    """
+    with contextlib.closing(sqlite3.connect(path)) as gpkg:
+        row = gpkg.execute("SELECT table_name, column_name FROM gpkg_geometry_columns").fetchone()
+        if row is None:
+            return
+        table, column = (str(part) for part in row)
+        with gpkg:
+            gpkg.execute("DELETE FROM gpkg_geometry_columns WHERE table_name = ?", [table])
+            gpkg.execute(
+                "UPDATE gpkg_contents SET data_type = 'attributes' WHERE table_name = ?", [table]
+            )
+            # DROP COLUMN needs SQLite 3.35, from March 2021.
+            gpkg.execute(f"ALTER TABLE {quote(table)} DROP COLUMN {quote(column)}")

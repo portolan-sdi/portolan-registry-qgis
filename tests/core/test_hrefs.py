@@ -5,8 +5,10 @@ from __future__ import annotations
 import pytest
 
 from portolan_registry_qgis.core.hrefs import (
+    BROWSER_URL,
     absolute_href,
     asset_href,
+    browser_url,
     catalog_href,
     folder_name,
     is_http_url,
@@ -137,3 +139,62 @@ def test_is_http_url(value, expected):
 )
 def test_vsicurl_path_skips_directory_listing(url, path):
     assert vsicurl_path(url) == path
+
+
+# The expected paths follow toBrowserPath in portolan-browser's
+# src/store/index.js, under the hash routing that browser.portolan-sdi.org uses.
+@pytest.mark.parametrize(
+    ("href", "url"),
+    [
+        (
+            "https://data.example.org/stac/roads/collection.json",
+            "https://browser.portolan-sdi.org/#/external/data.example.org/stac/roads/collection.json",
+        ),
+        # A document not on HTTPS names its scheme before the host.
+        (
+            "http://data.example.org:8080/catalog.json",
+            "https://browser.portolan-sdi.org/#/external/http:/data.example.org:8080/catalog.json",
+        ),
+        # The query string follows the path. The fragment is dropped.
+        (
+            "https://b.test/c/item.json?sig=a%2Fb&e=1#top",
+            "https://browser.portolan-sdi.org/#/external/b.test/c/item.json?sig=a%2Fb&e=1",
+        ),
+        # Percent-encoding in the path stays as it is.
+        (
+            "https://b.test/my%20data/catalog.json",
+            "https://browser.portolan-sdi.org/#/external/b.test/my%20data/catalog.json",
+        ),
+        ("https://b.test", "https://browser.portolan-sdi.org/#/external/b.test/"),
+    ],
+)
+def test_browser_url(href, url):
+    assert browser_url(href) == url
+    assert browser_url(href, BROWSER_URL) == url
+
+
+@pytest.mark.parametrize(
+    "base",
+    [
+        "https://mirror.test/browser",
+        "https://mirror.test/browser/",
+        "https://mirror.test/browser/#/",
+    ],
+)
+def test_browser_url_on_a_mirror(base):
+    assert (
+        browser_url("https://b.test/catalog.json", base)
+        == "https://mirror.test/browser/#/external/b.test/catalog.json"
+    )
+
+
+def test_browser_url_on_a_bare_host():
+    assert browser_url("https://b.test/c.json", "http://localhost:8080") == (
+        "http://localhost:8080/#/external/b.test/c.json"
+    )
+
+
+@pytest.mark.parametrize("href", ["s3://bucket/catalog.json", "./catalog.json", ""])
+def test_browser_url_needs_an_http_url(href):
+    with pytest.raises(ValueError, match="http"):
+        browser_url(href)

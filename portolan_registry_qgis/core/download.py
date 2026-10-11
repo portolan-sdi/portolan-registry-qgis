@@ -88,18 +88,22 @@ def local_path(url: str, root: str) -> str:
 
 
 def files_of(document: Document, root: str) -> list[PlannedFile]:
-    """Return the document itself, its assets, and its PMTiles links."""
+    """Return the document itself, its assets, and its PMTiles links.
+
+    An archive that is both an asset and a link downloads once, as the
+    asset, because the asset declares its size and checksum.
+    """
     files = [PlannedFile(document.href, local_path(document.href, root))]
     files.extend(
         PlannedFile(asset.href, local_path(asset.href, root), asset.size, asset.checksum)
         for asset in document.assets
         if asset.href.startswith(("http://", "https://"))
     )
-    asset_urls = {asset.href for asset in document.assets}
+    shared = document.pmtiles_duplicates
     files.extend(
         PlannedFile(link.href, local_path(link.href, root))
         for link in document.pmtiles
-        if link.href not in asset_urls
+        if link.href not in shared
     )
     return files
 

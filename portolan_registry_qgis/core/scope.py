@@ -41,7 +41,31 @@ Scope = Everything | MapView | Area
 
 def bbox_of(scope: Scope) -> Bbox | None:
     """Return the scope's envelope, or None for ``Everything``."""
-    raise NotImplementedError("Stage 1 core stream")
+    if isinstance(scope, (MapView, Area)):
+        return scope.bbox
+    return None
+
+
+def _wrap(longitude: float) -> float:
+    """Move a longitude outside [-180, 180] into that range."""
+    if -180 <= longitude <= 180:
+        return longitude
+    return (longitude + 180) % 360 - 180
+
+
+def _spans(west: float, east: float) -> tuple[tuple[float, float], ...]:
+    """Return the longitude ranges of a box, each with its west edge first.
+
+    A box with ``west`` greater than ``east`` crosses the antimeridian and
+    gives two ranges. A box 360 degrees wide or more covers every longitude.
+    A map view can give longitudes past 180 degrees, so they wrap first.
+    """
+    if west <= east and east - west >= 360:
+        return ((-180.0, 180.0),)
+    west, east = _wrap(west), _wrap(east)
+    if west <= east:
+        return ((west, east),)
+    return ((west, 180.0), (-180.0, east))
 
 
 def intersects(bbox: Bbox | None, scope: Scope) -> bool:
@@ -51,5 +75,17 @@ def intersects(bbox: Bbox | None, scope: Scope) -> bool:
     box touches the polygon's envelope but not the polygon. A file with no
     extent is kept, because the test cannot rule it out. ``Everything``
     keeps every file. Boxes that cross the antimeridian are handled.
+    Boxes that only touch at an edge intersect.
     """
-    raise NotImplementedError("Stage 1 core stream")
+    area = bbox_of(scope)
+    if bbox is None or area is None:
+        return True
+    west, south, east, north = bbox
+    area_west, area_south, area_east, area_north = area
+    if south > area_north or north < area_south:
+        return False
+    return any(
+        start <= area_end and end >= area_start
+        for start, end in _spans(west, east)
+        for area_start, area_end in _spans(area_west, area_east)
+    )

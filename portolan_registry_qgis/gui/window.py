@@ -1892,7 +1892,8 @@ def _facts_html(
 
     Each fact is one row, and a row leaves out what is not known. The
     license links make the License row, the publisher's documentation makes
-    the Documentation row, and the browser page makes the More row. A link
+    the Documentation row, the ``via`` links make the Source row, and the
+    browser page makes the More row. A link
     that two STAC links repeat shows once.
     """
 
@@ -1927,6 +1928,11 @@ def _facts_html(
                 "Documentation",
                 ", ".join(anchor(href, link_label(href, title)) for href, title in docs),
             )
+        )
+    sources = hrefs("via")
+    if sources:
+        rows.append(
+            ("Source", ", ".join(anchor(href, link_label(href, title)) for href, title in sources))
         )
     if browser:
         rows.append(("More", anchor(browser, BROWSER_LINK)))

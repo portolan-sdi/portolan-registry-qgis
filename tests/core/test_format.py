@@ -103,6 +103,7 @@ def test_license_name(value, name):
         ("https://x.org/c/README.md", None, "README.md"),
         ("https://x.org/c/README.md", "Documentation", "README.md"),
         ("https://x.org/terms", "  Terms of use ", "Terms of use"),
+        ("https://opendataphilly.org/datasets/land-use/", "Original source", "opendataphilly.org"),
     ],
 )
 def test_link_label(href, title, label):

@@ -11,7 +11,8 @@
 - **View on map** adds the PMTiles, else a COG. **Load full data** adds the GeoParquet, else the FlatGeobuf, GeoJSON, or CSV. Their tooltips say which to use.
 - **All files** lists only the files QGIS can open, and lists a PMTiles archive once when it is both a link and an asset.
 - A check mark shows on each file that a layer in the project already reads.
-- **Details** is one list of facts: publisher, license, size, documentation, and a link to the browser. Each license link shows once, named by its host when its title is only "License". The raw STAC document and `via` links are gone.
+- **Details** is one list of facts: publisher, license, size, documentation, source, and a link to the browser. Each link shows once, named by its host when its title only repeats the row name. **Source** is the `via` page the data came from. The raw STAC document link is gone.
+- **All files** leaves out assets with the `archive` role, such as earlier extracts. The browser lists them.
 - Right-click a publisher to open its catalog in the browser. The QGIS setting `PortolanRegistry/browser_url` points the links at a browser mirror.
 - CSV files open over HTTP, as points when the header names longitude and latitude columns.
 - A Parquet file with no geometry column loads as a table.

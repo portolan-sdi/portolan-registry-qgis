@@ -457,6 +457,8 @@ def test_loadable_keeps_only_files_the_plugin_adds():
     assets = {
         "upstream": _asset("u.csv", "source"),
         "mirror": _asset("items.parquet", "collection-mirror"),
+        # Philadelphia keeps earlier extracts as archive assets.
+        "old": _asset("data-2026-08-26.parquet", "archive"),
         "table": {"href": "./t.csv", "type": "text/csv", "title": "Table", "roles": ["data"]},
         "readme": {"href": "./README.md", "type": "text/markdown", "roles": ["data"]},
         "style": {"href": "./s.json", "roles": ["style"]},

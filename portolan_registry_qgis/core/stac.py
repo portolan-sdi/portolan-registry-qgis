@@ -38,8 +38,9 @@ PREFERRED_FORMATS: tuple[AssetFormat, ...] = (
 )
 # The plugin does not add assets with these roles. A ``source`` asset is the
 # upstream file before conversion. A ``collection-mirror`` asset is a
-# GeoParquet index of the collection's items, not the data.
-_NOT_LOADABLE_ROLES = frozenset({"source", "collection-mirror"})
+# GeoParquet index of the collection's items, not the data. An ``archive``
+# asset is an earlier version of the data. The browser lists all three.
+_NOT_LOADABLE_ROLES = frozenset({"source", "collection-mirror", "archive"})
 
 
 def is_image(href: str, media_type: str | None) -> bool:
@@ -173,8 +174,8 @@ class Document:
 
         The ``rel: pmtiles`` links come first. The data assets with a known
         format follow, in document order. An asset whose href matches a
-        PMTiles link, and an asset with the ``source`` or
-        ``collection-mirror`` role, is left out.
+        PMTiles link, and an asset with the ``source``,
+        ``collection-mirror``, or ``archive`` role, is left out.
         """
         shared = self.pmtiles_duplicates
         found = [

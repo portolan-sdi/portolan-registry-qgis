@@ -717,13 +717,14 @@ def test_details_are_one_list_of_facts(iface, server, catalog):
     window._show_document(window_module.read_document(raw, href))
     facts = window.facts.text()
     keys = [cell.split("</td>")[0].rsplit(">", 1)[-1] for cell in facts.split("<tr>")[1:]]
-    assert keys == ["Publisher", "License", "Size", "Documentation", "More"]
+    assert keys == ["Publisher", "License", "Size", "Documentation", "Source", "More"]
     assert facts.count(">License<") == 1
     assert "Custom terms: " in facts
     assert facts.count(portal) == 1 and facts.count(html_escape(terms)) == 1
     assert ">opendataphilly.org<" in facts and ">metadata.phila.gov<" in facts
     assert ">Human-readable documentation<" in facts
-    assert "land-use" not in facts
+    # The publisher's original page is the Source row, named by its host.
+    assert 'opendataphilly.org/datasets/land-use/">opendataphilly.org<' in facts
     window.disconnect_canvas()
 
 

@@ -92,7 +92,9 @@ _LICENSE_WORDS = {
     "various": "Various",
 }
 # Link titles that only repeat the row name, such as "License".
-_GENERIC_TITLES = frozenset({"license", "licence", "terms", "documentation", "link"})
+_GENERIC_TITLES = frozenset(
+    {"license", "licence", "terms", "documentation", "link", "source", "original source"}
+)
 
 
 def license_name(value: str | None) -> str:

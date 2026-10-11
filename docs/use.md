@@ -1,6 +1,6 @@
 # Use
 
-Open the window from **Web > Portolan Registry** or the toolbar button. The window is not modal, so you can pan and zoom the map while it is open. It keeps its size and the position of its divider from one session to the next.
+Open the window from **Web > Portolan Registry** or the toolbar button. The window is not modal, so the map pans and zooms while it is open. It keeps its size and the position of its divider from one session to the next.
 
 The refresh button in the header reads the registry again.
 
@@ -12,13 +12,13 @@ The list shows 25 publishers at a time. Select **Show 25 more** at the end of th
 
 Select a publisher to open its catalog. The header shows the catalog, and the tree below lists its collections. Each collection shows its own icon when the catalog publishes one. The tree lists 50 entries at a time, with a **Show 50 more** row for the rest. **All publishers** goes back to the list.
 
-A collection whose children are all items, such as a set of image tiles, shows one row such as **240 files** instead of one row per item. Select the collection or that row, then use **Add as one layer** under **Add to map**. **All files** lists the COG file of each item, 50 at a time, with a **Show more** row, so you can add or download one file alone.
+A collection whose children are all items, such as a set of image tiles, shows one row such as **240 files** instead of one row per item. Select the collection or that row, then use **Add as one layer** under **Add to map**. **All files** lists the COG file of each item, 50 at a time, with a **Show more** row. Select one to add or download that file alone.
 
 ## See the details
 
 The right pane shows the name of the chosen node, with two buttons next to it. **Zoom to** moves the map to the node's extent. **Open in Portolan browser ↗** opens the node in the [Portolan browser](https://browser.portolan-sdi.org/), which shows every file and all the STAC metadata that the plugin leaves out.
 
-Four sections follow. Select a section's title to close or open it. The window remembers which sections you closed. **All files** starts closed.
+Select a section's title to close or open it. The window remembers which sections you closed. **All files** starts closed.
 
 - **About** shows the thumbnail, or a map of the extent when there is no thumbnail, and the description.
 - **Add to map** holds the area of interest, then the buttons that add or download the data in it.
@@ -46,17 +46,17 @@ A PMTiles layer gets every MapLibre style in the collection that draws its archi
 
 In a style, `sources.<id>.url` references the archive. The plugin accepts a path relative to the style file, such as `../tiles.pmtiles`. The `pmtiles://` prefix is optional. A vector source with no `url` reads the collection's archive when the collection has only one.
 
-A CSV opens as points in EPSG:4326 when its first line names a longitude column (`lon`, `lng`, `longitude`, or `x`) and a latitude column (`lat`, `latitude`, or `y`). The names ignore case.
+A CSV opens as points in EPSG:4326 when its first line has a longitude column (`lon`, `lng`, `longitude`, or `x`) and a latitude column (`lat`, `latitude`, or `y`). The names ignore case.
 
 ## Choose the area of interest
 
-The area of interest at the top of **Add to map** limits what **Load full data**, **Add as one layer**, and **Download** read. The choice shows when the node has GeoParquet or child nodes.
+The area of interest at the top of **Add to map** limits the data that the buttons below it read. The choice shows when the node has GeoParquet or child nodes.
 
 | Choice | Area |
 |---|---|
 | Everything | The whole dataset |
 | Map extent | The rectangle the map shows when the load or download starts |
-| Draw an area | A polygon that you draw on the map |
+| Draw an area | A polygon that you click out on the map |
 | From a layer | The polygons of a layer in the project, or its selected features only |
 
 To draw an area, select **Draw an area**, then click the map to add each vertex. Right-click or double-click to finish the polygon after three or more vertices. Backspace removes the last vertex, and Esc cancels. The area stays on the map until you choose another area or close the window. **Draw again** replaces it.
@@ -65,7 +65,7 @@ When the area is not complete, the window says why under the choice and turns of
 
 ## Load GeoParquet
 
-DuckDB copies the GeoParquet features into a GeoPackage in the QGIS profile folder, and the layer reads that file. With a map extent or an area, DuckDB copies only the features that intersect it. A feature that crosses the edge of the area stays whole. When a file has a GeoParquet `bbox` column, DuckDB uses its statistics to skip row groups outside the area. A drawn or layer polygon then tests each feature against the polygon itself, not its bounding box.
+DuckDB copies the GeoParquet features into a GeoPackage in the QGIS profile folder, and the layer reads that file. With a map extent or an area, DuckDB copies only the features that intersect it. DuckDB copies a feature that crosses the edge of the area in full. When a file has a GeoParquet `bbox` column, DuckDB uses its statistics to skip row groups outside the area. A drawn or layer polygon then tests each feature against the polygon itself, not its bounding box.
 
 Loads have no feature limit. For an estimate of more than 1,000,000 features, the window asks first, because the copy takes time and disk space. The estimate counts the features in the area's bounding box, so the copy can hold fewer. To stop a read or a copy, select **Cancel** in the QGIS task manager.
 
@@ -85,7 +85,7 @@ The VRT goes into the same scratch folder as the GeoPackages, and the plugin del
 
 ## Download
 
-**Download** under **Add to map** saves the chosen node and everything below it in the area of interest, after it shows the file count and the known size. It leaves out each item whose extent lies outside the area, and it says how many it left out. With a map extent or an area, it saves each GeoParquet file as a GeoPackage that holds only the features in the area. The GeoPackage takes the file's name with a `.gpkg` extension.
+**Download** under **Add to map** saves the chosen node and everything below it in the area of interest, after it shows the file count and the known size. It leaves out each item whose extent lies outside the area, and it says how many it left out. With a map extent or an area, it saves each GeoParquet file as a GeoPackage that contains only the features in the area. The GeoPackage takes the file's name with a `.gpkg` extension.
 
 **Download selected** under **All files** saves the files you selected, whole, whatever the area.
 

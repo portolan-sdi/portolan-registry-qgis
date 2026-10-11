@@ -23,7 +23,8 @@ jobs:
   test:
     name: QGIS ${{ matrix.qgis.name }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # A full run takes about 70 seconds, so 8 minutes means a hang.
+    timeout-minutes: 8
     strategy:
       fail-fast: false
       matrix:
@@ -55,4 +56,9 @@ jobs:
           /tmp/venv/bin/pip install pytest==9.1.1 pytest-timeout==2.4.0 duckdb==1.5.6
 
       - name: Run the QGIS tests
-        run: /tmp/venv/bin/python -m pytest tests/in_qgis -p no:cacheprovider --timeout 120
+        # The thread method stops a test that hangs inside Qt, GDAL, or a
+        # network call, where the signal method cannot reach it. It prints
+        # the stack of every thread, so the log shows where the test hung.
+        run: >-
+          /tmp/venv/bin/python -m pytest tests/in_qgis -p no:cacheprovider
+          --timeout 120 --timeout-method=thread

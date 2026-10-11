@@ -1,12 +1,20 @@
 # Publishes the plugin when a GitHub release is published.
 #
-# qgis-plugin-ci packages portolan_registry_qgis/ into a zip, attaches it to
-# the release, and uploads it to plugins.qgis.org.
+# qgis-plugin-ci packages portolan_registry_qgis/ into a zip and attaches it
+# to the release. A curl step then uploads the zip to plugins.qgis.org.
+#
+# The upload asks the site to publish the version when its security scan
+# passes. The site does that only when the token's owner is a trusted user
+# (permission plugins.can_approve). For any other owner, the site ignores
+# the request, and a volunteer approves the version by hand. qgis-plugin-ci
+# 2.10.0 cannot send the request, so curl uploads the zip.
 #
 # One-time setup:
 #   1. Create a deployment environment named "plugins-qgis-org".
 #   2. Add the secret QGIS_PLUGIN_TOKEN to it, a token from
 #      https://plugins.qgis.org for an account that owns the plugin.
+#   3. To skip the manual approval, ask for trusted status on the QGIS
+#      Developer mailing list. See https://plugins.qgis.org/docs/approval.
 name: Release
 
 on:
@@ -46,13 +54,24 @@ jobs:
           fi
           echo "VERSION=$version" >> "$GITHUB_ENV"
 
-      - name: Package, attach, and publish
+      - name: Package and attach
         env:
           TAG: ${{ github.event.release.tag_name }}
           GH_TOKEN: ${{ github.token }}
-          QGIS_TOKEN: ${{ secrets.QGIS_PLUGIN_TOKEN }}
         run: >-
           uvx qgis-plugin-ci@2.10.0 release "$VERSION"
           --release-tag "$TAG"
           --github-token "$GH_TOKEN"
-          --qgis-token "$QGIS_TOKEN"
+
+      - name: Publish on plugins.qgis.org
+        # The site reads auto_approve_after_scan from the token upload. See
+        # version_create_api in qgis/QGIS-Plugins-Website.
+        env:
+          QGIS_TOKEN: ${{ secrets.QGIS_PLUGIN_TOKEN }}
+        run: |
+          curl --fail-with-body --silent --show-error \
+            --header "Authorization: Bearer $QGIS_TOKEN" \
+            --form "package=@portolan_registry_qgis.$VERSION.zip" \
+            --form "auto_approve_after_scan=true" \
+            https://plugins.qgis.org/plugins/api/portolan_registry_qgis/version/add/
+          echo "Uploaded. See https://plugins.qgis.org/plugins/portolan_registry_qgis/version/$VERSION/"

@@ -43,6 +43,10 @@ if TYPE_CHECKING:
 ROLE = Qt.ItemDataRole.UserRole
 # Asset rows keep (badge text, format, size text) here, for AssetDelegate.
 BADGE_ROLE = Qt.ItemDataRole.UserRole + 1
+# Asset rows keep True here when a layer in the project already reads the file.
+ON_MAP_ROLE = Qt.ItemDataRole.UserRole + 2
+# The mark that an asset row draws when the file is on the map.
+ON_MAP_MARK = "\u2713"
 
 _PAD = 8
 
@@ -237,7 +241,7 @@ class CatalogDelegate(QStyledItemDelegate):
 
 
 class AssetDelegate(QStyledItemDelegate):
-    """An asset row: a format badge, the title, and the size."""
+    """An asset row: a format badge, the title, the size, and a mark when it is on the map."""
 
     def __init__(self, view: Any):
         super().__init__(view)
@@ -294,6 +298,15 @@ class AssetDelegate(QStyledItemDelegate):
         metrics = option.fontMetrics
         painter.setFont(option.font)
         right = rect.right() - 6
+        if index.data(ON_MAP_ROLE):
+            mark_width = metrics.horizontalAdvance(ON_MAP_MARK)
+            painter.setPen(_text_color(option) if _selected(option) else ACCENT)
+            painter.drawText(
+                QRect(right - mark_width, rect.top(), mark_width, rect.height()),
+                Qt.AlignmentFlag.AlignVCenter,
+                ON_MAP_MARK,
+            )
+            right -= mark_width + 10
         if size:
             size_width = metrics.horizontalAdvance(size)
             painter.setPen(muted(palette, _selected(option)))

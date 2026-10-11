@@ -15,10 +15,13 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from urllib.parse import unquote, urlsplit
 
+from portolan_registry_qgis.core.scope import intersects
 from portolan_registry_qgis.core.stac import Document, StacError, read_document
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
+
+    from portolan_registry_qgis.core.scope import Scope
 
     FetchJson = Callable[[str], object]
     Read = Callable[[str], Document | tuple[str, str] | None]
@@ -45,6 +48,8 @@ class Plan:
     files: list[PlannedFile]
     failures: list[tuple[str, str]]
     truncated: bool = False
+    # The items the plan leaves out, because they lie outside the scope.
+    outside: int = 0
 
     @property
     def known_bytes(self) -> int:
@@ -265,6 +270,7 @@ def plan(
     max_documents: int = 5000,
     cancelled: Callable[[], bool] | None = None,
     executor: Executor | None = None,
+    scope: Scope | None = None,
 ) -> Plan:
     """Plan the download of ``start`` and everything below it.
 
@@ -276,14 +282,20 @@ def plan(
         max_documents: Stops the walk after this many reads.
         cancelled: Polled before each read.
         executor: Runs the reads in parallel. See ``walk``.
+        scope: Keep only the items whose bbox intersects this scope. The
+            plan keeps every catalog and collection document, and every
+            item with no bbox. None keeps every item.
     """
     base = root or start
     failures: list[tuple[str, str]] = []
     files: dict[str, PlannedFile] = {}
-    reads = 0
+    reads = outside = 0
     for document in walk(fetch_json, start, failures, max_documents, cancelled, executor):
         reads += 1
+        if scope is not None and document.kind == "item" and not intersects(document.bbox, scope):
+            outside += 1
+            continue
         for planned in files_of(document, base):
             files.setdefault(planned.url, planned)
     truncated = reads + len(failures) >= max_documents
-    return Plan(list(files.values()), failures, truncated=truncated)
+    return Plan(list(files.values()), failures, truncated=truncated, outside=outside)

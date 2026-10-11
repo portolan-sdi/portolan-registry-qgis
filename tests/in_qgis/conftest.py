@@ -457,6 +457,29 @@ def catalog(tmp_path_factory):
         ],
     }
     (root / "registry.json").write_text(json.dumps(registry))
+    # A second registry lists a catalog of the tiles collection alone, for
+    # the mosaic tests. The first registry stays as the other tests expect.
+    (root / "tiles-catalog.json").write_text(
+        json.dumps(
+            {
+                "type": "Catalog",
+                "stac_version": "1.1.0",
+                "id": "tiles-catalog",
+                "title": "Tiles catalog",
+                "description": "A catalog of COG items.",
+                "links": [
+                    {"rel": "child", "href": "./tiles/collection.json", "title": "Test tiles"}
+                ],
+            }
+        )
+    )
+    tiles_entry = {
+        **registry["links"][0],
+        "href": f"{base}/tiles-catalog.json",
+        "title": "Tiles catalog",
+        "portolan_registry:id": "tiles",
+    }
+    (root / "tiles-registry.json").write_text(json.dumps({**registry, "links": [tiles_entry]}))
     yield {
         "url": f"{base}/catalog.json",
         "base": base,

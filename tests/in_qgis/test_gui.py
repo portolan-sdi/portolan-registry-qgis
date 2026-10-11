@@ -9,9 +9,12 @@ from qgis.core import (
     Qgis,
     QgsApplication,
     QgsCoordinateReferenceSystem,
+    QgsFeature,
+    QgsGeometry,
     QgsProject,
     QgsRectangle,
     QgsSettings,
+    QgsVectorLayer,
     QgsVectorTileLayer,
 )
 from qgis.gui import QgsCollapsibleGroupBox, QgsMapCanvas, QgsMessageBar
@@ -23,10 +26,11 @@ import portolan_registry_qgis
 from portolan_registry_qgis import plugin as plugin_module
 from portolan_registry_qgis.gui import pictures
 from portolan_registry_qgis.gui import window as window_module
-from portolan_registry_qgis.gui.widgets import BADGE_ROLE
+from portolan_registry_qgis.gui.scope import EVERYTHING, FROM_LAYER, MAP_VIEW
+from portolan_registry_qgis.gui.widgets import BADGE_ROLE, ON_MAP_ROLE
 from portolan_registry_qgis.gui.window import RegistryWindow
-from portolan_registry_qgis.plugin import REGISTRY_URL_SETTING
-from portolan_registry_qgis.qgis_io import parquet_layer
+from portolan_registry_qgis.plugin import BROWSER_URL_SETTING, REGISTRY_URL_SETTING
+from portolan_registry_qgis.qgis_io import mosaic, parquet_layer
 from portolan_registry_qgis.qgis_io.layers import PMTILES_PROPERTY
 from portolan_registry_qgis.qgis_io.tileserver import TileServer
 
@@ -152,7 +156,7 @@ def test_no_status_filter(iface, server, catalog):
     # still shows its status in its row.
     window = open_window(iface, server, catalog)
     assert not hasattr(window, "status")
-    assert window.findChildren(QComboBox) == []
+    assert window.pages.widget(0).findChildren(QComboBox) == []
     window.disconnect_canvas()
 
 
@@ -166,17 +170,16 @@ def test_tree_details_and_assets(iface, server, catalog):
     window = open_window(iface, server, catalog)
     open_collection(window)
     names = rows(window.assets)
-    assert names[0] == "Point tiles"
-    assert "geojson" in names
-    # Assets QGIS can open come first, and each row carries its format badge.
-    assert names[-3:] == ["style-red", "style-blue", "thumbnail"]
+    # Only the files QGIS can open show. The archive that is both a link and
+    # the "visual" asset shows once. Styles and the thumbnail do not show.
+    assert names == ["Point tiles", "geojson", "relief", "data"]
     badges = {
         window.assets.topLevelItem(i).text(0): window.assets.topLevelItem(i).data(0, BADGE_ROLE)[0]
         for i in range(len(names))
     }
+    assert badges["Point tiles"] == "PMTiles"
     assert badges["data"] == "GeoParquet"
     assert badges["relief"] == "COG"
-    assert badges["thumbnail"] == "PNG"
     assert "Test points" in shown(window)
     assert "CC-BY-4.0" in shown(window)
     # The facts name the publisher and the total size, in plain words. They
@@ -190,12 +193,13 @@ def test_tree_details_and_assets(iface, server, catalog):
     assert window.files_box.title() == f"All files ({len(names)})"
     assert "2 styles" in window.tile_styles.text()
     assert not window.tile_styles.isHidden()
-    assert not window.parquet_extent.isHidden()
+    assert not window.scope_row.isHidden()
     assert window.zoom.isEnabled()
     assert window.download_all.isEnabled()
     # The first PMTiles link is selected, so Add to map works at once.
     assert [row.text(0) for row in window.assets.selectedItems()] == ["Point tiles"]
     assert window.add.isEnabled()
+    assert window.add.text() == "Add selected"
     # The missing collection reports its failure in the details pane.
     window.tree.setCurrentItem(window.tree.topLevelItem(1))
     wait_for(lambda: "Could not read" in window.description.text())
@@ -249,7 +253,7 @@ def test_add_styled_tiles_and_assets(iface, server, catalog):
     open_collection(window)
     # Zoom out first, so the map extent holds every point.
     iface.canvas.setExtent(QgsRectangle(0, 30, 30, 60))
-    window.parquet_extent.setChecked(True)
+    window.scope_picker.choose(MAP_VIEW)
     for name in ("Point tiles", "geojson", "data"):
         asset_row(window, name).setSelected(True)
     assert window.add.isEnabled()
@@ -272,6 +276,7 @@ def test_parquet_in_a_small_extent(iface, server, catalog):
     window = open_window(iface, server, catalog)
     open_collection(window)
     iface.canvas.setExtent(QgsRectangle(11.095, 44.0, 11.305, 45.0))
+    window.scope_picker.choose(MAP_VIEW)
     window.assets.clearSelection()
     asset_row(window, "data").setSelected(True)
     window.add.click()
@@ -293,7 +298,7 @@ def test_large_parquet_asks_first(iface, server, catalog, monkeypatch):
     monkeypatch.setattr(window_module.QMessageBox, "question", question)
     window = open_window(iface, server, catalog)
     open_collection(window)
-    window.parquet_extent.setChecked(False)
+    assert window.scope_picker.choice() == EVERYTHING
     window.assets.clearSelection()
     asset_row(window, "data").setSelected(True)
     window.add.click()
@@ -307,22 +312,56 @@ def test_large_parquet_asks_first(iface, server, catalog, monkeypatch):
     window.disconnect_canvas()
 
 
-def test_tooltips_say_which_asset_to_use(iface, server, catalog):
+def test_two_buttons_say_which_file_to_use(iface, server, catalog):
     window = open_window(iface, server, catalog)
     open_collection(window)
-    assert window_module.VIEW_OR_ANALYZE in window.add.toolTip()
-    assert window_module.VIEW_OR_ANALYZE in asset_row(window, "data").toolTip(0)
-    assert window_module.VIEW_OR_ANALYZE in asset_row(window, "Point tiles").toolTip(0)
-    assert window_module.VIEW_OR_ANALYZE not in asset_row(window, "geojson").toolTip(0)
+    # The advice lives in the two buttons, not in the file rows.
+    assert not hasattr(window_module, "VIEW_OR_ANALYZE")
+    assert window.view_button.text() == "View on map"
+    assert window.load_button.text() == "Load full data"
+    assert window_module.VIEW_TIP in window.view_button.toolTip()
+    assert "Point tiles (PMTiles)" in window.view_button.toolTip()
+    assert window_module.LOAD_TIP in window.load_button.toolTip()
+    assert "data (GeoParquet)" in window.load_button.toolTip()
+    for name in ("data", "Point tiles", "geojson"):
+        tip = asset_row(window, name).toolTip(0)
+        assert window_module.VIEW_TIP not in tip and window_module.LOAD_TIP not in tip
+    assert window.mosaic_button.isHidden()
     window.disconnect_canvas()
 
 
-def test_no_pmtiles_advice_without_tiles(iface, server, catalog, monkeypatch):
-    monkeypatch.setattr(window_module.layer_io, "archive_urls", lambda _document: [])
+def test_view_on_map_adds_the_tiles_and_load_full_data_the_parquet(iface, server, catalog):
     window = open_window(iface, server, catalog)
     open_collection(window)
-    assert window_module.VIEW_OR_ANALYZE not in window.add.toolTip()
-    assert window_module.VIEW_OR_ANALYZE not in asset_row(window, "data").toolTip(0)
+    window.view_button.click()
+    wait_for(lambda: len(QgsProject.instance().mapLayers()) == 1, timeout=60)
+    (tiles,) = QgsProject.instance().mapLayers().values()
+    assert isinstance(tiles, QgsVectorTileLayer)
+    window.load_button.click()
+    wait_for(lambda: len(QgsProject.instance().mapLayers()) == 2, timeout=60)
+    added = {layer.name(): layer for layer in QgsProject.instance().mapLayers().values()}
+    assert added["points"].featureCount() == 200
+    window.disconnect_canvas()
+
+
+def test_buttons_fall_back_to_other_formats(iface, server, catalog, monkeypatch):
+    # Without PMTiles, View on map adds the COG. Without DuckDB, Load full
+    # data adds the GeoJSON instead of the GeoParquet.
+    monkeypatch.setattr(window_module.parquet_query, "duckdb_status", lambda: (False, None))
+    window = open_window(iface, server, catalog)
+    base = catalog["base"]
+    href = f"{base}/points/collection.json"
+    raw = window_module.fetch_json(href)
+    raw["links"] = [link for link in raw["links"] if link["rel"] != "pmtiles"]
+    raw["assets"].pop("visual")
+    window._show_document(window_module.read_document(raw, href))
+    assert window.view_button.toolTip().endswith("relief (COG)")
+    assert window.load_button.toolTip().endswith("geojson (GeoJSON)")
+    assert window.tile_styles.isHidden()
+    window.view_button.click()
+    window.load_button.click()
+    names = sorted(layer.name() for layer in QgsProject.instance().mapLayers().values())
+    assert names == ["geojson", "relief"]
     window.disconnect_canvas()
 
 
@@ -602,4 +641,316 @@ def test_logomark_follows_the_theme(iface, server, catalog):
     window.setPalette(dark)
     assert window.logomark_file == pictures.LOGOMARK_DARK
     assert not window.logo.pixmap().isNull()
+    window.disconnect_canvas()
+
+
+# ---------- files, browser links, and check marks ----------
+
+
+def test_pmtiles_shows_once(iface, server, catalog):
+    window = open_window(iface, server, catalog)
+    open_collection(window)
+    archive = f"{catalog['base']}/points.pmtiles"
+    shown_hrefs = [
+        window.assets.topLevelItem(i).data(0, window_module._ROLE).href
+        for i in range(window.assets.topLevelItemCount())
+    ]
+    assert shown_hrefs.count(archive) == 1
+    # The rows allow more than one choice, for Add selected and Download.
+    assert window.assets.selectionMode() == window.assets.SelectionMode.ExtendedSelection
+    window.disconnect_canvas()
+
+
+def test_browser_links_of_the_open_node(iface, server, catalog, monkeypatch):
+    opened = []
+    monkeypatch.setattr(
+        window_module.QDesktopServices, "openUrl", lambda url: opened.append(url.toString())
+    )
+    window = RegistryWindow(
+        iface, server, f"{catalog['base']}/registry.json", "https://mirror.test/browse"
+    )
+    wait_for(lambda: rows(window.catalogs) == ["Test catalog"])
+    assert window.open_browser.isHidden()
+    entry = window.catalogs.item(0).data(window_module._ROLE)
+    # The publisher row's context menu opens the catalog in the browser.
+    (action,) = window.catalog_menu(entry).actions()
+    assert action.text() == "Open in browser"
+    action.trigger()
+    host = catalog["base"].removeprefix("http://")
+    assert opened == [f"https://mirror.test/browse/#/external/http:/{host}/catalog.json"]
+
+    open_collection(window)
+    collection = f"{catalog['base']}/points/collection.json"
+    link = f"https://mirror.test/browse/#/external/http:/{host}/points/collection.json"
+    assert window.browser_link(collection) == link
+    assert not window.open_browser.isHidden()
+    window.open_browser.click()
+    assert opened[-1] == link
+    # Details link to the browser, the license, and the publisher's docs,
+    # but not to the raw STAC document.
+    facts = window.facts.text()
+    assert window_module.BROWSER_LINK in facts and link in facts
+    assert "STAC document" not in facts
+    window.disconnect_canvas()
+
+
+def test_the_browser_url_setting(iface, catalog):
+    settings = QgsSettings()
+    settings.setValue(REGISTRY_URL_SETTING, f"{catalog['base']}/registry.json")
+    settings.setValue(BROWSER_URL_SETTING, "https://mirror.test/")
+    plugin = portolan_registry_qgis.classFactory(iface)
+    plugin.initGui()
+    plugin.action.setChecked(True)
+    try:
+        link = plugin.window.browser_link(f"{catalog['base']}/catalog.json")
+        assert link.startswith("https://mirror.test/#/external/http:/")
+    finally:
+        settings.remove(REGISTRY_URL_SETTING)
+        settings.remove(BROWSER_URL_SETTING)
+        plugin.unload()
+
+
+def test_check_mark_after_add(iface, server, catalog):
+    window = open_window(iface, server, catalog)
+    open_collection(window)
+    row = asset_row(window, "geojson")
+    assert not row.data(0, ON_MAP_ROLE)
+    window.assets.clearSelection()
+    row.setSelected(True)
+    window.add.click()
+    wait_for(lambda: len(QgsProject.instance().mapLayers()) == 1)
+    assert row.data(0, ON_MAP_ROLE)
+    assert "already reads this file" in row.toolTip(0)
+    assert not asset_row(window, "relief").data(0, ON_MAP_ROLE)
+    # A GeoParquet copy and the vector tiles keep their source in a property.
+    window.view_button.click()
+    window.load_button.click()
+    wait_for(lambda: len(QgsProject.instance().mapLayers()) == 3, timeout=60)
+    assert asset_row(window, "Point tiles").data(0, ON_MAP_ROLE)
+    assert asset_row(window, "data").data(0, ON_MAP_ROLE)
+    # The mark goes when the layer goes.
+    (geojson,) = QgsProject.instance().mapLayersByName("geojson")
+    QgsProject.instance().removeMapLayer(geojson.id())
+    assert not row.data(0, ON_MAP_ROLE)
+    window.disconnect_canvas()
+
+
+# ---------- scope ----------
+
+# The envelope of this L shape keeps the 21 points with ids 10 to 30. The
+# shape keeps the 11 points with ids 10 to 20.
+L_SHAPE = (
+    "POLYGON((11.095 44.0, 11.305 44.0, 11.305 44.1025, 11.205 44.1025, "
+    "11.205 45.0, 11.095 45.0, 11.095 44.0))"
+)
+
+
+def _polygon_layer(wkt):
+    layer = QgsVectorLayer("Polygon?crs=EPSG:4326", "area", "memory")
+    feature = QgsFeature()
+    feature.setGeometry(QgsGeometry.fromWkt(wkt))
+    layer.dataProvider().addFeatures([feature])
+    QgsProject.instance().addMapLayer(layer)
+    return layer
+
+
+def test_scope_area_drives_a_parquet_add(iface, server, catalog):
+    window = open_window(iface, server, catalog)
+    open_collection(window)
+    area = _polygon_layer(L_SHAPE)
+    window.scope_picker.choose(FROM_LAYER)
+    window.scope_picker._layers.setLayer(area)
+    assert window.load_button.isEnabled()
+    window.load_button.click()
+    wait_for(lambda: len(QgsProject.instance().mapLayers()) == 2, timeout=60)
+    (layer,) = QgsProject.instance().mapLayersByName("points")
+    assert sorted(f["id"] for f in layer.getFeatures()) == list(range(10, 21))
+    assert layer.customProperty(parquet_layer.AREA_PROPERTY)
+    window.disconnect_canvas()
+
+
+def test_an_incomplete_scope_blocks_the_parquet_load(iface, server, catalog):
+    window = open_window(iface, server, catalog)
+    open_collection(window)
+    window.scope_picker.choose(FROM_LAYER)
+    # No polygon layer is in the project, so the scope is not complete.
+    assert not window.load_button.isEnabled()
+    assert not window.download_all.isEnabled()
+    assert window.scope_hint.text() == "Choose a polygon layer."
+    assert not window.scope_hint.isHidden()
+    # The vector tiles do not read the scope, so View on map still works.
+    assert window.view_button.isEnabled()
+    window.scope_picker.choose(EVERYTHING)
+    assert window.load_button.isEnabled()
+    assert window.scope_hint.isHidden()
+    window.disconnect_canvas()
+
+
+# ---------- COG mosaics ----------
+
+
+def open_tiles(iface, server, catalog):
+    window = RegistryWindow(iface, server, f"{catalog['base']}/tiles-registry.json")
+    wait_for(lambda: rows(window.catalogs) == ["Tiles catalog"])
+    window.catalogs.itemClicked.emit(window.catalogs.item(0))
+    wait_for(lambda: rows(window.tree) == ["Test tiles"])
+    collection = window.tree.topLevelItem(0)
+    collection.setExpanded(True)
+    wait_for(lambda: collection.childCount() == 1 and collection.child(0).text(0) != "Reading…")
+    return window, collection
+
+
+def test_item_collection_adds_one_mosaic(iface, server, catalog):
+    window, collection = open_tiles(iface, server, catalog)
+    # The two items show as one row.
+    assert collection.child(0).text(0) == "2 files"
+    window.tree.setCurrentItem(collection.child(0))
+    wait_for(lambda: window._document is not None)
+    assert window._document.title == "Test tiles"
+    assert not window.mosaic_button.isHidden()
+    assert window.view_button.isHidden() and window.load_button.isHidden()
+    assert "COG files row" in window.no_assets.text()
+    # The map view covers item a only.
+    iface.canvas.setExtent(QgsRectangle(10.9, 43.9, 11.5, 44.7))
+    window.scope_picker.choose(MAP_VIEW)
+    window.mosaic_button.click()
+    wait_for(lambda: len(QgsProject.instance().mapLayers()) == 1, timeout=60)
+    (layer,) = QgsProject.instance().mapLayers().values()
+    assert layer.name() == "Test tiles"
+    assert mosaic.sources(layer) == [f"{catalog['base']}/tiles/a/a.tif"]
+    assert layer.isValid()
+    window.disconnect_canvas()
+
+
+def test_large_mosaic_asks_first(iface, server, catalog, monkeypatch):
+    asked = []
+
+    def question(_parent, _title, text):
+        asked.append(text)
+        return QMessageBox.StandardButton.No
+
+    monkeypatch.setattr(window_module, "CONFIRM_FILES", 1)
+    monkeypatch.setattr(window_module.QMessageBox, "question", question)
+    window, collection = open_tiles(iface, server, catalog)
+    window.tree.setCurrentItem(collection)
+    wait_for(lambda: window._document is not None)
+    window.mosaic_button.click()
+    wait_for(lambda: asked and window.mosaic_button.isEnabled(), timeout=60)
+    assert asked[0].startswith("2 files of Test tiles")
+    assert QgsProject.instance().mapLayers() == {}
+    window.disconnect_canvas()
+
+
+@pytest.mark.parametrize("preprocessor", [True, False], ids=["preprocessor", "qgis-3.34"])
+def test_saved_project_rebuilds_the_mosaic(iface, catalog, tmp_path, monkeypatch, preprocessor):
+    if not preprocessor:
+        monkeypatch.setattr(plugin_module, "PATH_PREPROCESSOR_VERSION", 10**9)
+    elif Qgis.versionInt() < plugin_module.PATH_PREPROCESSOR_VERSION:
+        pytest.skip("This QGIS cannot register a path preprocessor")
+    plugin = portolan_registry_qgis.classFactory(iface)
+    plugin.initGui()
+    hrefs = [f"{catalog['base']}/tiles/{key}/{key}.tif" for key in ("a", "b")]
+    layer = mosaic.build_mosaic(hrefs, "tiles")
+    project = QgsProject.instance()
+    project.addMapLayer(layer)
+    first = Path(layer.source())
+    saved = tmp_path / "saved.qgs"
+    assert project.write(str(saved))
+    project.clear()
+    # The sweep deletes the VRT with its last layer.
+    assert not first.exists()
+    assert project.read(str(saved))
+    (restored,) = project.mapLayers().values()
+    wait_for(lambda: not mosaic.needs_rebuild(restored) and restored.isValid(), timeout=60)
+    assert mosaic.sources(restored) == hrefs
+    assert Path(restored.source()).is_file()
+    assert restored.width() == 164
+    plugin.unload()
+
+
+# ---------- scoped downloads ----------
+
+
+def test_download_keeps_the_items_in_the_scope(iface, server, catalog, tmp_path, monkeypatch):
+    monkeypatch.setattr(window_module.QFileDialog, "getExistingDirectory", lambda *a: str(tmp_path))
+    asked = []
+
+    def answer(*args):
+        asked.append(args[2])
+        return QMessageBox.StandardButton.Yes
+
+    monkeypatch.setattr(window_module.QMessageBox, "question", answer)
+    window, collection = open_tiles(iface, server, catalog)
+    window.tree.setCurrentItem(collection)
+    wait_for(lambda: window._document is not None)
+    iface.canvas.setExtent(QgsRectangle(10.9, 43.9, 11.5, 44.7))
+    window.scope_picker.choose(MAP_VIEW)
+    window.download_all.trigger()
+    wait_for(lambda: asked and window._job is None and not window.cancel.isVisible(), timeout=60)
+    assert "1 item outside the chosen area" in asked[0]
+    assert (tmp_path / "tiles" / "collection.json").is_file()
+    assert (tmp_path / "tiles" / "a" / "a.tif").is_file()
+    assert not (tmp_path / "tiles" / "b").exists()
+    window.disconnect_canvas()
+
+
+def test_download_clips_the_parquet_to_the_scope(iface, server, catalog, tmp_path, monkeypatch):
+    monkeypatch.setattr(window_module.QFileDialog, "getExistingDirectory", lambda *a: str(tmp_path))
+    window = open_window(iface, server, catalog)
+    open_collection(window)
+    area = _polygon_layer(L_SHAPE)
+    window.scope_picker.choose(FROM_LAYER)
+    window.scope_picker._layers.setLayer(area)
+    window.assets.clearSelection()
+    asset_row(window, "data").setSelected(True)
+    asset_row(window, "geojson").setSelected(True)
+    window.download_selected.trigger()
+    clipped = tmp_path / "points.gpkg"
+    wait_for(lambda: clipped.is_file() and window._job is None, timeout=60)
+    wait_for(lambda: any("Wrote 11 features" in item.text() for item in iface.bar.items()))
+    # The GeoJSON downloads whole. The GeoParquet does not download at all.
+    assert (tmp_path / "points" / "points.geojson").is_file()
+    assert not (tmp_path / "points.parquet").exists()
+    copy = QgsVectorLayer(f"{clipped}|layername=features", "copy", "ogr")
+    assert sorted(f["id"] for f in copy.getFeatures()) == list(range(10, 21))
+    window.disconnect_canvas()
+
+
+def test_clipped_path():
+    root = "https://x.test/catalog.json"
+    assert window_module.clipped_path("https://x.test/a/b.parquet", root) == "a/b.gpkg"
+    assert window_module.clipped_path("https://x.test/b.geoparquet", root) == "b.gpkg"
+
+
+def test_item_collection_lists_its_files(iface, server, catalog, monkeypatch):
+    monkeypatch.setattr(window_module, "NODE_PAGE", 1)
+    window, collection = open_tiles(iface, server, catalog)
+    window.tree.setCurrentItem(collection.child(0))
+    wait_for(lambda: window._document is not None)
+    # One row stands for every file. One page of the item files follows,
+    # then a row that lists the rest.
+    wait_for(lambda: rows(window.assets) == ["2 COG files", "a", "Show 1 more of 1 file"])
+    summary = window.assets.topLevelItem(0)
+    assert summary.data(0, BADGE_ROLE)[0] == "COG"
+    assert isinstance(summary.data(0, window_module._ROLE), window_module.ItemFiles)
+    a = asset_row(window, "a")
+    assert a.data(0, BADGE_ROLE)[:2] == ("COG", "cog")
+    assert a.data(0, window_module._ROLE).href == f"{catalog['base']}/tiles/a/a.tif"
+    # The explanation stays under the list, not in place of it.
+    assert not window.no_assets.isHidden() and not window.assets.isHidden()
+    window.assets.itemClicked.emit(window.assets.topLevelItem(2), 0)
+    wait_for(lambda: rows(window.assets) == ["2 COG files", "a", "b"])
+    # The summary row is selected first, so Add selected adds the mosaic.
+    assert summary.isSelected()
+    assert window.add.isEnabled() and window.download_selected.isEnabled()
+    window.add.click()
+    wait_for(lambda: len(QgsProject.instance().mapLayers()) == 1, timeout=60)
+    (layer,) = QgsProject.instance().mapLayers().values()
+    assert len(mosaic.sources(layer)) == 2
+    # A single item file adds as its own layer, and its row shows the mark.
+    window.assets.clearSelection()
+    asset_row(window, "b").setSelected(True)
+    window.add.click()
+    wait_for(lambda: len(QgsProject.instance().mapLayers()) == 2, timeout=60)
+    assert asset_row(window, "b").data(0, ON_MAP_ROLE)
     window.disconnect_canvas()

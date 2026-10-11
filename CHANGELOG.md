@@ -2,15 +2,34 @@
 
 ## Unreleased
 
+- The registry opens in a window instead of a dock. The window keeps its size, its divider, and the open state of its sections between sessions.
+- The window header shows the Portolan mark, a refresh button, and **Open in browser**, which opens the chosen node in the Portolan browser.
+- The details show in four sections that you can close: **About**, **Add to map**, **All files**, and **Details**.
+- The hero shows the thumbnail, or the extent map when there is no thumbnail, not both.
+- The status filter is gone. A catalog that is not valid still shows its status in its row.
+- The details name the publisher, the license, and the total size. They no longer show the STAC type, the ID, or the extent coordinates.
+- **View on map** adds the PMTiles, else a COG. **Load full data** adds the GeoParquet, else the FlatGeobuf, GeoJSON, or CSV. Their tooltips say which to use.
+- **All files** lists only the files QGIS can open, and lists a PMTiles archive once when it is both a link and an asset.
+- A check mark shows on each file that a layer in the project already reads.
+- **Details** links to the license, the publisher's documentation, and the browser. The raw STAC document and `via` links are gone.
+- Right-click a publisher to open its catalog in the browser. The QGIS setting `PortolanRegistry/browser_url` points the links at a browser mirror.
+- CSV files open over HTTP, as points when the header names longitude and latitude columns.
+- A Parquet file with no geometry column loads as a table.
+- An area picker replaces **Read GeoParquet in the map extent only**. It offers everything, the map view, a drawn polygon, or the polygons of a layer.
+- A GeoParquet load with a polygon keeps only the features that intersect the polygon. A saved project copies the same area again.
+- A collection whose children are all items shows one **N files** row in the tree.
+- In such a collection, **All files** lists one row for every file of the items, then the COG file of each item, one page at a time.
+- **Add as one layer** adds the COG files of a collection's items in the area as one VRT mosaic. A saved project builds the VRT again.
+- **Download > Everything in** leaves out the items outside the area.
+- With a map view or an area, **Download > Selected files** saves a GeoParquet file as a GeoPackage of the features in the area.
 - GeoParquet loads through a GeoPackage that DuckDB writes. A million polygons from a local file load in 2 seconds instead of 19, QGIS stays responsive, and memory use drops from 1.9 GB to 380 MB.
 - GeoParquet files with date or timestamp columns load their features. Before, the layer was empty.
 - A GeoParquet load has no feature limit. When it holds more than 1,000,000 features, the panel asks first.
-- Tooltips on **Add to map**, PMTiles, and GeoParquet say which to use: PMTiles to view, GeoParquet to analyze. They show when the collection has PMTiles.
 - A saved project copies its GeoParquet layers again when it opens.
 - On QGIS 3.34, a saved GeoParquet layer opens as unavailable until the plugin copies it again. QGIS 3.34 crashes when a plugin registers a path preprocessor, so the plugin does not register one there.
 - A GeoParquet feature whose geometry type does not fit the layer keeps its attributes, with no geometry. The panel reports the count.
 - A GeoParquet attribute named `geom` loads. Before, the copy dropped it.
-- A collection opens with one asset selected, so **Add to map** works at once. PMTiles come first.
+- A collection opens with one file selected, so **Add selected** works at once. PMTiles come first.
 - PMTiles layers carry each of the collection's MapLibre styles as a named QGIS style. Switch styles from the layer's **Styles** menu.
 - Styles that name their archive as a bare relative path, such as `../tiles.pmtiles`, apply to the tiles. So do styles whose vector source has no `url`.
 - A PMTiles layer opens the archive you selected, not the archive the chosen style reads.

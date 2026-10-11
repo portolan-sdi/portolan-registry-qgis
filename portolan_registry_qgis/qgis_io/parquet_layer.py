@@ -214,7 +214,7 @@ def plan(
 
     Raises:
         parquet_query.DuckDBMissingError: DuckDB is absent or too old.
-        GeoParquetError: The file has no geometry column.
+        GeoParquetError: The geo metadata names a column the file does not have.
         ValueError: ``area`` is not a polygon the file's CRS can hold.
     """
     con = parquet_query.connection(extension_dir)
@@ -245,12 +245,16 @@ def prepare(
     con = parquet_query.connection(extension_dir)
     path = new_path(".gpkg")
     srs = planned.crs.authid() or planned.plan.crs or None
-    # Without an area the call leaves out the argument, so a stand-in for
-    # write_gpkg with the older signature still works.
-    extra = {} if planned.area is None else {"area": planned.area}
     try:
         written = parquet_query.write_gpkg(
-            con, planned.url, planned.plan, str(path), planned.bbox, srs, cancelled, **extra
+            con,
+            planned.url,
+            planned.plan,
+            str(path),
+            planned.bbox,
+            srs,
+            cancelled,
+            area=planned.area,
         )
     except BaseException:
         discard_path(path)

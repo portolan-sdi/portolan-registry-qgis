@@ -4,6 +4,7 @@
 
 ## 0.2.0 - 2026-10-11
 
+- The plugin is no longer marked experimental, so the QGIS plugin manager lists it without the experimental option.
 - The registry opens in a window instead of a side panel. You can pan the map while it is open. It keeps its size, its divider, and the open state of its sections between sessions.
 - The details pane shows the dataset's name with **Zoom to** and **Open in Portolan browser ↗** next to it. The browser shows every file and all the metadata that the plugin leaves out.
 - The details show in four sections that you can close: **About**, **Add to map**, **All files**, and **Details**. **All files** starts closed.

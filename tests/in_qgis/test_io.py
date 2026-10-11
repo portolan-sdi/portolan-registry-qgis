@@ -1098,6 +1098,26 @@ def test_item_hrefs_fall_back_to_the_walk(catalog, tiles):
     assert mosaic.item_hrefs_in(broken, WEST_VIEW, fetch_json) == [_tile(catalog, "a")]
 
 
+def test_item_documents_come_from_the_item_links(tiles):
+    base = tiles.href.rsplit("/", 1)[0]
+    assert mosaic.item_documents(tiles) == {
+        "a": f"{base}/a/a.json",
+        "b": f"{base}/b/b.json",
+    }
+
+
+def test_a_mirror_without_self_links_resolves_against_the_items(catalog, tiles):
+    # The GHSL mirror stores "./<file>.tif" relative to each item and no self
+    # link. Resolved against the mirror file, the href gave HTTP 404.
+    mirror = mosaic.mirror_href(tiles)
+    both = [_tile(catalog, "a"), _tile(catalog, "b")]
+    assert mosaic.mirror_hrefs(mirror, Everything(), items=mosaic.item_documents(tiles)) == both
+    # Without the item links, item a resolves against the file, and is wrong.
+    wrong = mosaic.mirror_hrefs(mirror, Everything())
+    assert wrong[0] == f"{catalog['base']}/tiles/a.tif"
+    assert wrong[1] == both[1]
+
+
 def test_mirror_query_reads_a_list_bbox():
     sql, params = mosaic.mirror_query(
         {"bbox": "DOUBLE[]", "assets": "STRUCT(a STRUCT(href VARCHAR))"}, WEST_VIEW

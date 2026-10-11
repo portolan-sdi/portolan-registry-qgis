@@ -26,6 +26,7 @@
 - When a new layer lands outside the map, the map moves to it, and the message says so. Before, the layer showed in the Layers panel only.
 - A COG that failed to open once opens on the next try. GDAL kept a failed request for the life of the QGIS session. COG reads now retry HTTP 429, 500, 502, 503, and 504.
 - When a mosaic leaves a file out, the message log gives GDAL's reason, such as an HTTP status.
+- A mosaic from a stac-geoparquet item index resolves each COG href against its item document, found by the item ID in the collection's item links. Before, the GHSL population tiles resolved against the index file and returned HTTP 404.
 - With a map view or an area, **Download > Selected files** saves a GeoParquet file as a GeoPackage of the features in the area.
 - GeoParquet loads through a GeoPackage that DuckDB writes. A million polygons from a local file load in 2 seconds instead of 19, QGIS stays responsive, and memory use drops from 1.9 GB to 380 MB.
 - GeoParquet files with date or timestamp columns load their features. Before, the layer was empty.

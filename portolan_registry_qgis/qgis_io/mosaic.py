@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
 
 from osgeo import gdal
 from qgis.core import Qgis, QgsMessageLog, QgsProviderRegistry, QgsRasterLayer
@@ -84,12 +85,28 @@ def item_hrefs_in(
         import duckdb
 
         try:
-            return mirror_hrefs(mirror, scope, cancelled)
+            return mirror_hrefs(mirror, scope, cancelled, item_documents(collection))
         except (duckdb.Error, OSError, ValueError) as error:
             if cancelled is not None and cancelled():
                 return []
             _log(f"Could not read {mirror}, so the plugin reads each item: {error}")
     return walked_hrefs(collection.href, scope, fetch_json, executor, cancelled)
+
+
+def item_documents(collection: Document) -> dict[str, str]:
+    """Map each item ID to the URL of its document, from the collection's item links.
+
+    A link names no ID, so the ID is the file name of the item document
+    without ``.json``. This fits the usual layouts ``<id>/<id>.json`` and
+    ``<id>.json``.
+    """
+    found: dict[str, str] = {}
+    for node in collection.children:
+        if node.kind != "item":
+            continue
+        name = urlsplit(node.href).path.rsplit("/", 1)[-1]
+        found.setdefault(name.removesuffix(".json"), node.href)
+    return found
 
 
 def walked_hrefs(
@@ -153,8 +170,9 @@ def mirror_query(columns: dict[str, str], scope: Scope) -> tuple[str, list[Any]]
         raise ValueError("The file has no bbox or assets column")
     xmin, ymin, xmax, ymax = _bbox_columns(columns["bbox"])
     links = "to_json(links)" if "links" in columns else "NULL"
+    ids = quote("id") if "id" in columns else "NULL"
     sql = (
-        f"SELECT {xmin}, {ymin}, {xmax}, {ymax}, to_json(assets), {links} "  # noqa: S608  # nosec B608 - the SQL holds column names only
+        f"SELECT {xmin}, {ymin}, {xmax}, {ymax}, to_json(assets), {links}, {ids} "  # noqa: S608  # nosec B608 - the SQL holds column names only
         "FROM read_parquet(?)"
     )
     params: list[Any] = []
@@ -181,11 +199,21 @@ def mirror_hrefs(
     url: str,
     scope: Scope,
     cancelled: Callable[[], bool] | None = None,
+    items: dict[str, str] | None = None,
 ) -> list[str]:
     """Return the COG hrefs of the items of a stac-geoparquet file that intersect ``scope``.
 
-    A relative asset href resolves against the item's ``self`` link, or
-    against the file when the item has no such link.
+    A relative asset href is relative to its item document. The function
+    finds that document from the item's ``self`` link, else from ``items``
+    by the item ID, else it uses the file. A stac-geoparquet file often
+    leaves out the ``self`` link, as the GHSL mirror does.
+
+    Args:
+        url: The stac-geoparquet file.
+        scope: The part of the collection to keep.
+        cancelled: Polled while the query runs.
+        items: The URL of each item document by item ID, from
+            ``item_documents``.
 
     Raises:
         parquet_query.DuckDBMissingError: DuckDB is absent or too old.
@@ -200,14 +228,17 @@ def mirror_hrefs(
         sql, params = mirror_query(columns, scope)
         rows = cursor.execute(sql, [url, *params]).fetchall()
     hrefs = []
-    for xmin, ymin, xmax, ymax, assets, links in rows:
+    for xmin, ymin, xmax, ymax, assets, links, item_id in rows:
         corners = (xmin, ymin, xmax, ymax)
         box: Bbox | None = None
         if all(isinstance(value, (int, float)) for value in corners):
             box = (float(xmin), float(ymin), float(xmax), float(ymax))
         if not scopes.intersects(box, scope):
             continue
-        href = _first_cog(_json(assets), _self_href(_json(links), url))
+        base = _self_href(_json(links), url)
+        if base is None:
+            base = (items or {}).get(str(item_id), url) if item_id is not None else url
+        href = _first_cog(_json(assets), base)
         if href is not None:
             hrefs.append(href)
     return list(dict.fromkeys(hrefs))
@@ -222,7 +253,8 @@ def _json(value: object) -> object:
     return value
 
 
-def _self_href(links: object, base: str) -> str:
+def _self_href(links: object, base: str) -> str | None:
+    """Return the item's ``self`` link resolved against ``base``, or None without one."""
     if isinstance(links, list):
         for link in links:
             if isinstance(link, dict) and link.get("rel") == "self":
@@ -231,8 +263,8 @@ def _self_href(links: object, base: str) -> str:
                     try:
                         return asset_href(href, base)
                     except ValueError:
-                        return base
-    return base
+                        return None
+    return None
 
 
 def _first_cog(assets: object, base: str) -> str | None:

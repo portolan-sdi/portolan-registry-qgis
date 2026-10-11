@@ -189,7 +189,10 @@ def _tiles(root: Path) -> None:
             },
         }
         (folder / key / f"{key}.json").write_text(json.dumps(item))
-        href, links = (f"./a/{key}.tif", "[]") if key == "a" else (f"./{key}.tif", None)
+        # An asset href is relative to its item document. Item a has no self
+        # link, as in the GHSL mirror, so its document comes from the
+        # collection's item link with the same ID.
+        href, links = (f"./{key}.tif", "[]") if key == "a" else (f"./{key}.tif", None)
         if links is None:
             links = f"[{{'rel': 'self', 'href': './{key}/{key}.json'}}]"
         rows.append(

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import contextlib
 import datetime
 import json
+import sqlite3
 
 import pytest
 
@@ -119,6 +121,63 @@ def test_bbox(con, points, tmp_path):
     written = parquet_query.write_gpkg(con, points, plan, str(tmp_path / "box.gpkg"), box)
     assert written.features == 21
     assert sorted(row[1] for row in _read_back(con, tmp_path / "box.gpkg")) == list(range(10, 31))
+
+
+def test_area_keeps_fewer_rows_than_its_envelope(con, points, tmp_path):
+    plan = parquet_query.read_plan(con, points)
+    # An L shape. Its right half starts above the points, so only x <= 11.205 keeps rows.
+    area = (
+        "POLYGON ((11.095 44, 11.205 44, 11.205 44.5, 11.305 44.5, "
+        "11.305 45, 11.095 45, 11.095 44))"
+    )
+    box = (11.095, 44.0, 11.305, 45.0)
+    # The estimate counts by the envelope, an upper bound.
+    assert parquet_query.estimate(con, points, plan, box, area=area) == 21
+    target = tmp_path / "area.gpkg"
+    written = parquet_query.write_gpkg(con, points, plan, str(target), box, area=area)
+    assert written == parquet_query.Written(features=11, geometry_type="Point", refused=0)
+    assert sorted(row[1] for row in _read_back(con, target)) == list(range(10, 21))
+
+
+def test_area_picks_the_first_type_inside_it(con, tmp_path):
+    source = tmp_path / "typed.parquet"
+    con.execute(
+        f"""COPY (SELECT ST_GeomFromText(w) AS geometry FROM (VALUES
+            ('LINESTRING (0 0, 1 1)'), ('POINT (5 5)')) v(w)) TO '{source}' (FORMAT parquet)"""
+    )
+    plan = parquet_query.read_plan(con, str(source))
+    assert plan.geometry_type == "Unknown"
+    area = "POLYGON ((4 4, 6 4, 6 6, 4 4))"
+    target = tmp_path / "typed.gpkg"
+    written = parquet_query.write_gpkg(con, str(source), plan, str(target), (4, 4, 6, 6), area=area)
+    assert written == parquet_query.Written(features=1, geometry_type="MultiPoint", refused=0)
+
+
+@pytest.mark.parametrize("rows", [5, 0])
+def test_table_becomes_an_attribute_table(con, tmp_path, rows):
+    source = tmp_path / "table.parquet"
+    con.execute(
+        f"""COPY (SELECT i AS id, 'n' || i AS name, 'x' AS geom FROM range({rows}) t(i))
+        TO '{source}' (FORMAT parquet)"""
+    )
+    plan = parquet_query.read_plan(con, str(source))
+    assert not plan.has_geometry
+    assert parquet_query.estimate(con, str(source), plan, (0, 0, 1, 1)) == rows
+    target = tmp_path / "table.gpkg"
+    written = parquet_query.write_gpkg(
+        con, str(source), plan, str(target), (0, 0, 1, 1), srs="EPSG:4326"
+    )
+    assert written == parquet_query.Written(features=rows, geometry_type="None", refused=0)
+    with contextlib.closing(sqlite3.connect(target)) as gpkg:
+        assert gpkg.execute("SELECT table_name, data_type FROM gpkg_contents").fetchall() == [
+            ("features", "attributes")
+        ]
+        assert gpkg.execute("SELECT count(*) FROM gpkg_geometry_columns").fetchone() == (0,)
+    described = con.execute("DESCRIBE SELECT * FROM ST_Read(?)", [str(target)]).fetchall()
+    # The attribute named geom keeps its name, because GDAL's geometry column is gone.
+    assert [row[0] for row in described] == ["fid", "id", "name", "geom"]
+    values = con.execute("SELECT id, name, geom FROM ST_Read(?) ORDER BY id", [str(target)])
+    assert values.fetchall() == [(i, f"n{i}", "x") for i in range(rows)]
 
 
 def test_covering_filter_gives_the_same_rows(con, points, tmp_path):

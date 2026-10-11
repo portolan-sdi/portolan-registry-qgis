@@ -18,14 +18,15 @@ from portolan_registry_qgis.core.hrefs import absolute_href, asset_href, folder_
 
 Bbox = tuple[float, float, float, float]
 NodeKind = Literal["catalog", "collection", "item"]
-AssetFormat = Literal["pmtiles", "geojson", "cog", "parquet", "flatgeobuf", "copc"]
+AssetFormat = Literal["pmtiles", "geojson", "cog", "parquet", "flatgeobuf", "copc", "csv"]
 
 _COLLECTION_HREF = re.compile(r"/collection\.json($|[?#])", re.IGNORECASE)
 _IMAGE_HREF = re.compile(r"\.(png|jpe?g|webp|gif|svg)($|[?#])", re.IGNORECASE)
 STYLE_MEDIA_TYPE = "application/vnd.mapbox.style+json"
 # The order in which the panel picks an asset to add. PMTiles draw at every
 # zoom with the catalog's style. A COG or COPC is the data itself. GeoParquet
-# reads only the map extent, and FlatGeobuf and GeoJSON come last.
+# reads only the map extent, and FlatGeobuf and GeoJSON come next. A CSV comes
+# last, because it often has no geometry.
 PREFERRED_FORMATS: tuple[AssetFormat, ...] = (
     "pmtiles",
     "cog",
@@ -33,7 +34,13 @@ PREFERRED_FORMATS: tuple[AssetFormat, ...] = (
     "parquet",
     "flatgeobuf",
     "geojson",
+    "csv",
 )
+# The plugin does not add assets with these roles. A ``source`` asset is the
+# upstream file before conversion. A ``collection-mirror`` asset is a
+# GeoParquet index of the collection's items, not the data. An ``archive``
+# asset is an earlier version of the data. The browser lists all three.
+_NOT_LOADABLE_ROLES = frozenset({"source", "collection-mirror", "archive"})
 
 
 def is_image(href: str, media_type: str | None) -> bool:
@@ -81,6 +88,9 @@ class Asset:
     size: int | None
     checksum: str | None
     format: AssetFormat | None
+    # True for a Parquet file whose ``table:columns`` list no geometry
+    # column. The spec calls this a tabular collection.
+    tabular: bool = False
 
     @property
     def label(self) -> str:
@@ -100,6 +110,21 @@ class PmtilesLink:
     href: str
     title: str | None
     layers: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class Loadable:
+    """A file the plugin can add to the map.
+
+    A ``rel: pmtiles`` link has no asset. A data asset keeps its ``Asset``,
+    for its size, checksum, and roles.
+    """
+
+    href: str
+    title: str
+    format: AssetFormat
+    asset: Asset | None = None
+    layers: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -144,26 +169,57 @@ class Document:
             if not asset.is_style and not skip.intersection(asset.roles)
         )
 
+    def loadable(self) -> tuple[Loadable, ...]:
+        """Return the files the plugin can add, with no duplicates.
+
+        The ``rel: pmtiles`` links come first. The data assets with a known
+        format follow, in document order. An asset whose href matches a
+        PMTiles link, and an asset with the ``source``,
+        ``collection-mirror``, or ``archive`` role, is left out.
+        """
+        shared = self.pmtiles_duplicates
+        found = [
+            Loadable(link.href, link.title or "Vector tiles", "pmtiles", layers=link.layers)
+            for link in self.pmtiles
+        ]
+        found += [
+            Loadable(asset.href, asset.label, asset.format, asset=asset)
+            for asset in self.data_assets
+            if asset.format is not None
+            and asset.href not in shared
+            and not _NOT_LOADABLE_ROLES.intersection(asset.roles)
+        ]
+        return tuple(found)
+
+    @property
+    def pmtiles_duplicates(self) -> frozenset[str]:
+        """The hrefs that a ``rel: pmtiles`` link and an asset both name.
+
+        A publisher can list one archive as a link and as an asset. Each
+        caller keeps one of the two, so the archive shows and downloads once.
+        """
+        return frozenset(link.href for link in self.pmtiles) & {asset.href for asset in self.assets}
+
     def preferred_href(self, *, parquet: bool = True) -> str | None:
         """Return the href of the asset to add when the user picks nothing else.
 
         The first ``rel: pmtiles`` link wins. Publishers list the archive that
         the default style reads first. Otherwise the first data asset in
-        ``PREFERRED_FORMATS`` order wins. An upstream ``source`` asset never
-        does.
+        ``PREFERRED_FORMATS`` order wins. The candidates are those of
+        ``loadable``, so an upstream ``source`` asset never wins.
 
         Args:
             parquet: Whether the plugin can read GeoParquet, which needs DuckDB.
         """
         if self.pmtiles:
             return self.pmtiles[0].href
-        candidates = [a for a in self.data_assets if "source" not in a.roles]
+        candidates = self.loadable()
         for wanted in PREFERRED_FORMATS:
             if wanted == "parquet" and not parquet:
                 continue
-            for asset in candidates:
-                if asset.format == wanted:
-                    return asset.href
+            for candidate in candidates:
+                if candidate.format == wanted:
+                    return candidate.href
         return None
 
     @property
@@ -264,6 +320,7 @@ _FORMAT_RULES: tuple[tuple[AssetFormat, str, re.Pattern[str]], ...] = (
     ("parquet", "parquet", re.compile(r"\.(geo)?parquet($|\?)", re.IGNORECASE)),
     ("flatgeobuf", "flatgeobuf", re.compile(r"\.fgb($|\?)", re.IGNORECASE)),
     ("copc", "copc", re.compile(r"\.copc\.la[sz]($|\?)", re.IGNORECASE)),
+    ("csv", "text/csv", re.compile(r"\.csv($|\?)", re.IGNORECASE)),
 )
 
 
@@ -296,13 +353,58 @@ def _account(raw: dict[str, Any], fallback: str | None) -> str | None:
     return fallback
 
 
+_GEOMETRY_NAMES = frozenset({"geometry", "geom", "the_geom", "wkb_geometry", "shape", "geog"})
+_GEOMETRY_TYPES = (
+    "geometry",
+    "geography",
+    "wkb",
+    "point",
+    "linestring",
+    "polygon",
+    "multipoint",
+    "multilinestring",
+    "multipolygon",
+)
+
+
+def is_geometry_column(column: object) -> bool:
+    """Return whether a ``table:columns`` entry describes a geometry column.
+
+    The table extension has no geometry type. Publishers write the GeoParquet
+    type, such as ``geometry``, or the storage type ``binary`` under a common
+    geometry name.
+    """
+    if not isinstance(column, dict):
+        return False
+    name = str(column.get("name") or "").lower()
+    kind = str(column.get("type") or "").lower()
+    return name in _GEOMETRY_NAMES or kind.startswith(_GEOMETRY_TYPES)
+
+
+def is_tabular(columns: object) -> bool:
+    """Return whether ``table:columns`` list columns and none of them is a geometry.
+
+    A missing or empty list returns False, because it tells nothing.
+    """
+    if not isinstance(columns, list) or not columns:
+        return False
+    return not any(is_geometry_column(column) for column in columns)
+
+
 def assets_of(document: dict[str, Any], base: str) -> tuple[Asset, ...]:
-    """Return a document's assets with resolved hrefs and detected formats."""
+    """Return a document's assets with resolved hrefs and detected formats.
+
+    A Parquet asset is tabular when its own ``table:columns``, else the
+    document's or the item properties', list no geometry column.
+    """
     raw_assets = document.get("assets")
     if not isinstance(raw_assets, dict):
         return ()
     properties = document.get("properties")
     item_account = _account(properties, None) if isinstance(properties, dict) else None
+    shared_columns = document.get("table:columns")
+    if shared_columns is None and isinstance(properties, dict):
+        shared_columns = properties.get("table:columns")
     assets = []
     for key, raw in raw_assets.items():
         if not isinstance(raw, dict) or not isinstance(raw.get("href"), str):
@@ -315,6 +417,8 @@ def assets_of(document: dict[str, Any], base: str) -> tuple[Asset, ...]:
         title = raw.get("title")
         media = raw.get("type")
         checksum = raw.get("file:checksum")
+        detected = asset_format(href, media if isinstance(media, str) else None)
+        columns = raw.get("table:columns", shared_columns)
         assets.append(
             Asset(
                 key=str(key),
@@ -326,7 +430,8 @@ def assets_of(document: dict[str, Any], base: str) -> tuple[Asset, ...]:
                 else (),
                 size=_int_or_none(raw.get("file:size")),
                 checksum=checksum if isinstance(checksum, str) else None,
-                format=asset_format(href, media if isinstance(media, str) else None),
+                format=detected,
+                tabular=detected == "parquet" and is_tabular(columns),
             )
         )
     return tuple(assets)

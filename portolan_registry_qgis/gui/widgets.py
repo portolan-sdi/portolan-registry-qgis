@@ -19,7 +19,7 @@ from qgis.PyQt.QtWidgets import (
     QWidget,
 )
 
-from portolan_registry_qgis.core.format import catalog_summary
+from portolan_registry_qgis.core.format import catalog_summary, count
 from portolan_registry_qgis.core.registry import CatalogEntry
 from portolan_registry_qgis.gui.pictures import (
     ACCENT,
@@ -43,6 +43,10 @@ if TYPE_CHECKING:
 ROLE = Qt.ItemDataRole.UserRole
 # Asset rows keep (badge text, format, size text) here, for AssetDelegate.
 BADGE_ROLE = Qt.ItemDataRole.UserRole + 1
+# Asset rows keep True here when a layer in the project already reads the file.
+ON_MAP_ROLE = Qt.ItemDataRole.UserRole + 2
+# The mark that an asset row draws when the file is on the map.
+ON_MAP_MARK = "\u2713"
 
 _PAD = 8
 
@@ -53,10 +57,11 @@ class More:
 
     rest: tuple[Any, ...]
 
-    def label(self, page: int) -> str:
-        """Return the row's text."""
+    def label(self, page: int, noun: str = "") -> str:
+        """Return the row's text. A ``noun`` names what the rows hold."""
         shown = min(page, len(self.rest))
-        return f"Show {shown:,} more of {len(self.rest):,}"
+        total = count(len(self.rest), noun) if noun else f"{len(self.rest):,}"
+        return f"Show {shown:,} more of {total}"
 
 
 _TILE = QSize(66, 44)
@@ -236,7 +241,7 @@ class CatalogDelegate(QStyledItemDelegate):
 
 
 class AssetDelegate(QStyledItemDelegate):
-    """An asset row: a format badge, the title, and the size."""
+    """An asset row: a format badge, the title, the size, and a mark when it is on the map."""
 
     def __init__(self, view: Any):
         super().__init__(view)
@@ -293,6 +298,15 @@ class AssetDelegate(QStyledItemDelegate):
         metrics = option.fontMetrics
         painter.setFont(option.font)
         right = rect.right() - 6
+        if index.data(ON_MAP_ROLE):
+            mark_width = metrics.horizontalAdvance(ON_MAP_MARK)
+            painter.setPen(_text_color(option) if _selected(option) else ACCENT)
+            painter.drawText(
+                QRect(right - mark_width, rect.top(), mark_width, rect.height()),
+                Qt.AlignmentFlag.AlignVCenter,
+                ON_MAP_MARK,
+            )
+            right -= mark_width + 10
         if size:
             size_width = metrics.horizontalAdvance(size)
             painter.setPen(muted(palette, _selected(option)))
@@ -345,13 +359,18 @@ class ExtentTile(QWidget):
 
 
 class HeroView(QWidget):
-    """The chosen node's thumbnail with a small extent map, or a large extent map."""
+    """The chosen node's thumbnail, or a map of its extent when it has none.
+
+    The picture and the map do not show together. ``painted_extent`` tells
+    whether the last paint drew the map.
+    """
 
     def __init__(self, world: WorldMap, parent: QWidget | None = None):
         super().__init__(parent)
         self._world = world
         self._bbox: Bbox | None = None
         self._picture: Picture | None = None
+        self.painted_extent = False
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         policy = self.sizePolicy()
         policy.setHeightForWidth(True)
@@ -359,13 +378,13 @@ class HeroView(QWidget):
         world.ready.connect(self.update)
 
     def show_extent(self, bbox: Bbox | None, picture: Picture | None = None) -> None:
-        """Show ``bbox``, under ``picture`` when there is one."""
+        """Show ``bbox``, or ``picture`` instead when there is one."""
         self._bbox = bbox
         self._picture = picture
         self.update()
 
     def set_picture(self, picture: Picture | None) -> None:
-        """Show ``picture`` over the current extent."""
+        """Show ``picture`` instead of the extent."""
         self._picture = picture
         self.update()
 
@@ -391,6 +410,7 @@ class HeroView(QWidget):
         painter = QPainter(self)
         rect = QRectF(self.rect())
         palette = self.palette()
+        self.painted_extent = self._picture is None
         if self._picture is None:
             paint_extent(painter, rect, self._bbox, self._world, palette, min_span=40.0, radius=4.0)
             painter.end()
@@ -410,15 +430,6 @@ class HeroView(QWidget):
             int(rect.center().y() - size.height() / 2),
             image,
         )
-        if self._bbox is not None:
-            inset_width = max(72.0, rect.width() * 0.26)
-            inset = QRectF(
-                rect.right() - inset_width - 8,
-                rect.bottom() - inset_width / 1.5 - 8,
-                inset_width,
-                inset_width / 1.5,
-            )
-            paint_extent(painter, inset, self._bbox, self._world, palette)
         painter.end()
 
 
@@ -448,14 +459,14 @@ class LogoView(QWidget):
 
 
 class CatalogHeader(QWidget):
-    """The open catalog: its extent, title, facts, and logo. A click shows its details."""
+    """The open publisher: its extent, title, facts, and logo. A click shows its details."""
 
     clicked = pyqtSignal()
 
     def __init__(self, world: WorldMap, parent: QWidget | None = None):
         super().__init__(parent)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setToolTip("Show the catalog's details")
+        self.setToolTip("Show the publisher's details")
         layout = QHBoxLayout(self)
         layout.setContentsMargins(_PAD, _PAD, _PAD, _PAD)
         layout.setSpacing(_PAD + 4)

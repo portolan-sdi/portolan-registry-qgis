@@ -5,11 +5,16 @@ from __future__ import annotations
 import pytest
 
 from portolan_registry_qgis.core.hrefs import (
+    BROWSER_URL,
     absolute_href,
     asset_href,
+    browser_url,
     catalog_href,
+    extension_blocked,
     folder_name,
     is_http_url,
+    plain_vsicurl_path,
+    url_extension,
     vsicurl_path,
 )
 
@@ -137,3 +142,89 @@ def test_is_http_url(value, expected):
 )
 def test_vsicurl_path_skips_directory_listing(url, path):
     assert vsicurl_path(url) == path
+
+
+def test_plain_vsicurl_path():
+    url = "https://example.com/a/relief.tif?x=1"
+    assert plain_vsicurl_path(url) == "/vsicurl/https://example.com/a/relief.tif?x=1"
+
+
+@pytest.mark.parametrize(
+    ("url", "setting", "blocked"),
+    [
+        # A QGIS 3.40 session set the value TIF, which blocks GeoParquet.
+        ("https://x.test/a/b.parquet", "TIF", True),
+        ("https://x.test/a/b.tif", "TIF", False),
+        ("https://x.test/a/b.TIF?sig=1", ".tif", False),
+        ("https://x.test/a/b.fgb", ".tif, .fgb", False),
+        ("https://x.test/a/b.fgb", ".tif .geojson", True),
+        ("https://x.test/a/b.fgb", None, False),
+        ("https://x.test/a/b.fgb", "", False),
+    ],
+)
+def test_extension_blocked(url, setting, blocked):
+    assert extension_blocked(url, setting) is blocked
+
+
+def test_url_extension():
+    assert url_extension("https://x.test/a/B.TIF?x=y.z") == "tif"
+    assert url_extension("https://x.test/a/noext") == ""
+
+
+# The expected paths follow toBrowserPath in portolan-browser's
+# src/store/index.js, under the hash routing that browser.portolan-sdi.org uses.
+@pytest.mark.parametrize(
+    ("href", "url"),
+    [
+        (
+            "https://data.example.org/stac/roads/collection.json",
+            "https://browser.portolan-sdi.org/#/external/data.example.org/stac/roads/collection.json",
+        ),
+        # A document not on HTTPS names its scheme before the host.
+        (
+            "http://data.example.org:8080/catalog.json",
+            "https://browser.portolan-sdi.org/#/external/http:/data.example.org:8080/catalog.json",
+        ),
+        # The query string follows the path. The fragment is dropped.
+        (
+            "https://b.test/c/item.json?sig=a%2Fb&e=1#top",
+            "https://browser.portolan-sdi.org/#/external/b.test/c/item.json?sig=a%2Fb&e=1",
+        ),
+        # Percent-encoding in the path stays as it is.
+        (
+            "https://b.test/my%20data/catalog.json",
+            "https://browser.portolan-sdi.org/#/external/b.test/my%20data/catalog.json",
+        ),
+        ("https://b.test", "https://browser.portolan-sdi.org/#/external/b.test/"),
+    ],
+)
+def test_browser_url(href, url):
+    assert browser_url(href) == url
+    assert browser_url(href, BROWSER_URL) == url
+
+
+@pytest.mark.parametrize(
+    "base",
+    [
+        "https://mirror.test/browser",
+        "https://mirror.test/browser/",
+        "https://mirror.test/browser/#/",
+    ],
+)
+def test_browser_url_on_a_mirror(base):
+    assert (
+        browser_url("https://b.test/catalog.json", base)
+        == "https://mirror.test/browser/#/external/b.test/catalog.json"
+    )
+
+
+def test_browser_url_on_a_bare_host():
+    assert browser_url("https://b.test/c.json", "http://localhost:8080") == (
+        "http://localhost:8080/#/external/b.test/c.json"
+    )
+
+
+@pytest.mark.parametrize("href", ["s3://bucket/catalog.json", "./catalog.json", ""])
+def test_browser_url_needs_an_http_url(href):
+    with pytest.raises(ValueError, match="http"):
+        browser_url(href)

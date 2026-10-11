@@ -2,7 +2,7 @@
 
 PMTiles become native vector tile layers through the loopback tile server.
 Each layer carries every collection MapLibre style that draws its archive, as
-a named QGIS style. GeoJSON and FlatGeobuf open through OGR,
+a named QGIS style. GeoJSON, FlatGeobuf, and CSV open through OGR,
 COGs through GDAL, and COPC through the point cloud provider, all over HTTP
 range requests without a download. GeoParquet goes through DuckDB instead, in
 ``parquet_layer``.
@@ -10,40 +10,168 @@ range requests without a download. GeoParquet goes through DuckDB instead, in
 
 from __future__ import annotations
 
+import contextlib
+import csv
 import json
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urljoin, urlsplit
 
+from osgeo import gdal
 from qgis.core import (
+    QgsCoordinateReferenceSystem,
     QgsDataSourceUri,
     QgsMapBoxGlStyleConversionContext,
     QgsMapBoxGlStyleConverter,
     QgsMapLayer,
     QgsMapLayerStyle,
     QgsPointCloudLayer,
+    QgsProviderRegistry,
     QgsRasterLayer,
     QgsVectorLayer,
     QgsVectorTileLayer,
 )
 
 from portolan_registry_qgis.core.diagnose import open_failure
-from portolan_registry_qgis.core.hrefs import vsicurl_path
+from portolan_registry_qgis.core.hrefs import (
+    extension_blocked,
+    plain_vsicurl_path,
+    url_extension,
+    vsicurl_path,
+)
 from portolan_registry_qgis.core.parquet_query import is_flatpak
+from portolan_registry_qgis.qgis_io.network import NetworkError, fetch_range, http_status
 from portolan_registry_qgis.qgis_io.tileserver import Archive, TileServer, open_archive
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
 
     from portolan_registry_qgis.core.stac import Asset, Document
 
 PMTILES_PROPERTY = "portolan/pmtiles_url"
 DEFAULT_STYLE_NAME = "QGIS default style"
 _PMTILES_SCHEME = "pmtiles://"
+# Header names that hold point coordinates in EPSG:4326, in order of
+# preference. The comparison ignores case.
+LONGITUDE_NAMES = ("lon", "lng", "longitude", "x")
+LATITUDE_NAMES = ("lat", "latitude", "y")
+# Many CSVs use x and y for projected coordinates. These names count only
+# when the rows in the header bytes hold longitudes and latitudes.
+_PLANAR_NAMES = frozenset({"x", "y"})
+# The first request for a CSV reads this many bytes, enough for the header.
+CSV_HEADER_BYTES = 16384
+# The separators that GDAL's CSV driver detects in the header line.
+_CSV_SEPARATORS = (",", ";", "\t", "|")
 
 
 class LayerError(RuntimeError):
     """QGIS could not open the asset as a layer."""
+
+
+# GDAL retries HTTP 429, 500, 502, 503, and 504 with these settings. A
+# setting that the user gave in the QGIS options wins.
+_HTTP_RETRY = {"GDAL_HTTP_MAX_RETRY": "3", "GDAL_HTTP_RETRY_DELAY": "1"}
+
+
+_ALLOWED = "CPL_VSIL_CURL_ALLOWED_EXTENSIONS"
+
+
+def gdal_path(url: str) -> str:
+    """Return the GDAL path that reads ``url`` in this QGIS session.
+
+    The path with the ``empty_dir`` option opens faster. GDAL refuses that
+    path when ``CPL_VSIL_CURL_ALLOWED_EXTENSIONS`` is set, as a QGIS 3.40
+    session with the value ``TIF`` showed. The plain path works then.
+    """
+    if gdal.GetConfigOption(_ALLOWED):
+        return plain_vsicurl_path(url)
+    return vsicurl_path(url)
+
+
+def blocked_message(url: str) -> str | None:
+    """Return why the GDAL settings keep the reads of ``url`` from working, or None."""
+    setting = gdal.GetConfigOption(_ALLOWED)
+    if not extension_blocked(url, setting):
+        return None
+    extension = url_extension(url) or "files with no extension"
+    return (
+        f"QGIS could not open {url}. The GDAL setting {_ALLOWED} is {setting!r}, "
+        f"so GDAL reads no {extension} file over HTTP. Remove the setting, or add "
+        f"{extension} to it, in Settings > Options, under System > Environment or GDAL. "
+        "Then restart QGIS."
+    )
+
+
+@contextlib.contextmanager
+def remote_reads(urls: list[str]) -> Iterator[None]:
+    """Open the files at ``urls`` with retries, and without a remembered failure.
+
+    GDAL keeps the result of a failed request for the life of the process.
+    One busy moment on the server then fails every later open of the file
+    until QGIS restarts. The function drops that result for ``urls``. The retry
+    settings apply to the calling thread only.
+    """
+    clear = getattr(gdal, "VSICurlPartialClearCache", None)
+    if clear is not None:
+        for url in urls:
+            clear(gdal_path(url))
+    earlier = {key: gdal.GetThreadLocalConfigOption(key, None) for key in _HTTP_RETRY}
+    for key, value in _HTTP_RETRY.items():
+        if gdal.GetConfigOption(key) is None:
+            gdal.SetThreadLocalConfigOption(key, value)
+    try:
+        yield
+    finally:
+        for key, value in earlier.items():
+            gdal.SetThreadLocalConfigOption(key, value)
+
+
+# GDAL gives this text for a /vsicurl path it cannot read, whatever the
+# reason. A 404, a refused path, and a network block all read the same.
+_GENERIC = "does not exist in the file system"
+
+
+def explain_open_error(url: str, message: str) -> str:
+    """Return a reason that says why GDAL could not read ``url``.
+
+    When GDAL gives only its generic text, the function looks for the cause.
+    It checks the GDAL settings first, then asks for the file through the
+    QGIS network.
+    """
+    if _GENERIC not in message:
+        return message
+    blocked = blocked_message(url)
+    if blocked is not None:
+        return blocked
+    status, error = http_status(url)
+    if status is not None and status >= 400:
+        return f"the server answered HTTP {status}"
+    if status is not None:
+        return (
+            "QGIS reads the file, but GDAL does not. A GDAL network setting, such as a "
+            "proxy or a certificate setting in Settings > Options, may block GDAL"
+        )
+    return error or message
+
+
+def gdal_open_error(path: str) -> str:
+    """Open ``path`` with GDAL and return its error, or "" when it opens.
+
+    The error handler and the last error are local to the thread, so the
+    function does not change what other threads report.
+    """
+    gdal.PushErrorHandler("CPLQuietErrorHandler")
+    try:
+        gdal.ErrorReset()
+        try:
+            dataset = gdal.Open(path)
+        except RuntimeError as error:
+            return str(error)
+        if dataset is not None:
+            return ""
+        return gdal.GetLastErrorMsg() or "GDAL gave no reason"
+    finally:
+        gdal.PopErrorHandler()
 
 
 @dataclass
@@ -332,6 +460,111 @@ def _sprite(
     return cache[root]
 
 
+def coordinate_columns(header: bytes) -> tuple[str, str] | None:
+    """Find the longitude and latitude columns in the first line of a CSV.
+
+    Columns named x and y count only when every complete row in ``header``
+    holds a longitude and a latitude, because x and y are often projected.
+
+    Args:
+        header: The start of the file. The first line names the columns.
+            The complete rows after it test x and y.
+
+    Returns:
+        The exact names of the longitude and latitude columns, or None when
+        the header does not name both.
+    """
+    text = header.decode("utf-8-sig", errors="replace")
+    lines = text.splitlines()
+    if not lines:
+        return None
+    separator = max(_CSV_SEPARATORS, key=lines[0].count)
+    rows = list(csv.reader(lines, delimiter=separator))
+    names = [name.strip() for name in rows[0]]
+    by_folded: dict[str, str] = {}
+    for name in names:
+        by_folded.setdefault(name.casefold(), name)
+    lon = next((by_folded[n] for n in LONGITUDE_NAMES if n in by_folded), None)
+    lat = next((by_folded[n] for n in LATITUDE_NAMES if n in by_folded), None)
+    if lon is None or lat is None:
+        return None
+    if {lon.casefold(), lat.casefold()} & _PLANAR_NAMES:
+        # The last line can stop in the middle of a row.
+        complete = rows[1:-1] if not text.endswith(("\n", "\r")) else rows[1:]
+        if not _degrees(complete, names.index(lon), names.index(lat)):
+            return None
+    return lon, lat
+
+
+def _degrees(rows: list[list[str]], lon: int, lat: int) -> bool:
+    """Return whether ``rows`` hold at least one point and every point is in degrees."""
+    seen = False
+    for row in rows:
+        if len(row) <= max(lon, lat):
+            continue
+        try:
+            x, y = float(row[lon]), float(row[lat])
+        except ValueError:
+            continue
+        if not (-180 <= x <= 180 and -90 <= y <= 90):
+            return False
+        seen = True
+    return seen
+
+
+def csv_header(url: str) -> bytes:
+    """Return the first bytes of a CSV, or nothing when the server cannot send them.
+
+    A range request keeps a large file from downloading in full. A server
+    that ignores ranges gives no header, and the CSV opens as a table.
+    """
+    try:
+        return fetch_range(url, 0, CSV_HEADER_BYTES)
+    except NetworkError:
+        return b""
+
+
+def csv_source(url: str, columns: tuple[str, str] | None) -> str:
+    """Return the OGR source that reads a CSV over HTTP.
+
+    The QGIS delimited text provider reads local files only. Thus the CSV
+    goes through the GDAL CSV driver over ``/vsicurl/``. The ``CSV:`` prefix
+    selects the driver when the URL does not end in ``.csv``. The driver
+    detects the separator and the column types.
+
+    Args:
+        url: The CSV.
+        columns: The longitude and latitude columns, or None for a table
+            with no geometry.
+    """
+    options = ["AUTODETECT_TYPE=YES"]
+    if columns is not None:
+        options += [f"X_POSSIBLE_NAMES={columns[0]}", f"Y_POSSIBLE_NAMES={columns[1]}"]
+    parts = {"path": f"CSV:{gdal_path(url)}", "openOptions": options}
+    return str(QgsProviderRegistry.instance().encodeUri("ogr", parts))
+
+
+def csv_layer(url: str, title: str, header: Callable[[str], bytes] = csv_header) -> QgsVectorLayer:
+    """Open a CSV over HTTP, as points when its header names coordinates.
+
+    A header with longitude and latitude columns gives a point layer in
+    EPSG:4326. Any other CSV opens as a table with no geometry.
+
+    Args:
+        url: The CSV.
+        title: The layer name.
+        header: Returns the first bytes of the file. Call off the main
+            thread when the server is slow, and pass the bytes in.
+    """
+    columns = coordinate_columns(header(url))
+    layer = QgsVectorLayer(csv_source(url, columns), title, "ogr")
+    if columns is not None and layer.isValid():
+        # A CSV has no CRS of its own. STAC gives coordinates as longitude
+        # and latitude.
+        layer.setCrs(QgsCoordinateReferenceSystem("EPSG:4326"))
+    return layer
+
+
 def asset_layer(asset: Asset, name: str | None = None) -> QgsMapLayer:
     """Open a data asset as a layer, read in place over HTTP.
 
@@ -339,18 +572,31 @@ def asset_layer(asset: Asset, name: str | None = None) -> QgsMapLayer:
         LayerError: The asset has no supported format, or QGIS cannot open it.
     """
     title = name or asset.label
-    path = vsicurl_path(asset.href)
+    # QGIS draws on other threads, which keep the user's GDAL settings. A
+    # file that the settings block would open here and then draw nothing.
+    blocked = blocked_message(asset.href) if asset.format != "copc" else None
+    if blocked is not None:
+        raise LayerError(blocked)
+    path = gdal_path(asset.href)
     layer: QgsMapLayer
-    if asset.format in {"geojson", "flatgeobuf"}:
-        layer = QgsVectorLayer(path, title, "ogr")
-    elif asset.format == "cog":
-        layer = QgsRasterLayer(path, title, "gdal")
-    elif asset.format == "copc":
-        layer = QgsPointCloudLayer(asset.href, title, "copc")
-    else:
-        raise LayerError(f"{asset.label} has no format QGIS can open in place")
+    with remote_reads([asset.href]):
+        if asset.format in {"geojson", "flatgeobuf"}:
+            layer = QgsVectorLayer(path, title, "ogr")
+        elif asset.format == "csv":
+            layer = csv_layer(asset.href, title)
+        elif asset.format == "cog":
+            layer = QgsRasterLayer(path, title, "gdal")
+        elif asset.format == "copc":
+            layer = QgsPointCloudLayer(asset.href, title, "copc")
+        else:
+            raise LayerError(f"{asset.label} has no format QGIS can open in place")
     if not layer.isValid():
-        raise LayerError(open_failure(asset.href, layer.error().summary(), is_flatpak()))
+        summary = layer.error().summary()
+        if _GENERIC in summary:
+            raise LayerError(
+                f"QGIS could not open {asset.href}: {explain_open_error(asset.href, summary)}"
+            )
+        raise LayerError(open_failure(asset.href, summary, is_flatpak()))
     return layer
 
 

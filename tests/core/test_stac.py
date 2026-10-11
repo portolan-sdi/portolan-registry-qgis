@@ -14,11 +14,13 @@ from pathlib import Path
 import pytest
 
 from portolan_registry_qgis.core.stac import (
+    Loadable,
     StacError,
     asset_format,
     collection_bbox,
     horizontal_bbox,
     is_image,
+    is_tabular,
     links_of,
     read_document,
 )
@@ -152,6 +154,11 @@ def test_item_bbox_drops_elevation():
         ("https://example.com/a.geojson", "application/vnd.pmtiles", "pmtiles"),
         ("https://example.com/a.fgb", None, "flatgeobuf"),
         ("https://example.com/a.copc.laz", "application/vnd.laszip+copc", "copc"),
+        ("https://example.com/a.csv", None, "csv"),
+        ("https://example.com/a.CSV?raw=1", None, "csv"),
+        ("https://example.com/export", "text/csv; charset=utf-8", "csv"),
+        ("https://example.com/a.csv", "application/vnd.apache.parquet", "parquet"),
+        ("https://example.com/a.csv.zip", None, None),
         # Unresolved object-store URIs are named by no reader.
         ("abfs://us-census/2020/x.parquet", "application/x-parquet", None),
     ],
@@ -243,6 +250,72 @@ def test_assets_resolve_storage_options():
         ("a", "https://acct.blob.core.windows.net/box/a.parquet", "parquet"),
         ("b", "https://x.blob.core.windows.net/box/b.parquet", "parquet"),
     ]
+
+
+# Zoning Descriptions in the Philadelphia catalog: a lookup table that a
+# spatial catalog publishes as plain Parquet.
+_TABLE_COLUMNS = [
+    {"name": "objectid", "type": "int32"},
+    {"name": "new_code", "type": "string"},
+    {"name": "code_description", "type": "string"},
+]
+
+
+@pytest.mark.parametrize(
+    ("columns", "tabular"),
+    [
+        (_TABLE_COLUMNS, True),
+        ([*_TABLE_COLUMNS, {"name": "geometry", "type": "binary"}], False),
+        ([{"name": "id"}, {"name": "geom"}], False),
+        ([{"name": "id"}, {"name": "footprint", "type": "geometry"}], False),
+        ([{"name": "id"}, {"name": "where", "type": "MultiPolygon"}], False),
+        ([{"name": "id"}, {"name": "raw", "type": "WKB"}], False),
+        ([], False),
+        (None, False),
+        ("not a list", False),
+        (["not a dict"], True),
+    ],
+)
+def test_is_tabular(columns, tabular):
+    assert is_tabular(columns) is tabular
+
+
+def test_parquet_without_a_geometry_column_is_tabular():
+    def collection(columns, asset_columns=None):
+        asset = {"href": "data.parquet", "type": "application/vnd.apache.parquet"}
+        if asset_columns is not None:
+            asset["table:columns"] = asset_columns
+        raw = {
+            "type": "Collection",
+            "id": "c",
+            "links": [],
+            "assets": {"data": asset, "csv": {"href": "data.csv"}},
+        }
+        if columns is not None:
+            raw["table:columns"] = columns
+        return read_document(raw, "https://example.com/c/collection.json")
+
+    def flags(document):
+        return {asset.key: asset.tabular for asset in document.assets}
+
+    assert flags(collection(_TABLE_COLUMNS)) == {"data": True, "csv": False}
+    spatial = [*_TABLE_COLUMNS, {"name": "geometry", "type": "binary"}]
+    assert flags(collection(spatial)) == {"data": False, "csv": False}
+    # Without columns, nothing says the file is a table, so it stays GeoParquet.
+    assert flags(collection(None)) == {"data": False, "csv": False}
+    # The asset's own columns win over the collection's.
+    assert flags(collection(spatial, _TABLE_COLUMNS))["data"] is True
+    # An item lists its columns in its properties.
+    item = read_document(
+        {
+            "type": "Feature",
+            "id": "i",
+            "properties": {"table:columns": _TABLE_COLUMNS},
+            "assets": {"data": {"href": "data.parquet"}},
+        },
+        "https://example.com/i.json",
+    )
+    assert flags(item) == {"data": True}
 
 
 def test_asset_label_and_style_detection():
@@ -352,3 +425,58 @@ def test_preferred_href_falls_back_by_format():
     assert _with_assets(assets).preferred_href(parquet=False) == f"{base}d.geojson"
     assert _with_assets({"upstream": assets["upstream"]}).preferred_href() is None
     assert _with_assets({"thumbnail": assets["thumbnail"]}).preferred_href() is None
+
+
+def test_preferred_href_skips_a_collection_mirror():
+    assets = {"mirror": _asset("items.parquet", "collection-mirror"), "t": _asset("t.csv")}
+    assert _with_assets(assets).preferred_href() == "https://example.com/c/t.csv"
+
+
+def test_loadable_lists_the_real_archive_once():
+    href = f"{ANNCSU}/indirizzi/collection.json"
+    document = read_document(load("indirizzi/collection.json"), href)
+    tiles, data = document.loadable()
+    # The visual asset names the archive that the pmtiles link names, so only the link stays.
+    assert tiles == Loadable(
+        f"{ANNCSU}/anncsu-indirizzi.pmtiles",
+        "Tile vettoriali per la mappa",
+        "pmtiles",
+        layers=("addresses",),
+    )
+    assert (data.href, data.title, data.format) == (
+        f"{ANNCSU}/anncsu-indirizzi.parquet",
+        "Indirizzi ANNCSU (GeoParquet)",
+        "parquet",
+    )
+    assert data.asset is document.data_assets[0]
+    assert document.pmtiles_duplicates == {f"{ANNCSU}/anncsu-indirizzi.pmtiles"}
+
+
+def test_loadable_keeps_only_files_the_plugin_adds():
+    base = "https://example.com/c/"
+    assets = {
+        "upstream": _asset("u.csv", "source"),
+        "mirror": _asset("items.parquet", "collection-mirror"),
+        # Philadelphia keeps earlier extracts as archive assets.
+        "old": _asset("data-2026-08-26.parquet", "archive"),
+        "table": {"href": "./t.csv", "type": "text/csv", "title": "Table", "roles": ["data"]},
+        "readme": {"href": "./README.md", "type": "text/markdown", "roles": ["data"]},
+        "style": {"href": "./s.json", "roles": ["style"]},
+        "thumbnail": _asset("t.png", "thumbnail"),
+        "cog": _asset("d.tif"),
+        "archive": _asset("other.pmtiles"),
+    }
+    links = [{"rel": "pmtiles", "href": "./main.pmtiles"}]
+    document = _with_assets(assets, links)
+    loadable = document.loadable()
+    assert [(item.href, item.title, item.format) for item in loadable] == [
+        (f"{base}main.pmtiles", "Vector tiles", "pmtiles"),
+        (f"{base}t.csv", "Table", "csv"),
+        (f"{base}d.tif", "cog", "cog"),
+        (f"{base}other.pmtiles", "archive", "pmtiles"),
+    ]
+    assert loadable[0].asset is None
+    assert loadable[1].asset is not None
+    assert loadable[1].asset.key == "table"
+    assert document.pmtiles_duplicates == frozenset()
+    assert _with_assets({}).loadable() == ()

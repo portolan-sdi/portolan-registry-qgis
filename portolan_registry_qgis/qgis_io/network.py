@@ -8,11 +8,19 @@ main thread, which is where ``run_task`` sends it.
 from __future__ import annotations
 
 import json
+import traceback
 from concurrent.futures import Executor, Future
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from qgis.core import QgsApplication, QgsBlockingNetworkRequest, QgsFeedback, QgsTask
+from qgis.core import (
+    Qgis,
+    QgsApplication,
+    QgsBlockingNetworkRequest,
+    QgsFeedback,
+    QgsMessageLog,
+    QgsTask,
+)
 from qgis.PyQt.QtCore import QRunnable, Qt, QThreadPool, QUrl
 from qgis.PyQt.QtNetwork import QNetworkRequest
 
@@ -47,6 +55,25 @@ def fetch_bytes(url: str, accept: bytes = _ACCEPT) -> bytes:
     if code != QgsBlockingNetworkRequest.ErrorCode.NoError:
         raise NetworkError(f"{url}: {blocking.errorMessage()}")
     return bytes(blocking.reply().content())
+
+
+def http_status(url: str) -> tuple[int | None, str]:
+    """Ask for the first byte of ``url`` and return the HTTP status and any error.
+
+    QGIS sends the request with its own proxy and certificate settings, so
+    the answer can differ from what GDAL gets.
+
+    Returns:
+        The status code, or None when no HTTP answer came, and the error text.
+    """
+    request = QNetworkRequest(QUrl(url))
+    request.setRawHeader(b"Range", b"bytes=0-0")
+    request.setAttribute(QNetworkRequest.Attribute.CacheSaveControlAttribute, False)
+    blocking = QgsBlockingNetworkRequest()
+    code = blocking.get(request, forceRefresh=True)
+    status = blocking.reply().attribute(QNetworkRequest.Attribute.HttpStatusCodeAttribute)
+    error = "" if code == QgsBlockingNetworkRequest.ErrorCode.NoError else blocking.errorMessage()
+    return (int(status) if status else None), error
 
 
 def fetch_range(url: str, offset: int, length: int) -> bytes:
@@ -160,6 +187,11 @@ def fetch_json(url: str) -> object:
         raise ValueError(f"{url} did not return JSON: {error}") from error
 
 
+def report_failure(text: str) -> None:
+    """Write a failure that no message reports to the QGIS message log."""
+    QgsMessageLog.logMessage(text, "Portolan Registry", Qgis.MessageLevel.Critical)
+
+
 def run_task(
     description: str,
     function: Callable[[QgsTask], object],
@@ -184,7 +216,12 @@ def run_task(
         _RUNNING.discard(task)
         if exception is None and result is None and task.isCanceled():
             exception = NetworkError("Cancelled")
-        on_done(None if exception else result, exception)
+        try:
+            on_done(None if exception else result, exception)
+        except Exception:  # noqa: BLE001 - QGIS drops an error that leaves this function
+            # QGIS swallows an exception in a task's finished handler. Then
+            # an action that fails looks like an action that did nothing.
+            report_failure(f"{description} failed after the task ended:\n{traceback.format_exc()}")
 
     flags = QgsTask.Flag.CanCancel
     if hidden:

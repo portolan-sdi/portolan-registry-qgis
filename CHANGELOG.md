@@ -2,15 +2,48 @@
 
 ## Unreleased
 
+- The registry opens in a window instead of a dock. The window keeps its size, its divider, and the open state of its sections between sessions.
+- The window header shows the Portolan mark, a refresh button, and **Open in browser**, which opens the chosen node in the Portolan browser.
+- The details show in four sections that you can close: **About**, **Add to map**, **All files**, and **Details**.
+- The hero shows the thumbnail, or the extent map when there is no thumbnail, not both.
+- The status filter is gone. A catalog that is not valid still shows its status in its row.
+- The details name the publisher, the license, and the total size. They no longer show the STAC type, the ID, or the extent coordinates.
+- **View on map** adds the PMTiles, else a COG. **Load full data** adds the GeoParquet, else the FlatGeobuf, GeoJSON, or CSV. Their tooltips say which to use.
+- **All files** lists only the files QGIS can open, and lists a PMTiles archive once when it is both a link and an asset.
+- A check mark shows on each file that a layer in the project already reads.
+- **Details** is one list of facts: publisher, license, size, documentation, source, and a link to the browser. Each link shows once, named by its host when its title only repeats the row name. **Source** is the `via` page the data came from. The raw STAC document link is gone.
+- **All files** leaves out assets with the `archive` role, such as earlier extracts. The browser lists them.
+- Right-click a publisher to open its catalog in the browser. The QGIS setting `PortolanRegistry/browser_url` points the links at a browser mirror.
+- CSV files open over HTTP, as points when the header names longitude and latitude columns.
+- A Parquet file with no geometry column loads as a table.
+- A Parquet file whose `table:columns` name no geometry column shows as **Parquet**, not **GeoParquet**. Its button reads **Load table**, and the area picker hides.
+- An area picker replaces **Read GeoParquet in the map extent only**. It offers everything, the map extent, a drawn polygon, or the polygons of a layer.
+- A GeoParquet load with a polygon keeps only the features that intersect the polygon. A saved project copies the same area again.
+- A collection whose children are all items shows one **N files** row in the tree.
+- In such a collection, **All files** lists one row for every file of the items, then the COG file of each item, one page at a time.
+- **Add as one layer** adds the COG files of a collection's items in the area as one VRT mosaic. A saved project builds the VRT again.
+- **Download** leaves out the items outside the area.
+- When a new layer lands outside the map, the map moves to it, and the message says so. Before, the layer showed in the Layers panel only.
+- A click that must wait for a running mosaic or download says so. An error after a task ends goes to the message log. Before, both did nothing visible.
+- **All files** starts closed.
+- **Add as one layer** clips the mosaic to the area of interest, so the layer shows only the pixels inside it. A saved project clips it again.
+- Each section holds its own buttons. **Add to map** starts with the area of interest, then **View on map**, **Load full data**, **Add as one layer**, and **Download**, which all read the area. **All files** has **Add selected** and **Download selected**, which act on the selected files, whole. The bottom bar shows only the progress of a running task.
+- **Zoom to** and **Open in Portolan browser ↗** sit next to the name of the open dataset.
+- The area choices read **Area of interest** and **Map extent**.
+- The tooltips of **View on map** and **Load full data** name the format first, such as PMTiles or GeoParquet.
+- COGs open when the GDAL setting `CPL_VSIL_CURL_ALLOWED_EXTENSIONS` is set. GDAL refuses the `/vsicurl?empty_dir=yes` path then, so the plugin uses the plain `/vsicurl/` path. A file that the setting blocks gets a message that names the setting.
+- A COG that failed to open once opens on the next try. GDAL kept a failed request for the life of the QGIS session. COG reads now retry HTTP 429, 500, 502, 503, and 504.
+- When a mosaic leaves a file out, the message log gives GDAL's reason, such as an HTTP status.
+- A mosaic from a stac-geoparquet item index resolves each COG href against its item document, found by the item ID in the collection's item links. Before, the GHSL population tiles resolved against the index file and returned HTTP 404.
+- With a map extent or an area, **Download** saves a GeoParquet file as a GeoPackage of the features in the area.
 - GeoParquet loads through a GeoPackage that DuckDB writes. A million polygons from a local file load in 2 seconds instead of 19, QGIS stays responsive, and memory use drops from 1.9 GB to 380 MB.
 - GeoParquet files with date or timestamp columns load their features. Before, the layer was empty.
 - A GeoParquet load has no feature limit. When it holds more than 1,000,000 features, the panel asks first.
-- Tooltips on **Add to map**, PMTiles, and GeoParquet say which to use: PMTiles to view, GeoParquet to analyze. They show when the collection has PMTiles.
 - A saved project copies its GeoParquet layers again when it opens.
 - On QGIS 3.34, a saved GeoParquet layer opens as unavailable until the plugin copies it again. QGIS 3.34 crashes when a plugin registers a path preprocessor, so the plugin does not register one there.
 - A GeoParquet feature whose geometry type does not fit the layer keeps its attributes, with no geometry. The panel reports the count.
 - A GeoParquet attribute named `geom` loads. Before, the copy dropped it.
-- A collection opens with one asset selected, so **Add to map** works at once. PMTiles come first.
+- A collection opens with one file selected, so **Add selected** works at once. PMTiles come first.
 - PMTiles layers carry each of the collection's MapLibre styles as a named QGIS style. Switch styles from the layer's **Styles** menu.
 - Styles that name their archive as a bare relative path, such as `../tiles.pmtiles`, apply to the tiles. So do styles whose vector source has no `url`.
 - A PMTiles layer opens the archive you selected, not the archive the chosen style reads.

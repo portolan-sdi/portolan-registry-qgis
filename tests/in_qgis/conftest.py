@@ -126,14 +126,129 @@ def _points(path: Path) -> None:
     source = None
 
 
-def _raster(path: Path) -> None:
+def _raster(path: Path, west: float = 11.0, north: float = 45.0, value: int = 120) -> None:
     memory = gdal.GetDriverByName("MEM").Create("", 64, 64, 1, gdal.GDT_Byte)
-    memory.SetGeoTransform((11.0, 0.01, 0, 45.0, 0, -0.01))
+    memory.SetGeoTransform((west, 0.01, 0, north, 0, -0.01))
     srs = osr.SpatialReference()
     srs.ImportFromEPSG(4326)
     memory.SetProjection(srs.ExportToWkt())
-    memory.GetRasterBand(1).Fill(120)
+    memory.GetRasterBand(1).Fill(value)
     gdal.Translate(str(path), memory, format="COG")
+
+
+# Two COG items, 0.64 degrees square, side by side along the parallel 44.
+TILES = {"a": (11.0, 44.64), "b": (12.0, 44.64)}
+
+
+def _tiles(root: Path) -> None:
+    """Write a collection of two COG items and its stac-geoparquet mirror.
+
+    The root catalog does not link the collection, so the tree the window
+    tests read stays the same. Item ``a`` names its COG relative to the
+    mirror. Item ``b`` names it relative to its own ``self`` link, which is
+    relative to the mirror.
+    """
+    import duckdb
+
+    folder = root / "tiles"
+    rows = []
+    for index, (key, (west, north)) in enumerate(TILES.items()):
+        (folder / key).mkdir(parents=True)
+        _raster(folder / key / f"{key}.tif", west, north, 50 + index * 100)
+        bbox = [west, north - 0.64, west + 0.64, north]
+        item = {
+            "type": "Feature",
+            "stac_version": "1.1.0",
+            "id": key,
+            "bbox": bbox,
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [
+                    [
+                        [bbox[0], bbox[1]],
+                        [bbox[2], bbox[1]],
+                        [bbox[2], bbox[3]],
+                        [bbox[0], bbox[3]],
+                        [bbox[0], bbox[1]],
+                    ]
+                ],
+            },
+            "properties": {"datetime": "2026-01-01T00:00:00Z"},
+            "links": [{"rel": "collection", "href": "../collection.json"}],
+            "assets": {
+                "thumbnail": {
+                    "href": "../../logo.png",
+                    "type": "image/png",
+                    "roles": ["thumbnail"],
+                },
+                "image": {
+                    "href": f"./{key}.tif",
+                    "type": "image/tiff; application=geotiff; profile=cloud-optimized",
+                    "roles": ["data"],
+                },
+            },
+        }
+        (folder / key / f"{key}.json").write_text(json.dumps(item))
+        # An asset href is relative to its item document. Item a has no self
+        # link, as in the GHSL mirror, so its document comes from the
+        # collection's item link with the same ID.
+        href, links = (f"./{key}.tif", "[]") if key == "a" else (f"./{key}.tif", None)
+        if links is None:
+            links = f"[{{'rel': 'self', 'href': './{key}/{key}.json'}}]"
+        rows.append(
+            f"SELECT '{key}' AS id, "
+            f"{{'xmin': {bbox[0]}, 'ymin': {bbox[1]}, 'xmax': {bbox[2]}, 'ymax': {bbox[3]}}} AS bbox, "
+            f"ST_MakeEnvelope({bbox[0]}, {bbox[1]}, {bbox[2]}, {bbox[3]}) AS geometry, "
+            f"{{'thumbnail': {{'href': '../logo.png', 'type': 'image/png', 'roles': ['thumbnail']}}, "
+            f"'image': {{'href': '{href}', 'type': 'image/tiff; application=geotiff', "
+            f"'roles': ['data']}}}} AS assets, "
+            f"{links}::STRUCT(rel VARCHAR, href VARCHAR)[] AS links"
+        )
+    con = duckdb.connect()
+    con.execute("INSTALL spatial; LOAD spatial;")
+    con.execute(
+        f"COPY ({' UNION ALL '.join(rows)}) TO '{folder / 'items.parquet'}' (FORMAT parquet)"
+    )
+    con.close()
+    collection = {
+        "type": "Collection",
+        "stac_version": "1.1.0",
+        "id": "tiles",
+        "title": "Test tiles",
+        "description": "Two COG items.",
+        "license": "CC-BY-4.0",
+        "extent": {
+            "spatial": {"bbox": [[11.0, 44.0, 12.64, 44.64]]},
+            "temporal": {"interval": [[None, None]]},
+        },
+        "links": [{"rel": "item", "href": f"./{key}/{key}.json"} for key in TILES],
+        "assets": {
+            "mirror": {
+                "href": "./items.parquet",
+                "type": "application/vnd.apache.parquet",
+                "roles": ["collection-mirror"],
+            }
+        },
+    }
+    (folder / "collection.json").write_text(json.dumps(collection))
+
+
+def _tables(root: Path) -> None:
+    """Write CSV files with and without coordinates, and Parquet with no geometry."""
+    import duckdb
+
+    folder = root / "table"
+    folder.mkdir()
+    lines = ["id,Name,Longitude,LAT"]
+    lines += [f"{i},p{i},{11 + i * 0.01},{44 + i * 0.005}" for i in range(20)]
+    (folder / "points.csv").write_text("\n".join(lines) + "\n")
+    (folder / "plain.csv").write_text("id;name;score\n1;a;1.5\n2;b;2.5\n3;c;3.5\n")
+    con = duckdb.connect()
+    con.execute(
+        f"COPY (SELECT i AS id, 'r' || i AS name, i * 2.5 AS score FROM range(30) t(i)) "
+        f"TO '{folder / 'plain.parquet'}' (FORMAT parquet)"
+    )
+    con.close()
 
 
 def _parquet(path: Path) -> None:
@@ -206,6 +321,8 @@ def _build(root: Path) -> dict:
     shutil.copy(root / "points.pmtiles", root / "other.pmtiles")
     _raster(collection / "relief.tif")
     _parquet(root / "points.parquet")
+    _tiles(root)
+    _tables(root)
     _images(root, collection)
     style = {
         "version": 8,
@@ -343,6 +460,29 @@ def catalog(tmp_path_factory):
         ],
     }
     (root / "registry.json").write_text(json.dumps(registry))
+    # A second registry lists a catalog of the tiles collection alone, for
+    # the mosaic tests. The first registry stays as the other tests expect.
+    (root / "tiles-catalog.json").write_text(
+        json.dumps(
+            {
+                "type": "Catalog",
+                "stac_version": "1.1.0",
+                "id": "tiles-catalog",
+                "title": "Tiles catalog",
+                "description": "A catalog of COG items.",
+                "links": [
+                    {"rel": "child", "href": "./tiles/collection.json", "title": "Test tiles"}
+                ],
+            }
+        )
+    )
+    tiles_entry = {
+        **registry["links"][0],
+        "href": f"{base}/tiles-catalog.json",
+        "title": "Tiles catalog",
+        "portolan_registry:id": "tiles",
+    }
+    (root / "tiles-registry.json").write_text(json.dumps({**registry, "links": [tiles_entry]}))
     yield {
         "url": f"{base}/catalog.json",
         "base": base,

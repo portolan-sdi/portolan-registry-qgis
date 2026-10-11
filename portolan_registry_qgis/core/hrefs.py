@@ -88,8 +88,40 @@ def vsicurl_path(url: str) -> str:
     an external ``.ovr`` or ``.aux.xml`` opens without it.
 
     GDAL needs the URL percent-encoded in this form, query string included.
+
+    GDAL refuses this form when the setting
+    ``CPL_VSIL_CURL_ALLOWED_EXTENSIONS`` is set, whatever it lists. Use
+    ``plain_vsicurl_path`` then.
     """
     return f"/vsicurl?empty_dir=yes&url={quote(url, safe='')}"
+
+
+def plain_vsicurl_path(url: str) -> str:
+    """Return the GDAL path that reads ``url`` with no ``/vsicurl`` options."""
+    return f"/vsicurl/{url}"
+
+
+def url_extension(url: str) -> str:
+    """Return the extension of the file a URL names, in lower case, without the dot."""
+    name = urlsplit(url).path.rsplit("/", 1)[-1]
+    return name.rsplit(".", 1)[-1].lower() if "." in name else ""
+
+
+def allowed_extensions(setting: str) -> tuple[str, ...]:
+    """Return the entries of ``CPL_VSIL_CURL_ALLOWED_EXTENSIONS``.
+
+    GDAL splits the value at commas and spaces, and compares each entry with
+    the end of the file name, ignoring case.
+    """
+    return tuple(entry for entry in setting.replace(",", " ").split() if entry)
+
+
+def extension_blocked(url: str, setting: str | None) -> bool:
+    """Return whether ``CPL_VSIL_CURL_ALLOWED_EXTENSIONS`` keeps GDAL from reading ``url``."""
+    if not setting:
+        return False
+    name = urlsplit(url).path.rsplit("/", 1)[-1].lower()
+    return not any(name.endswith(entry.lower()) for entry in allowed_extensions(setting))
 
 
 def folder_name(href: str) -> str:
@@ -107,3 +139,38 @@ def folder_name(href: str) -> str:
     else:
         name = last
     return unquote(name)
+
+
+BROWSER_URL = "https://browser.portolan-sdi.org/"
+
+
+def browser_url(stac_href: str, base: str = BROWSER_URL) -> str:
+    """Return the Portolan browser page that shows the STAC document at ``stac_href``.
+
+    The browser is a STAC Browser build with hash routing. Its
+    ``toBrowserPath`` getter names an external document
+    ``/external/<host>/<path>``. A ``http:`` segment comes before the host
+    when the document is not on HTTPS. The query string follows the path,
+    and the browser adds it to its request for the document. The fragment
+    is dropped.
+
+    Args:
+        stac_href: The http(s) URL of a catalog, collection, or item.
+        base: The browser's root URL. A mirror can replace the default.
+
+    Raises:
+        ValueError: ``stac_href`` is not an http(s) URL.
+    """
+    if not is_http_url(stac_href):
+        raise ValueError(f"Not an http(s) URL: {stac_href}")
+    target = urlsplit(stac_href)
+    parts = ["/external"]
+    if target.scheme != "https":
+        parts.append(f"{target.scheme}:")
+    parts += [target.netloc, target.path.removeprefix("/")]
+    route = "/".join(parts)
+    if target.query:
+        route += f"?{target.query}"
+    root = urlsplit(base)
+    path = root.path if root.path.endswith("/") else root.path + "/"
+    return urlunsplit((root.scheme, root.netloc, path, root.query, route))

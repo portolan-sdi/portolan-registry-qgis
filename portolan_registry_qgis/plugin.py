@@ -1,4 +1,4 @@
-"""The plugin object QGIS loads: menu entry, toolbar button, and dock."""
+"""The plugin object QGIS loads: menu entry, toolbar button, and window."""
 
 from __future__ import annotations
 
@@ -11,37 +11,39 @@ from qgis.core import (
     QgsMessageLog,
     QgsPathResolver,
     QgsProject,
+    QgsRasterLayer,
     QgsSettings,
     QgsVectorLayer,
     QgsVectorTileLayer,
 )
 from qgis.PyQt import sip
-from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction
 
 from portolan_registry_qgis.core import parquet_query
-from portolan_registry_qgis.qgis_io import parquet_layer
-from portolan_registry_qgis.qgis_io.layers import PMTILES_PROPERTY, vector_tile_layer
+from portolan_registry_qgis.qgis_io import mosaic, parquet_layer
+from portolan_registry_qgis.qgis_io.layers import PMTILES_PROPERTY, LayerError, vector_tile_layer
 from portolan_registry_qgis.qgis_io.network import run_task
 from portolan_registry_qgis.qgis_io.tileserver import Archive, TileServer, open_archive
 
 MENU = "&Portolan Registry"
 # A QGIS setting, so a user can point the plugin at a registry mirror.
 REGISTRY_URL_SETTING = "PortolanRegistry/registry_url"
+# A QGIS setting, so a user can point the browser links at a browser mirror.
+BROWSER_URL_SETTING = "PortolanRegistry/browser_url"
 _ICON = Path(__file__).parent / "icon.svg"
 # The first QGIS whose QgsPathResolver.setPathPreprocessor binding is safe.
 PATH_PREPROCESSOR_VERSION = 33600
 
 
 class PortolanRegistryPlugin:
-    """Adds the Portolan Registry dock to QGIS."""
+    """Adds the Portolan Registry window to QGIS."""
 
     def __init__(self, iface: Any):
         self.iface = iface
         self.server = TileServer()
         self.action: QAction | None = None
-        self.dock: Any = None
+        self.window: Any = None
         self._preprocessor: str | None = None
         self._warned_save = False
 
@@ -80,11 +82,12 @@ class PortolanRegistryPlugin:
         if self._preprocessor is not None:
             QgsPathResolver.removePathPreprocessor(self._preprocessor)
             self._preprocessor = None
-        if self.dock is not None:
-            self.dock.disconnect_canvas()
-            self.iface.removeDockWidget(self.dock)
-            self.dock.deleteLater()
-            self.dock = None
+        if self.window is not None:
+            self.window.disconnect_canvas()
+            self.window.visibility_changed.disconnect(self._window_visibility)
+            self.window.close()
+            self.window.deleteLater()
+            self.window = None
         if self.action is not None:
             self.iface.removePluginWebMenu(MENU, self.action)
             self.iface.removeWebToolBarIcon(self.action)
@@ -116,31 +119,42 @@ class PortolanRegistryPlugin:
         )
 
     def _toggle(self, visible: bool) -> None:
-        if self.dock is None:
+        if self.window is None:
+            from portolan_registry_qgis.core.hrefs import BROWSER_URL
             from portolan_registry_qgis.core.registry import REGISTRY_URL
-            from portolan_registry_qgis.gui.dock import RegistryDock
+            from portolan_registry_qgis.gui.window import RegistryWindow
 
-            url = QgsSettings().value(REGISTRY_URL_SETTING, REGISTRY_URL, type=str)
-            self.dock = RegistryDock(self.iface, self.server, url or REGISTRY_URL)
-            self.dock.visibilityChanged.connect(self._dock_visibility)
-            self.iface.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.dock)
-        self.dock.setVisible(visible)
+            settings = QgsSettings()
+            url = settings.value(REGISTRY_URL_SETTING, REGISTRY_URL, type=str)
+            browser = settings.value(BROWSER_URL_SETTING, BROWSER_URL, type=str)
+            self.window = RegistryWindow(
+                self.iface, self.server, url or REGISTRY_URL, browser or BROWSER_URL
+            )
+            self.window.visibility_changed.connect(self._window_visibility)
+        self.window.setVisible(visible)
+        if visible:
+            self.window.raise_()
+            self.window.activateWindow()
 
-    def _dock_visibility(self, visible: bool) -> None:
+    def _window_visibility(self, visible: bool) -> None:
         if self.action is not None and self.action.isChecked() != visible:
             self.action.setChecked(visible)
 
     def _reconnect(self, layers: list[Any]) -> None:
-        """Reconnect the PMTiles and GeoParquet layers of a saved project.
+        """Reconnect the PMTiles, GeoParquet, and mosaic layers of a saved project.
 
         The tile server picks a new port each session, so the URL a project
         saved no longer answers. The layer keeps the archive URL in a custom
         property, which is enough to register it again. A GeoParquet layer
-        keeps its URL and box, which is enough to copy it again.
+        keeps its URL, box, and area, which is enough to copy it again. A
+        mosaic keeps the URLs of its COG files, which is enough to write its
+        VRT again.
         """
         for layer in layers:
             if parquet_layer.needs_restore(layer):
                 self._restore(layer)
+            if mosaic.needs_rebuild(layer):
+                self._rebuild(layer)
             if not isinstance(layer, QgsVectorTileLayer):
                 continue
             url = layer.customProperty(PMTILES_PROPERTY)
@@ -164,8 +178,7 @@ class PortolanRegistryPlugin:
         run_task(f"Reopen {url}", lambda _task: open_archive(url), done)
 
     def _restore(self, layer: QgsVectorLayer) -> None:
-        url = str(layer.customProperty(parquet_layer.SOURCE_PROPERTY))
-        bbox = str(layer.customProperty(parquet_layer.BBOX_PROPERTY) or "")
+        url, bbox, area = parquet_layer.saved_copy(layer)
         ok, version = parquet_query.duckdb_status()
         if not ok:
             _log(f"Could not copy {url} again: DuckDB {version or 'is not installed'}.")
@@ -173,7 +186,7 @@ class PortolanRegistryPlugin:
         extension_dir = parquet_layer.extension_directory()
 
         def copy(task: Any) -> parquet_layer.Prepared:
-            return parquet_layer.restore(url, bbox, extension_dir, task.isCanceled)
+            return parquet_layer.restore(url, bbox, extension_dir, task.isCanceled, area)
 
         def done(result: object, error: BaseException | None) -> None:
             if not isinstance(result, parquet_layer.Prepared):
@@ -188,6 +201,32 @@ class PortolanRegistryPlugin:
                 _log(str(failure))
 
         run_task(f"Copy {url} again with DuckDB", copy, done)
+
+    def _rebuild(self, layer: QgsRasterLayer) -> None:
+        """Write a saved mosaic's VRT again, then point the layer at it.
+
+        GDAL opens each COG to write the VRT, so the write runs in a task.
+        """
+        hrefs = mosaic.sources(layer)
+        clip = mosaic.clip_of(layer)
+        name = layer.name()
+
+        def write(task: Any) -> Path:
+            return mosaic.write_vrt(hrefs, task.isCanceled, clip)
+
+        def done(result: object, error: BaseException | None) -> None:
+            if not isinstance(result, Path):
+                _log(f"Could not build the mosaic {name} again: {error}")
+                return
+            if sip.isdeleted(layer):
+                parquet_layer.discard_path(result)
+                return
+            try:
+                mosaic.reopen(layer, result)
+            except LayerError as failure:
+                _log(str(failure))
+
+        run_task(f"Build the mosaic {name} again", write, done)
 
 
 def _log(text: str) -> None:

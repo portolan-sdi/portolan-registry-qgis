@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from portolan_registry_qgis.core.download import PlannedFile, local_path, plan, split_collisions
+from portolan_registry_qgis.core.scope import Area, Everything, MapView
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "anncsu"
 ROOT = "https://pub-1e760dc850cb4a5aa5f8afb77713f8cd.r2.dev/catalog.json"
@@ -97,6 +98,49 @@ def test_plan_skips_cycles():
     }
     result = plan(fake_fetch(documents), a)
     assert [f.path for f in result.files] == ["catalog.json", "b/catalog.json"]
+
+
+def item_collection():
+    """A collection of three items: west, east, and one with no bbox."""
+    root = "https://x.test/c/collection.json"
+    documents = {
+        root: {
+            "type": "Collection",
+            "id": "c",
+            "links": [{"rel": "item", "href": f"./{key}.json"} for key in ("w", "e", "n")],
+        }
+    }
+    boxes = {"w": [0, 0, 1, 1], "e": [10, 0, 11, 1], "n": None}
+    for key, bbox in boxes.items():
+        item = {
+            "type": "Feature",
+            "id": key,
+            "links": [],
+            "assets": {"data": {"href": f"./{key}.tif", "roles": ["data"]}},
+        }
+        if bbox is not None:
+            item["bbox"] = bbox
+        documents[f"https://x.test/c/{key}.json"] = item
+    return root, documents
+
+
+def test_plan_keeps_the_items_in_the_scope():
+    root, documents = item_collection()
+    every = plan(fake_fetch(documents), root, scope=Everything())
+    assert len(every.files) == 7
+    assert every.outside == 0
+    west = plan(fake_fetch(documents), root, scope=MapView((-1, -1, 2, 2)))
+    # The collection stays. The item with no bbox stays, because the test
+    # cannot rule it out.
+    assert [f.path for f in west.files] == ["collection.json", "w.json", "w.tif", "n.json", "n.tif"]
+    assert west.outside == 1
+    east = Area("POLYGON((10 0, 12 0, 12 2, 10 0))", (10, 0, 12, 2))
+    assert [f.path for f in plan(fake_fetch(documents), root, scope=east).files][1:3] == [
+        "e.json",
+        "e.tif",
+    ]
+    # Without a scope, the plan keeps every item, as before.
+    assert plan(fake_fetch(documents), root).outside == 0
 
 
 def fan_out(count):

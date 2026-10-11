@@ -1,4 +1,4 @@
-"""The plugin object QGIS loads: menu entry, toolbar button, and dock."""
+"""The plugin object QGIS loads: menu entry, toolbar button, and window."""
 
 from __future__ import annotations
 
@@ -16,7 +16,6 @@ from qgis.core import (
     QgsVectorTileLayer,
 )
 from qgis.PyQt import sip
-from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction
 
@@ -35,13 +34,13 @@ PATH_PREPROCESSOR_VERSION = 33600
 
 
 class PortolanRegistryPlugin:
-    """Adds the Portolan Registry dock to QGIS."""
+    """Adds the Portolan Registry window to QGIS."""
 
     def __init__(self, iface: Any):
         self.iface = iface
         self.server = TileServer()
         self.action: QAction | None = None
-        self.dock: Any = None
+        self.window: Any = None
         self._preprocessor: str | None = None
         self._warned_save = False
 
@@ -80,11 +79,12 @@ class PortolanRegistryPlugin:
         if self._preprocessor is not None:
             QgsPathResolver.removePathPreprocessor(self._preprocessor)
             self._preprocessor = None
-        if self.dock is not None:
-            self.dock.disconnect_canvas()
-            self.iface.removeDockWidget(self.dock)
-            self.dock.deleteLater()
-            self.dock = None
+        if self.window is not None:
+            self.window.disconnect_canvas()
+            self.window.visibility_changed.disconnect(self._window_visibility)
+            self.window.close()
+            self.window.deleteLater()
+            self.window = None
         if self.action is not None:
             self.iface.removePluginWebMenu(MENU, self.action)
             self.iface.removeWebToolBarIcon(self.action)
@@ -116,17 +116,19 @@ class PortolanRegistryPlugin:
         )
 
     def _toggle(self, visible: bool) -> None:
-        if self.dock is None:
+        if self.window is None:
             from portolan_registry_qgis.core.registry import REGISTRY_URL
-            from portolan_registry_qgis.gui.dock import RegistryDock
+            from portolan_registry_qgis.gui.window import RegistryWindow
 
             url = QgsSettings().value(REGISTRY_URL_SETTING, REGISTRY_URL, type=str)
-            self.dock = RegistryDock(self.iface, self.server, url or REGISTRY_URL)
-            self.dock.visibilityChanged.connect(self._dock_visibility)
-            self.iface.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.dock)
-        self.dock.setVisible(visible)
+            self.window = RegistryWindow(self.iface, self.server, url or REGISTRY_URL)
+            self.window.visibility_changed.connect(self._window_visibility)
+        self.window.setVisible(visible)
+        if visible:
+            self.window.raise_()
+            self.window.activateWindow()
 
-    def _dock_visibility(self, visible: bool) -> None:
+    def _window_visibility(self, visible: bool) -> None:
         if self.action is not None and self.action.isChecked() != visible:
             self.action.setChecked(visible)
 

@@ -706,7 +706,7 @@ def test_cancel_frees_every_slot_once(catalog, tmp_path):
 
 
 def test_plan_reads_the_catalog_from_a_task(catalog):
-    # The dock plans inside a QgsTask, and the walk reads from its own
+    # The window plans inside a QgsTask, and the walk reads from its own
     # threads. Qt timers, which QGIS network requests use, only work on a
     # QThread. A plain Python thread makes Qt print a warning per thread.
     messages = []

@@ -1,6 +1,6 @@
-"""The Portolan Registry dock panel.
+"""The Portolan Registry window.
 
-The panel has two pages. The first lists the registry's catalogs, each with
+The window has two pages. The first lists the registry's catalogs, each with
 a map of its extent and its logo. A click opens the second page, which shows
 the catalog's tree and the chosen node's picture, details, and assets, with
 the actions that add them to the map or download them.
@@ -22,13 +22,13 @@ from qgis.core import (
     QgsProject,
     QgsRectangle,
 )
-from qgis.PyQt.QtCore import QSize, Qt
+from qgis.PyQt.QtCore import QSize, Qt, pyqtSignal
 from qgis.PyQt.QtGui import QBrush, QColor, QIcon, QImage, QPalette
 from qgis.PyQt.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QComboBox,
-    QDockWidget,
+    QDialog,
     QFileDialog,
     QFrame,
     QHBoxLayout,
@@ -119,12 +119,21 @@ def _heading(text: str) -> QLabel:
     return label
 
 
-class RegistryDock(QDockWidget):
-    """Browse the Portolan registry, add its data to the map, and download it."""
+class RegistryWindow(QDialog):
+    """Browse the Portolan registry, add its data to the map, and download it.
+
+    The window is not modal, so the user can pan the map while it is open.
+    """
+
+    # Emits True when the window shows and False when it hides.
+    visibility_changed = pyqtSignal(bool)
 
     def __init__(self, iface: Any, server: TileServer, registry_url: str = registry.REGISTRY_URL):
-        super().__init__("Portolan Registry")
-        self.setObjectName("PortolanRegistryDock")
+        super().__init__(iface.mainWindow())
+        self.setWindowTitle("Portolan Registry")
+        self.setObjectName("PortolanRegistryWindow")
+        self.setModal(False)
+        self.resize(1000, 700)
         self._iface = iface
         self._server = server
         self._registry_url = registry_url
@@ -145,7 +154,9 @@ class RegistryDock(QDockWidget):
         self.pages = QStackedWidget()
         self.pages.addWidget(self._registry_page())
         self.pages.addWidget(self._catalog_page())
-        self.setWidget(self.pages)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.pages)
         self._connect()
         self._sync_buttons()
 
@@ -365,8 +376,18 @@ class RegistryDock(QDockWidget):
         self.download_all.triggered.connect(self._download_all)
         self.cancel.clicked.connect(self._cancel_download)
 
+    def showEvent(self, event: Any) -> None:
+        """Report that the window shows."""
+        super().showEvent(event)
+        self.visibility_changed.emit(True)
+
+    def hideEvent(self, event: Any) -> None:
+        """Report that the window hides."""
+        super().hideEvent(event)
+        self.visibility_changed.emit(False)
+
     def disconnect_canvas(self) -> None:
-        """Stop following the map canvas. Call before the dock is deleted."""
+        """Stop following the map canvas. Call before the window is deleted."""
         with contextlib.suppress(TypeError):
             self._iface.mapCanvas().extentsChanged.disconnect(self._extent_changed)
 

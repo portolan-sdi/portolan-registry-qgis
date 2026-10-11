@@ -169,6 +169,7 @@ def estimate(
     plan: ReadPlan,
     bbox: Bbox | None = None,
     cancelled: Callable[[], bool] | None = None,
+    area: str | None = None,
 ) -> int | None:
     """Return about how many features a copy of ``url`` in ``bbox`` holds.
 
@@ -179,6 +180,8 @@ def estimate(
         The estimate, or None when the file has no covering column to count
         a box with cheaply.
     """
+    if area is not None:
+        raise NotImplementedError("Stage 1 core stream")
     query = build_estimate(plan, bbox)
     if query is None:
         return None
@@ -221,6 +224,7 @@ def write_gpkg(
     bbox: Bbox | None = None,
     srs: str | None = None,
     cancelled: Callable[[], bool] | None = None,
+    area: str | None = None,
 ) -> Written:
     """Copy the features of ``url`` into a new GeoPackage at ``path``.
 
@@ -237,7 +241,12 @@ def write_gpkg(
         srs: The CRS to record in the GeoPackage.
         cancelled: Polled while the queries run. When it returns True, the
             running query stops and raises ``duckdb.InterruptException``.
+        area: Keep only features that intersect this Polygon or
+            MultiPolygon WKT, in the file's CRS. ``bbox`` must be its
+            envelope, so the covering column skips row groups first.
     """
+    if area is not None:
+        raise NotImplementedError("Stage 1 core stream")
     with _cursor(con, cancelled) as cursor:
         layer_type = plan.geometry_type
         if layer_type == "Unknown":

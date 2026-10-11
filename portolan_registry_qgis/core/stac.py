@@ -18,7 +18,7 @@ from portolan_registry_qgis.core.hrefs import absolute_href, asset_href, folder_
 
 Bbox = tuple[float, float, float, float]
 NodeKind = Literal["catalog", "collection", "item"]
-AssetFormat = Literal["pmtiles", "geojson", "cog", "parquet", "flatgeobuf", "copc"]
+AssetFormat = Literal["pmtiles", "geojson", "cog", "parquet", "flatgeobuf", "copc", "csv"]
 
 _COLLECTION_HREF = re.compile(r"/collection\.json($|[?#])", re.IGNORECASE)
 _IMAGE_HREF = re.compile(r"\.(png|jpe?g|webp|gif|svg)($|[?#])", re.IGNORECASE)
@@ -103,6 +103,21 @@ class PmtilesLink:
 
 
 @dataclass(frozen=True)
+class Loadable:
+    """A file the plugin can add to the map.
+
+    A ``rel: pmtiles`` link has no asset. A data asset keeps its ``Asset``,
+    for its size, checksum, and roles.
+    """
+
+    href: str
+    title: str
+    format: AssetFormat
+    asset: Asset | None = None
+    layers: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class Document:
     """What a catalog, collection, or item document holds."""
 
@@ -143,6 +158,16 @@ class Document:
             for asset in self.assets
             if not asset.is_style and not skip.intersection(asset.roles)
         )
+
+    def loadable(self) -> tuple[Loadable, ...]:
+        """Return the files the plugin can add, with no duplicates.
+
+        The ``rel: pmtiles`` links come first. The data assets with a known
+        format follow, in document order. An asset whose href matches a
+        PMTiles link, and an asset with the ``source`` or
+        ``collection-mirror`` role, is left out.
+        """
+        raise NotImplementedError("Stage 1 core stream")
 
     def preferred_href(self, *, parquet: bool = True) -> str | None:
         """Return the href of the asset to add when the user picks nothing else.

@@ -107,3 +107,16 @@ def folder_name(href: str) -> str:
     else:
         name = last
     return unquote(name)
+
+
+BROWSER_URL = "https://browser.portolan-sdi.org/"
+
+
+def browser_url(stac_href: str, base: str = BROWSER_URL) -> str:
+    """Return the Portolan browser page that shows the STAC document at ``stac_href``.
+
+    Args:
+        stac_href: The http(s) URL of a catalog, collection, or item.
+        base: The browser's root URL. A mirror can replace the default.
+    """
+    raise NotImplementedError("Stage 1 core stream")

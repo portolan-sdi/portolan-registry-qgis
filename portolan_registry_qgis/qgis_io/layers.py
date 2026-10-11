@@ -48,6 +48,9 @@ _PMTILES_SCHEME = "pmtiles://"
 # preference. The comparison ignores case.
 LONGITUDE_NAMES = ("lon", "lng", "longitude", "x")
 LATITUDE_NAMES = ("lat", "latitude", "y")
+# Many CSVs use x and y for projected coordinates. These names count only
+# when the rows in the header bytes hold longitudes and latitudes.
+_PLANAR_NAMES = frozenset({"x", "y"})
 # The first request for a CSV reads this many bytes, enough for the header.
 CSV_HEADER_BYTES = 16384
 # The separators that GDAL's CSV driver detects in the header line.
@@ -347,18 +350,24 @@ def _sprite(
 def coordinate_columns(header: bytes) -> tuple[str, str] | None:
     """Find the longitude and latitude columns in the first line of a CSV.
 
+    Columns named x and y count only when every complete row in ``header``
+    holds a longitude and a latitude, because x and y are often projected.
+
     Args:
-        header: The start of the file. Only the first line is read.
+        header: The start of the file. The first line names the columns.
+            The complete rows after it test x and y.
 
     Returns:
         The exact names of the longitude and latitude columns, or None when
         the header does not name both.
     """
-    lines = header.decode("utf-8-sig", errors="replace").splitlines()[:1]
+    text = header.decode("utf-8-sig", errors="replace")
+    lines = text.splitlines()
     if not lines:
         return None
     separator = max(_CSV_SEPARATORS, key=lines[0].count)
-    names = [name.strip() for name in next(csv.reader(lines, delimiter=separator))]
+    rows = list(csv.reader(lines, delimiter=separator))
+    names = [name.strip() for name in rows[0]]
     by_folded: dict[str, str] = {}
     for name in names:
         by_folded.setdefault(name.casefold(), name)
@@ -366,7 +375,28 @@ def coordinate_columns(header: bytes) -> tuple[str, str] | None:
     lat = next((by_folded[n] for n in LATITUDE_NAMES if n in by_folded), None)
     if lon is None or lat is None:
         return None
+    if {lon.casefold(), lat.casefold()} & _PLANAR_NAMES:
+        # The last line can stop in the middle of a row.
+        complete = rows[1:-1] if not text.endswith(("\n", "\r")) else rows[1:]
+        if not _degrees(complete, names.index(lon), names.index(lat)):
+            return None
     return lon, lat
+
+
+def _degrees(rows: list[list[str]], lon: int, lat: int) -> bool:
+    """Return whether ``rows`` hold at least one point and every point is in degrees."""
+    seen = False
+    for row in rows:
+        if len(row) <= max(lon, lat):
+            continue
+        try:
+            x, y = float(row[lon]), float(row[lat])
+        except ValueError:
+            continue
+        if not (-180 <= x <= 180 and -90 <= y <= 90):
+            return False
+        seen = True
+    return seen
 
 
 def csv_header(url: str) -> bytes:

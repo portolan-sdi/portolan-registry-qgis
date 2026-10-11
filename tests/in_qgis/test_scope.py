@@ -222,6 +222,11 @@ def test_another_map_tool_cancels_the_drawing(picker, iface, pan):
     assert not picker.drawing()
     assert picker.choice() == EVERYTHING
     assert iface.canvas.mapTool() is other
+    # The picker sets no tool of its own during the canvas's tool change.
+    # Before, it set the pan tool again inside that change, and the pan tool
+    # stayed active next to the new tool.
+    assert not pan.isActive()
+    assert other.isActive()
     iface.canvas.unsetMapTool(other)
 
 
@@ -284,6 +289,82 @@ def test_from_a_layer(picker, iface):
     layer.selectByIds([first])
     assert len(picker.events) == count + 1
     assert picker.scope().bbox == pytest.approx((11, 44, 12, 45))
+
+
+def test_the_layer_union_is_kept_until_the_layer_changes(picker, monkeypatch):
+    layer = _squares()
+    QgsProject.instance().addMapLayer(layer)
+    real = scope_module.layer_area
+    calls = []
+
+    def counted(*args):
+        calls.append(args)
+        return real(*args)
+
+    monkeypatch.setattr(scope_module, "layer_area", counted)
+    picker.choose(FROM_LAYER)
+    picker._layers.setLayer(layer)
+    # The window asks for the scope on each button update. The union reads
+    # every feature, so it runs once.
+    for _ in range(5):
+        assert picker.problem() is None
+        picker.scope()
+    assert len(calls) == 1
+    # A new feature changes the area.
+    feature = QgsFeature()
+    to_layer = QgsCoordinateTransform(WGS84, layer.crs(), QgsProject.instance())
+    square = QgsGeometry.fromRect(QgsRectangle(15, 44, 16, 45))
+    square.transform(to_layer)
+    feature.setGeometry(square)
+    layer.startEditing()
+    layer.addFeature(feature)
+    assert picker.scope().bbox == pytest.approx((11, 44, 16, 45))
+    assert len(calls) == 2
+    layer.rollBack()
+    # The selection matters only with "Selected features only".
+    layer.selectByIds([next(layer.getFeatures()).id()])
+    picker.scope()
+    assert len(calls) == 3
+    picker._selected.setChecked(True)
+    assert picker.scope().bbox == pytest.approx((11, 44, 12, 45))
+    layer.selectAll()
+    assert picker.scope().bbox == pytest.approx((11, 44, 14, 45))
+    assert len(calls) == 5
+
+
+def test_an_area_across_the_antimeridian_splits_in_two():
+    # A box around Fiji, drawn on a Pacific-centred map.
+    pacific = QgsCoordinateReferenceSystem("EPSG:3832")
+    ring = [QgsPointXY(x, y) for x, y in ((177, -19), (182, -19), (182, -16), (177, -16))]
+    geometry = QgsGeometry.fromPolygonXY([[*ring, ring[0]]])
+    geometry.transform(QgsCoordinateTransform(WGS84, pacific, QgsProject.instance()))
+    area = area_of(geometry, pacific)
+    west, south, east, north = area.bbox
+    assert (west, east) == (pytest.approx(177, abs=1e-6), pytest.approx(-178, abs=1e-6))
+    assert (south, north) == (pytest.approx(-19, abs=1e-6), pytest.approx(-16, abs=1e-6))
+    shape = QgsGeometry.fromWkt(area.wkt)
+    assert shape.isMultipart()
+    # The area holds Fiji on both sides of 180°, and not the rest of the world.
+    cases = ((179, True), (-179, True), (0, False), (-170, False), (170, False))
+    for x, inside in cases:
+        point = QgsGeometry.fromPointXY(QgsPointXY(x, -17))
+        assert shape.intersects(point) is inside, x
+    assert shape.area() == pytest.approx(5 * 3, rel=1e-3)
+
+
+def test_an_area_past_180_degrees_splits_in_two():
+    # A canvas in degrees, panned east past 180°.
+    geometry = QgsGeometry.fromRect(QgsRectangle(177, -19, 182, -16))
+    area = area_of(geometry, WGS84)
+    assert area.bbox == pytest.approx((177, -19, -178, -16))
+    assert QgsGeometry.fromWkt(area.wkt).isMultipart()
+
+
+def test_a_wide_area_that_does_not_cross_stays_whole():
+    geometry = QgsGeometry.fromRect(QgsRectangle(-170, -10, 170, 10))
+    area = area_of(geometry, WGS84)
+    assert area.bbox == pytest.approx((-170, -10, 170, 10))
+    assert not QgsGeometry.fromWkt(area.wkt).isMultipart()
 
 
 def test_the_layer_list_holds_polygon_layers_only(picker):

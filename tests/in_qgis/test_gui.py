@@ -896,6 +896,38 @@ def test_item_collection_adds_one_mosaic(iface, server, catalog):
     window.disconnect_canvas()
 
 
+def test_one_task_uses_the_progress_bar_at_a_time(iface, server, catalog):
+    # The mosaic search, a download listing, and a download share the
+    # progress bar and the Cancel button. Before, a mosaic search during a
+    # download hid the Cancel button of the download.
+    window, collection = open_tiles(iface, server, catalog)
+    window.tree.setCurrentItem(collection.child(0))
+    wait_for(lambda: window._document is not None and window.mosaic_button.isEnabled())
+    for flag in ("_job", "_listing", "_mosaic_busy"):
+        setattr(window, flag, object() if flag == "_job" else True)
+        window._sync_buttons()
+        assert not window.mosaic_button.isEnabled(), flag
+        assert not window.download_all.isEnabled(), flag
+        assert not window.download_selected.isEnabled(), flag
+        # A direct call does nothing either.
+        window._add_mosaic()
+        window._download_all()
+        assert window.progress.isHidden(), flag
+        setattr(window, flag, None if flag == "_job" else False)
+        window._sync_buttons()
+    assert window.mosaic_button.isEnabled()
+    window.disconnect_canvas()
+
+
+def test_no_button_is_the_default(iface, server, catalog):
+    # In a dialog, an Enter in the tree would click a default button.
+    window = open_window(iface, server, catalog)
+    buttons = window.findChildren(window_module.QPushButton)
+    assert buttons
+    assert not any(button.autoDefault() or button.isDefault() for button in buttons)
+    window.disconnect_canvas()
+
+
 def test_large_mosaic_asks_first(iface, server, catalog, monkeypatch):
     asked = []
 

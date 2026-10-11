@@ -846,7 +846,12 @@ def _csv_asset(catalog, name):
     [
         (b"id,lon,lat\n1,2,3\n", ("lon", "lat")),
         (b"\xef\xbb\xbfID;Longitude;Latitude\n", ("Longitude", "Latitude")),
-        (b"name\tX\tY\n", ("X", "Y")),
+        (b"name\tX\tY\na\t11.2\t44.5\n", ("X", "Y")),
+        # x and y in RD New are not degrees, so the CSV opens as a table.
+        (b"id,x,y\n1,155000,463000\n", None),
+        # x and y with no complete row cannot be told apart.
+        (b"name\tX\tY\n", None),
+        (b"id,x,y\n1,11.2,44.5\n2,155000,4630", ("x", "y")),
         (b'"lng","LAT"\n', ("lng", "LAT")),
         # "lon" comes before "x" in the order of preference.
         (b"x,y,lon,lat\n", ("lon", "lat")),

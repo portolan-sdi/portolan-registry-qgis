@@ -93,6 +93,10 @@ def view_bbox(
     )
 
 
+# The vertices added to each edge of a projected polygon before the transform.
+_DENSIFY = 8
+
+
 def area_of(geometry: QgsGeometry, crs: QgsCoordinateReferenceSystem) -> Area:
     """Turn a polygon in ``crs`` into an ``Area`` in EPSG:4326.
 
@@ -110,21 +114,86 @@ def area_of(geometry: QgsGeometry, crs: QgsCoordinateReferenceSystem) -> Area:
         raise ScopeError("The area is not a polygon.")
     if shape.constGet().hasCurvedSegments():
         shape = QgsGeometry(shape.constGet().segmentize())
+    projected = not crs.isGeographic()
     if crs.authid() != WGS84:
-        transform = QgsCoordinateTransform(crs, _wgs84(), QgsProject.instance())
-        transform.setBallparkTransformsAreAppropriate(True)
-        try:
-            result = shape.transform(transform)
-        except QgsCsException as error:
-            raise ScopeError(f"Cannot transform the area to {WGS84}: {error}") from error
-        if result != Qgis.GeometryOperationResult.Success:
-            raise ScopeError(f"Cannot transform the area to {WGS84}.")
+        source = shape
+        shape = _to_wgs84(source, crs)
+        if projected and shape.boundingBox().width() > 180:
+            # The polygon may cross 180°. Short edges let
+            # _split_at_antimeridian find the edge that crosses it.
+            shape = _to_wgs84(source.densifyByCount(_DENSIFY), crs)
     flat = shape.get()
     flat.dropZValue()
     flat.dropMValue()
+    crossing = _split_at_antimeridian(shape, projected)
+    if crossing is not None:
+        return crossing
     rect = shape.boundingBox()
     box = (rect.xMinimum(), rect.yMinimum(), rect.xMaximum(), rect.yMaximum())
     return Area(shape.asWkt(_PRECISION), box)
+
+
+def _to_wgs84(geometry: QgsGeometry, crs: QgsCoordinateReferenceSystem) -> QgsGeometry:
+    """Return a copy of ``geometry`` transformed from ``crs`` to EPSG:4326.
+
+    Raises:
+        ScopeError: The transform fails.
+    """
+    shape = QgsGeometry(geometry)
+    transform = QgsCoordinateTransform(crs, _wgs84(), QgsProject.instance())
+    transform.setBallparkTransformsAreAppropriate(True)
+    try:
+        result = shape.transform(transform)
+    except QgsCsException as error:
+        raise ScopeError(f"Cannot transform the area to {WGS84}: {error}") from error
+    if result != Qgis.GeometryOperationResult.Success:
+        raise ScopeError(f"Cannot transform the area to {WGS84}.")
+    return shape
+
+
+def _split_at_antimeridian(shape: QgsGeometry, projected: bool) -> Area | None:
+    """Return the area cut in two at 180°, or None when it does not cross it.
+
+    A polygon crosses the antimeridian in two cases:
+    - It has longitudes beyond ±180°, as on a canvas in degrees that the user
+      panned past 180°.
+    - It came from a projected CRS, and one of its edges jumps more than 180°
+      of longitude after the transform. The caller densifies the edges
+      of a polygon wider than 180° before the transform, so each edge is
+      short.
+    A polygon drawn in degrees with longitudes in -180..180 is what the user
+    drew, even when it is wide. The area becomes a MultiPolygon of the two
+    sides, and its box has west > east, as STAC writes a box that crosses
+    the antimeridian.
+    """
+    rect = shape.boundingBox()
+    beyond = rect.xMinimum() < -180 or rect.xMaximum() > 180
+    if not beyond and not (projected and _jumps(shape)):
+        return None
+    moved = QgsGeometry(shape)
+    for index, vertex in enumerate(shape.vertices()):
+        if vertex.x() < 0:
+            moved.moveVertex(vertex.x() + 360, vertex.y(), index)
+    wide = moved.boundingBox()
+    if wide.xMaximum() <= 180:
+        return None
+    west = moved.intersection(QgsGeometry.fromRect(QgsRectangle(-180, -90, 180, 90)))
+    east = moved.intersection(QgsGeometry.fromRect(QgsRectangle(180, -90, 540, 90)))
+    east.translate(-360, 0)
+    parts = [part for part in (west, east) if not part.isNull() and not part.isEmpty()]
+    joined = QgsGeometry.collectGeometry(parts)
+    box = (max(wide.xMinimum(), -180), wide.yMinimum(), wide.xMaximum() - 360, wide.yMaximum())
+    return Area(joined.asWkt(_PRECISION), box)
+
+
+def _jumps(shape: QgsGeometry) -> bool:
+    """Return whether two neighbouring vertices of a ring differ by more than 180° of longitude."""
+    previous = None
+    for vertex in shape.vertices():
+        if previous is not None and abs(vertex.x() - previous.x()) > 180:
+            return True
+        previous = vertex
+    return False
 
 
 def layer_area(layer: QgsVectorLayer, selected_only: bool) -> Area:
@@ -152,6 +221,15 @@ def layer_area(layer: QgsVectorLayer, selected_only: bool) -> Area:
     if union.type() != Qgis.GeometryType.Polygon:
         union = union.convertToType(Qgis.GeometryType.Polygon, True)
     return area_of(union, layer.crs())
+
+
+def _feature_signals(layer: QgsVectorLayer) -> tuple[Any, ...]:
+    """Return the signals of a change to the layer's features.
+
+    ``dataChanged`` covers a reload or a commit. The others cover the edit
+    buffer, which ``getFeatures`` also reads.
+    """
+    return (layer.dataChanged, layer.featureAdded, layer.featureDeleted, layer.geometryChanged)
 
 
 def _polygon_filter() -> Any:
@@ -259,7 +337,12 @@ class PolygonTool(QgsMapTool):
         self.cancelled.emit()
 
     def deactivate(self) -> None:
-        """Cancel when the user picks another map tool during the drawing."""
+        """Cancel when the user picks another map tool during the drawing.
+
+        The canvas is in the middle of a tool change, so ``replaced`` tells
+        the picker not to set a map tool of its own.
+        """
+        self.replaced = True
         super().deactivate()
         self.cancel()
 
@@ -295,6 +378,9 @@ class ScopePicker(QWidget):
         self._tool: PolygonTool | None = None
         self._previous_tool: Any = None
         self._watched: QgsVectorLayer | None = None
+        # The union of a layer's polygons reads every feature, so it is
+        # kept until the layer, its selection, or its features change.
+        self._layer_area: Area | ScopeError | None = None
 
         top = QHBoxLayout()
         top.setContentsMargins(0, 0, 0, 0)
@@ -351,7 +437,14 @@ class ScopePicker(QWidget):
             layer = self._layers.currentLayer()
             if not isinstance(layer, QgsVectorLayer):
                 raise ScopeError("Choose a polygon layer.")
-            return layer_area(layer, self._selected.isChecked())
+            if self._layer_area is None:
+                try:
+                    self._layer_area = layer_area(layer, self._selected.isChecked())
+                except ScopeError as error:
+                    self._layer_area = error
+            if isinstance(self._layer_area, ScopeError):
+                raise self._layer_area
+            return self._layer_area
         return Everything()
 
     def problem(self) -> str | None:
@@ -418,7 +511,7 @@ class ScopePicker(QWidget):
             tool.finished.disconnect(self._drawn)
         with contextlib.suppress(TypeError, RuntimeError):
             tool.cancelled.disconnect(self._draw_cancelled)
-        if self._canvas.mapTool() is tool:
+        if self._canvas.mapTool() is tool and not getattr(tool, "replaced", False):
             # Another plugin can delete its map tool while the user draws.
             previous = self._previous_tool
             if previous is not None and not sip.isdeleted(previous):
@@ -478,21 +571,34 @@ class ScopePicker(QWidget):
             self.changed.emit()
 
     def _watch(self, layer: QgsMapLayer | None) -> None:
+        self._layer_area = None
         if self._watched is not None:
             with contextlib.suppress(TypeError, RuntimeError):
                 self._watched.selectionChanged.disconnect(self._selection_changed)
+            for signal in _feature_signals(self._watched):
+                with contextlib.suppress(TypeError, RuntimeError):
+                    signal.disconnect(self._features_changed)
         self._watched = layer if isinstance(layer, QgsVectorLayer) else None
         if self._watched is not None:
             self._watched.selectionChanged.connect(self._selection_changed)
+            for signal in _feature_signals(self._watched):
+                signal.connect(self._features_changed)
+
+    def _features_changed(self, *_args: object) -> None:
+        self._layer_area = None
+        self._layer_input_changed()
 
     def _layer_changed(self, layer: QgsMapLayer | None) -> None:
         self._watch(layer)
         self._layer_input_changed()
 
     def _layer_input_changed(self, *_args: object) -> None:
+        self._layer_area = None
         if self._current == FROM_LAYER:
             self.changed.emit()
 
     def _selection_changed(self, *_args: object) -> None:
+        if self._selected.isChecked():
+            self._layer_area = None
         if self._current == FROM_LAYER and self._selected.isChecked():
             self.changed.emit()

@@ -238,6 +238,8 @@ class RegistryWindow(QDialog):
         self._view_target: Loadable | None = None
         self._load_target: Loadable | None = None
         self._mosaic_busy = False
+        # True while a download lists its files, before the job starts.
+        self._listing = False
         # The COG file of each item read for the "All files" list, by item href.
         self._item_files: dict[str, Asset | None] = {}
         self.images = ImageCache(self)
@@ -266,6 +268,11 @@ class RegistryWindow(QDialog):
         layout.addWidget(self._header())
         layout.addWidget(self.splitter, 1)
         layout.addWidget(self._action_bar())
+        # In a dialog, a push button with focus becomes the default, and an
+        # Enter that the tree or the search box passes on would click it.
+        for button in self.findChildren(QPushButton):
+            button.setAutoDefault(False)
+            button.setDefault(False)
         self._connect()
         self._sync_buttons()
 
@@ -1257,6 +1264,10 @@ class RegistryWindow(QDialog):
             return Everything()
         return self.scope_picker.scope()
 
+    def _busy(self) -> bool:
+        """Return whether a mosaic search, a download listing, or a download runs."""
+        return self._job is not None or self._listing or self._mosaic_busy
+
     def _sync_buttons(self) -> None:
         tiles, assets = self._selected()
         every = self._all_items_selected()
@@ -1268,17 +1279,18 @@ class RegistryWindow(QDialog):
         self.scope_hint.setStyleSheet(f"color: {muted(self.palette()).name()};")
         self.scope_hint.setVisible(problem is not None)
         ready = problem is None
-        self.add.setEnabled(bool(tiles or assets) or (every and ready and not self._mosaic_busy))
+        # The mosaic search, the listing, and the download share the progress
+        # bar and the Cancel button, so only one of them runs at a time.
+        busy = self._busy()
+        self.add.setEnabled(bool(tiles or assets) or (every and ready and not busy))
         self.view_button.setEnabled(self._view_target is not None)
         load = self._load_target
         self.load_button.setEnabled(load is not None and (load.format != "parquet" or ready))
         self.mosaic_button.setEnabled(
-            document is not None and only_items(document) and ready and not self._mosaic_busy
+            document is not None and only_items(document) and ready and not busy
         )
-        self.download_selected.setEnabled(
-            bool(tiles or assets or every) and self._job is None and ready
-        )
-        self.download_all.setEnabled(has_document and self._job is None and ready)
+        self.download_selected.setEnabled(bool(tiles or assets or every) and not busy and ready)
+        self.download_all.setEnabled(has_document and not busy and ready)
         self.download.setEnabled(
             self.download_selected.isEnabled() or self.download_all.isEnabled()
         )
@@ -1511,7 +1523,7 @@ class RegistryWindow(QDialog):
     def _add_mosaic(self) -> None:
         """Add the COG files of the open collection's items in the scope as one layer."""
         document = self._document
-        if document is None or not only_items(document) or self._mosaic_busy:
+        if document is None or not only_items(document) or self._busy():
             return
         try:
             scope = self._scope()
@@ -1641,7 +1653,7 @@ class RegistryWindow(QDialog):
         GeoPackage that holds only the features in the scope.
         """
         document = self._document
-        if document is None:
+        if document is None or self._busy():
             return
         if self._all_items_selected():
             # The walk of the collection holds every selected file too.
@@ -1717,7 +1729,7 @@ class RegistryWindow(QDialog):
 
     def _download_all(self) -> None:
         document = self._document
-        if document is None:
+        if document is None or self._busy():
             return
         try:
             scope = self._scope()
@@ -1728,6 +1740,8 @@ class RegistryWindow(QDialog):
         if folder is None:
             return
         root = self._root_url() or document.href
+        self._listing = True
+        self._sync_buttons()
         self._show_progress(0, 0, f"Listing everything below {document.title}…")
 
         def build(task: Any) -> download.Plan:
@@ -1745,7 +1759,9 @@ class RegistryWindow(QDialog):
                 executor.shutdown(cancel_futures=True)
 
         def planned(result: object, error: BaseException | None) -> None:
+            self._listing = False
             self._hide_progress()
+            self._sync_buttons()
             # A cancelled walk returns the partial plan it has. Drop it.
             if task.isCanceled():
                 self._info(f"Listing of {document.title} cancelled.")

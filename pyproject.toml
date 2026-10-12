@@ -22,6 +22,7 @@ dependencies = []
 
 [dependency-groups]
 dev = [
+    "babel>=2.17",
     "bandit>=1.9",
     "codespell>=2.4.3",
     "commitizen>=4.16",
@@ -38,8 +39,10 @@ dev = [
     "pytest-cov>=7",
     "pytest-timeout>=2.3",
     "pytest-xdist>=3.8",
+    "pyyaml>=6",
     "radon>=6.0.1",
     "ruff>=0.16",
+    "types-pyyaml>=6",
     "vulture>=2.16",
     "xenon>=0.9.3",
 ]
@@ -49,6 +52,10 @@ docs = [
     # reviewable bumps.
     "zensical==0.0.67",
     "pymdown-extensions>=11.0",
+    # scripts/i18n.py build-docs reads the translated navigation titles from
+    # the gettext catalogs and writes a mkdocs.yml for each language.
+    "babel>=2.17",
+    "pyyaml>=6",
 ]
 
 [tool.uv]
@@ -251,10 +258,13 @@ disallow_untyped_decorators = false
 # ---------- spell check ----------
 
 [tool.codespell]
-skip = ".git,uv.lock,.venv,.venv-qgis,.flatpak-site,.mypy_cache,.ruff_cache,.pytest_cache,*.svg,tests/fixtures/*,./tests/fixtures/*"
+skip = ".git,uv.lock,*.po,./docs-i18n/*,docs-i18n/*,.venv,.venv-qgis,.flatpak-site,.mypy_cache,.ruff_cache,.pytest_cache,*.svg,tests/fixtures/*,./tests/fixtures/*"
 # "indirizzi" and "rilasci" are Italian collection names in test fixtures
 # copied from the ANNCSU catalog.
 ignore-words-list = "indirizzi,rilasci"
+# metadata.txt holds the Spanish and French plugin manager text, which
+# scripts/i18n.py writes from the catalogs.
+ignore-regex = '^(description|about)\[[a-z_]+\]=.*$'
 
 # ---------- dead code ----------
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from qgis.PyQt.QtCore import QRect, QRectF, QSize, Qt, pyqtSignal
 from qgis.PyQt.QtGui import QColor, QFont, QFontMetrics, QPainter, QPalette
@@ -19,7 +19,8 @@ from qgis.PyQt.QtWidgets import (
     QWidget,
 )
 
-from portolan_registry_qgis.core.format import catalog_summary, count
+from portolan_registry_qgis.core.format import catalog_summary
+from portolan_registry_qgis.core.i18n import N_, _, ngettext, number
 from portolan_registry_qgis.core.registry import CatalogEntry
 from portolan_registry_qgis.gui.pictures import (
     ACCENT,
@@ -50,6 +51,23 @@ ON_MAP_MARK = "\u2713"
 
 _PAD = 8
 
+# The registry statuses a catalog row shows. A row does not show "valid".
+# An unlisted status shows as the registry wrote it.
+_STATUSES = {
+    # Translators: A catalog status. The registry has not checked the catalog recently.
+    "stale": N_("Stale"),
+    # Translators: A catalog status. The catalog is gone from its address.
+    "removed": N_("Removed"),
+    # Translators: A catalog status. The registry gives no status.
+    "unknown": N_("Unknown"),
+}
+
+
+def status_label(status: str) -> str:
+    """Return the text a catalog row shows for a registry status."""
+    label = _STATUSES.get(status)
+    return _(label) if label else status.capitalize()
+
 
 @dataclass(frozen=True)
 class More:
@@ -57,11 +75,26 @@ class More:
 
     rest: tuple[Any, ...]
 
-    def label(self, page: int, noun: str = "") -> str:
-        """Return the row's text. A ``noun`` names what the rows hold."""
-        shown = min(page, len(self.rest))
-        total = count(len(self.rest), noun) if noun else f"{len(self.rest):,}"
-        return f"Show {shown:,} more of {total}"
+    def label(self, page: int, kind: Literal["", "publisher", "file"] = "") -> str:
+        """Return the row's text. ``kind`` names what the rows hold, or is empty.
+
+        Each kind has its own whole message, so a translation can place the
+        number and the noun where its language needs them.
+        """
+        total = len(self.rest)
+        if kind == "publisher":
+            text = ngettext(
+                "Show {shown} more of {total} publisher",
+                "Show {shown} more of {total} publishers",
+                total,
+            )
+        elif kind == "file":
+            text = ngettext(
+                "Show {shown} more of {total} file", "Show {shown} more of {total} files", total
+            )
+        else:
+            text = _("Show {shown} more of {total}")
+        return text.format(shown=number(min(page, total)), total=number(total))
 
 
 _TILE = QSize(66, 44)
@@ -154,7 +187,7 @@ class CatalogDelegate(QStyledItemDelegate):
         # appears would leave rows at a stale height.
         scrollbar = self._view.style().pixelMetric(QStyle.PixelMetric.PM_ScrollBarExtent)
         width = self._view.width() - 2 * self._view.frameWidth() - scrollbar
-        _, text_width = self._text_span(entry, 0, width)
+        _left, text_width = self._text_span(entry, 0, width)
         bold = QFontMetrics(self._bold(option))
         lines = len(_wrap(bold, entry.title, text_width))
         text_height = bold.height() * lines + 2 + line
@@ -210,16 +243,16 @@ class CatalogDelegate(QStyledItemDelegate):
         top = rect.center().y() - height // 2
         painter.setFont(bold)
         painter.setPen(text)
-        for number, words in enumerate(title):
+        for row, words in enumerate(title):
             painter.drawText(
-                QRect(left, top + number * bold_metrics.height(), width, bold_metrics.height()),
+                QRect(left, top + row * bold_metrics.height(), width, bold_metrics.height()),
                 Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                 words,
             )
         painter.setFont(option.font)
         second = QRect(left, top + bold_metrics.height() * len(title) + 2, width, metrics.height())
         if entry.status != "valid":
-            status = entry.status.capitalize()
+            status = status_label(entry.status)
             painter.setPen(text if selected else WARNING)
             painter.drawText(
                 second, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, status
@@ -466,7 +499,7 @@ class CatalogHeader(QWidget):
     def __init__(self, world: WorldMap, parent: QWidget | None = None):
         super().__init__(parent)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setToolTip("Show the publisher's details")
+        self.setToolTip(_("Show the publisher's details"))
         layout = QHBoxLayout(self)
         layout.setContentsMargins(_PAD, _PAD, _PAD, _PAD)
         layout.setSpacing(_PAD + 4)

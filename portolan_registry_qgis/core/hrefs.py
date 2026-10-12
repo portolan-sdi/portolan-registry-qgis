@@ -10,7 +10,7 @@ import re
 from urllib.parse import quote, unquote, urljoin, urlsplit, urlunsplit
 
 _S3_WEBSITE = re.compile(r"^(.+)\.s3-website[.-]([a-z0-9-]+)\.amazonaws\.com$", re.IGNORECASE)
-_DFS_SUFFIX = ".dfs.core.windows.net"
+_DFS_SUFFIX = ".dfs.core.windows.net"  # i18n: skip - a host
 _AZURE_SCHEMES = frozenset({"abfs", "abfss", "az"})
 
 
@@ -38,9 +38,9 @@ def catalog_href(href: str) -> str:
         return href
     bucket, region = match.group(1), match.group(2)
     if "." in bucket:
-        netloc, path = f"s3.{region}.amazonaws.com", f"/{bucket}{parts.path}"
+        netloc, path = f"s3.{region}.amazonaws.com", f"/{bucket}{parts.path}"  # i18n: skip - a host
     else:
-        netloc, path = f"{bucket}.s3.{region}.amazonaws.com", parts.path
+        netloc, path = f"{bucket}.s3.{region}.amazonaws.com", parts.path  # i18n: skip - a host
     return urlunsplit(("https", netloc, path, parts.query, parts.fragment))
 
 
@@ -63,7 +63,9 @@ def asset_href(href: str, base: str, account_name: str | None = None) -> str:
     tail = urlunsplit(("", "", parts.path, parts.query, parts.fragment))
     if parts.scheme == "s3":
         bucket = parts.hostname
-        return f"https://{bucket}.s3.amazonaws.com{tail}" if bucket else resolved
+        return (
+            f"https://{bucket}.s3.amazonaws.com{tail}" if bucket else resolved  # i18n: skip
+        )
     if parts.scheme in _AZURE_SCHEMES:
         host = parts.hostname or ""
         if host.endswith(_DFS_SUFFIX):
@@ -73,7 +75,7 @@ def asset_href(href: str, base: str, account_name: str | None = None) -> str:
             container, account = host, account_name
         if not container or not account:
             return resolved
-        return f"https://{account}.blob.core.windows.net/{container}{tail}"
+        return f"https://{account}.blob.core.windows.net/{container}{tail}"  # i18n: skip - a URL
     return resolved
 
 
@@ -93,7 +95,7 @@ def vsicurl_path(url: str) -> str:
     ``CPL_VSIL_CURL_ALLOWED_EXTENSIONS`` is set, whatever it lists. Use
     ``plain_vsicurl_path`` then.
     """
-    return f"/vsicurl?empty_dir=yes&url={quote(url, safe='')}"
+    return f"/vsicurl?empty_dir=yes&url={quote(url, safe='')}"  # i18n: skip - a GDAL path
 
 
 def plain_vsicurl_path(url: str) -> str:
@@ -141,7 +143,7 @@ def folder_name(href: str) -> str:
     return unquote(name)
 
 
-BROWSER_URL = "https://browser.portolan-sdi.org/"
+BROWSER_URL = "https://browser.portolan-sdi.org/"  # i18n: skip - a URL
 
 
 def browser_url(stac_href: str, base: str = BROWSER_URL) -> str:
@@ -162,7 +164,7 @@ def browser_url(stac_href: str, base: str = BROWSER_URL) -> str:
         ValueError: ``stac_href`` is not an http(s) URL.
     """
     if not is_http_url(stac_href):
-        raise ValueError(f"Not an http(s) URL: {stac_href}")
+        raise ValueError(f"Not an http(s) URL: {stac_href}")  # i18n: skip - the window catches it
     target = urlsplit(stac_href)
     parts = ["/external"]
     if target.scheme != "https":

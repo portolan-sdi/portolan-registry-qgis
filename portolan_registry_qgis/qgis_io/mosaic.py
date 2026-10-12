@@ -29,6 +29,7 @@ from portolan_registry_qgis.core import scope as scopes
 from portolan_registry_qgis.core.download import walk
 from portolan_registry_qgis.core.geoparquet import quote
 from portolan_registry_qgis.core.hrefs import asset_href
+from portolan_registry_qgis.core.i18n import _, ngettext, number
 from portolan_registry_qgis.core.stac import asset_format
 from portolan_registry_qgis.qgis_io import parquet_layer
 from portolan_registry_qgis.qgis_io.layers import (
@@ -100,7 +101,11 @@ def item_hrefs_in(
         except (duckdb.Error, OSError, ValueError) as error:
             if cancelled is not None and cancelled():
                 return []
-            _log(f"Could not read {mirror}, so the plugin reads each item: {error}")
+            _log(
+                _("Could not read {url}, so the plugin reads each item: {error}").format(
+                    url=mirror, error=error
+                )
+            )
     return walked_hrefs(collection.href, scope, fetch_json, executor, cancelled)
 
 
@@ -144,7 +149,13 @@ def walked_hrefs(
         if href is not None:
             hrefs.append(href)
     if failures:
-        _log(f"Could not read {len(failures)} documents below {start}, first {failures[0][0]}")
+        _log(
+            ngettext(
+                "Could not read {n} document below {start}, first {first}",
+                "Could not read {n} documents below {start}, first {first}",
+                len(failures),
+            ).format(n=number(len(failures)), start=start, first=failures[0][0])
+        )
     return list(dict.fromkeys(hrefs))
 
 
@@ -155,7 +166,7 @@ def _bbox_columns(kind: str) -> tuple[str, str, str, str]:
     defines. Earlier files store a list of four or six numbers.
     """
     if kind.upper().startswith("STRUCT"):
-        return ("bbox.xmin", "bbox.ymin", "bbox.xmax", "bbox.ymax")
+        return ("bbox.xmin", "bbox.ymin", "bbox.xmax", "bbox.ymax")  # i18n: skip - SQL
     half = "len(bbox) // 2"
     return ("bbox[1]", "bbox[2]", f"bbox[{half} + 1]", f"bbox[{half} + 2]")
 
@@ -178,7 +189,7 @@ def mirror_query(columns: dict[str, str], scope: Scope) -> tuple[str, list[Any]]
         ValueError: The file has no ``bbox`` or ``assets`` column.
     """
     if "bbox" not in columns or "assets" not in columns:
-        raise ValueError("The file has no bbox or assets column")
+        raise ValueError(_("The file has no bbox or assets column"))
     xmin, ymin, xmax, ymax = _bbox_columns(columns["bbox"])
     links = "to_json(links)" if "links" in columns else "NULL"
     ids = quote("id") if "id" in columns else "NULL"
@@ -328,7 +339,7 @@ def write_vrt(
         clip: A Polygon or MultiPolygon in EPSG:4326 as WKT.
     """
     if not hrefs:
-        raise LayerError("No file intersects the area")
+        raise LayerError(_("No file intersects the area"))
     path = parquet_layer.new_path(".vrt")
 
     def progress(_complete: float, _message: object, _data: object) -> int:
@@ -347,7 +358,8 @@ def write_vrt(
     skipped: list[str] = []
 
     def keep(_level: int, _number: int, message: str) -> None:
-        if message.startswith("Can't open ") and message.endswith(". Skipping it"):
+        # GDAL writes this message in English, so it stays English here.
+        if message.startswith("Can't open ") and message.endswith(". Skipping it"):  # i18n: skip
             skipped.append(message[len("Can't open ") : -len(". Skipping it")])
 
     gdal.PushErrorHandler(keep)
@@ -372,16 +384,29 @@ def write_vrt(
     for skip, reason in list(reasons.items()):
         reasons[skip] = explain_open_error(by_path.get(skip, skip), reason)
     for skip, reason in reasons.items():
-        _log(f"The mosaic left out {by_path.get(skip, skip)}: {reason}")
+        _log(
+            _("The mosaic left out {url}: {reason}").format(
+                url=by_path.get(skip, skip), reason=reason
+            )
+        )
     if cancelled is not None and cancelled():
         parquet_layer.discard_path(path)
-        raise MosaicCancelledError("Cancelled")
+        # Translators: Why a task stopped. The user cancelled it.
+        raise MosaicCancelledError(_("Cancelled"))
     if bands == 0 or not path.exists():
         parquet_layer.discard_path(path)
         if reasons:
             first, reason = next(iter(reasons.items()))
-            error = f"GDAL could not open {by_path.get(first, first)}: {reason}"
-        raise LayerError(f"GDAL could not build a mosaic of {len(hrefs)} files. {error}")
+            error = _("GDAL could not open {url}: {reason}").format(
+                url=by_path.get(first, first), reason=reason
+            )
+        raise LayerError(
+            ngettext(
+                "GDAL could not build a mosaic of {n} file. {error}",
+                "GDAL could not build a mosaic of {n} files. {error}",
+                len(hrefs),
+            ).format(n=number(len(hrefs)), error=error)
+        )
     return path
 
 
@@ -394,9 +419,10 @@ def _warp(mosaic: Any, path: Path, clip: str) -> None:
     """
     shape = ogr.CreateGeometryFromWkt(clip)
     if shape is None:
-        raise RuntimeError("The clip is not WKT")
+        raise RuntimeError(_("The clip is not WKT"))
     cutline = f"/vsimem/portolan-clip-{uuid.uuid4().hex}.geojson"
-    feature = {"type": "Feature", "properties": {}, "geometry": json.loads(shape.ExportToJson())}
+    geometry = json.loads(shape.ExportToJson())
+    feature = {"type": "Feature", "properties": {}, "geometry": geometry}  # i18n: skip - GeoJSON
     gdal.FileFromMemBuffer(
         cutline, json.dumps({"type": "FeatureCollection", "features": [feature]})
     )
@@ -417,7 +443,7 @@ def _warp(mosaic: Any, path: Path, clip: str) -> None:
     try:
         warped = gdal.Warp(str(path), source, options=options)
         if warped is None:
-            raise RuntimeError(gdal.GetLastErrorMsg() or "GDAL could not clip the mosaic")
+            raise RuntimeError(gdal.GetLastErrorMsg() or _("GDAL could not clip the mosaic"))
         warped = None
     finally:
         gdal.Unlink(cutline)
@@ -432,7 +458,9 @@ def open_mosaic(path: Path, hrefs: list[str], name: str, clip: str | None = None
     layer = QgsRasterLayer(str(path), name, "gdal")
     if not layer.isValid():
         parquet_layer.discard_path(path)
-        raise LayerError(f"QGIS could not open the mosaic: {layer.error().summary()}")
+        raise LayerError(
+            _("QGIS could not open the mosaic: {error}").format(error=layer.error().summary())
+        )
     parquet_layer.release_path(path)
     layer.setCustomProperty(SOURCES_PROPERTY, "\n".join(hrefs))
     if clip:
@@ -492,7 +520,7 @@ def reopen(layer: QgsRasterLayer, path: Path) -> None:
     layer.setDataSource(str(path), layer.name(), "gdal")
     if not layer.isValid():
         parquet_layer.discard_path(path)
-        raise LayerError(f"QGIS could not open the mosaic {path}")
+        raise LayerError(_("QGIS could not open the mosaic {path}").format(path=path))
     parquet_layer.release_path(path)
     layer.triggerRepaint()
 
@@ -509,7 +537,7 @@ def rebuild(layer: QgsRasterLayer, cancelled: Callable[[], bool] | None = None) 
     """
     hrefs = sources(layer)
     if not hrefs:
-        raise LayerError(f"{layer.name()} keeps no mosaic sources")
+        raise LayerError(_("{layer} keeps no mosaic sources").format(layer=layer.name()))
     reopen(layer, write_vrt(hrefs, cancelled, clip_of(layer)))
 
 

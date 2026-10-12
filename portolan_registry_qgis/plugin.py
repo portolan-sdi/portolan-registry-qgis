@@ -21,6 +21,7 @@ from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction
 
 from portolan_registry_qgis.core import parquet_query
+from portolan_registry_qgis.core.i18n import _
 from portolan_registry_qgis.qgis_io import mosaic, parquet_layer
 from portolan_registry_qgis.qgis_io.layers import PMTILES_PROPERTY, LayerError, vector_tile_layer
 from portolan_registry_qgis.qgis_io.network import run_task
@@ -31,7 +32,7 @@ MENU = "&Portolan Registry"
 REGISTRY_URL_SETTING = "PortolanRegistry/registry_url"
 # A QGIS setting, so a user can point the browser links at a browser mirror.
 BROWSER_URL_SETTING = "PortolanRegistry/browser_url"
-_ICON = Path(__file__).parent / "icon.svg"
+_ICON = Path(__file__).parent / "icon.svg"  # i18n: skip
 # The first QGIS whose QgsPathResolver.setPathPreprocessor binding is safe.
 PATH_PREPROCESSOR_VERSION = 33600
 
@@ -51,7 +52,7 @@ class PortolanRegistryPlugin:
         """Create the menu entry and toolbar button. QGIS calls this on load."""
         self.action = QAction(QIcon(str(_ICON)), "Portolan Registry", self.iface.mainWindow())
         self.action.setCheckable(True)
-        self.action.setToolTip("Browse the Portolan registry")
+        self.action.setToolTip(_("Browse the Portolan registry"))
         self.action.toggled.connect(self._toggle)
         self.iface.addPluginToWebMenu(MENU, self.action)
         self.iface.addWebToolBarIcon(self.action)
@@ -69,7 +70,7 @@ class PortolanRegistryPlugin:
         try:
             parquet_layer.remove_stale()
         except OSError as error:
-            _log(f"Could not clean the scratch folder: {error}")
+            _log(_("Could not clean the scratch folder: {error}").format(error=error))
 
     def unload(self) -> None:
         """Remove everything initGui added. QGIS calls this on unload."""
@@ -111,9 +112,11 @@ class PortolanRegistryPlugin:
         self._warned_save = True
         self.iface.messageBar().pushMessage(
             "Portolan Registry",
-            "The project saves each GeoParquet layer as a link to its source file. "
-            "When the project opens, QGIS copies the features again, without your edits. "
-            "To keep edits, export the layer with Save Features As.",
+            _(
+                "The project saves each GeoParquet layer as a link to its source file. "
+                "When the project opens, QGIS copies the features again, without your edits. "
+                "To keep edits, export the layer with Save Features As."
+            ),
             Qgis.MessageLevel.Warning,
             0,
         )
@@ -166,7 +169,7 @@ class PortolanRegistryPlugin:
         def done(result: object, error: BaseException | None) -> None:
             if not isinstance(result, Archive):
                 QgsMessageLog.logMessage(
-                    f"Could not reopen {url}: {error}",
+                    _("Could not reopen {url}: {error}").format(url=url, error=error),
                     "Portolan Registry",
                     Qgis.MessageLevel.Warning,
                 )
@@ -175,13 +178,21 @@ class PortolanRegistryPlugin:
             layer.setDataSource(fresh.source(), layer.name(), fresh.providerType())
             layer.triggerRepaint()
 
-        run_task(f"Reopen {url}", lambda _task: open_archive(url), done)
+        run_task(_("Reopen {url}").format(url=url), lambda _task: open_archive(url), done)
 
     def _restore(self, layer: QgsVectorLayer) -> None:
         url, bbox, area = parquet_layer.saved_copy(layer)
         ok, version = parquet_query.duckdb_status()
         if not ok:
-            _log(f"Could not copy {url} again: DuckDB {version or 'is not installed'}.")
+            if version:
+                _log(
+                    # Translators: {version} is the installed DuckDB version, which is too old.
+                    _("Could not copy {url} again: DuckDB {version}.").format(
+                        url=url, version=version
+                    )
+                )
+            else:
+                _log(_("Could not copy {url} again: DuckDB is not installed.").format(url=url))
             return
         extension_dir = parquet_layer.extension_directory()
 
@@ -190,7 +201,7 @@ class PortolanRegistryPlugin:
 
         def done(result: object, error: BaseException | None) -> None:
             if not isinstance(result, parquet_layer.Prepared):
-                _log(f"Could not copy {url} again: {error}")
+                _log(_("Could not copy {url} again: {error}").format(url=url, error=error))
                 return
             if sip.isdeleted(layer):
                 parquet_layer.discard_path(result.path)
@@ -200,7 +211,7 @@ class PortolanRegistryPlugin:
             except OSError as failure:
                 _log(str(failure))
 
-        run_task(f"Copy {url} again with DuckDB", copy, done)
+        run_task(_("Copy {url} again with DuckDB").format(url=url), copy, done)
 
     def _rebuild(self, layer: QgsRasterLayer) -> None:
         """Write a saved mosaic's VRT again, then point the layer at it.
@@ -216,7 +227,11 @@ class PortolanRegistryPlugin:
 
         def done(result: object, error: BaseException | None) -> None:
             if not isinstance(result, Path):
-                _log(f"Could not build the mosaic {name} again: {error}")
+                _log(
+                    _("Could not build the mosaic {name} again: {error}").format(
+                        name=name, error=error
+                    )
+                )
                 return
             if sip.isdeleted(layer):
                 parquet_layer.discard_path(result)
@@ -226,7 +241,7 @@ class PortolanRegistryPlugin:
             except LayerError as failure:
                 _log(str(failure))
 
-        run_task(f"Build the mosaic {name} again", write, done)
+        run_task(_("Build the mosaic {name} again").format(name=name), write, done)
 
 
 def _log(text: str) -> None:

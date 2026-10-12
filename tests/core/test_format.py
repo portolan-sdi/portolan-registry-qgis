@@ -4,7 +4,6 @@ import pytest
 
 from portolan_registry_qgis.core.format import (
     catalog_summary,
-    count,
     format_label,
     human_size,
     license_name,
@@ -21,7 +20,7 @@ from portolan_registry_qgis.core.format import (
         (999, "999 B"),
         (1000, "1.0 KB"),
         (1393694428, "1.4 GB"),
-        (10**18, "1000.0 PB"),
+        (10**18, "1,000.0 PB"),
     ],
 )
 def test_human_size(size, text):
@@ -46,11 +45,6 @@ def test_human_size(size, text):
 )
 def test_format_label(args, label):
     assert format_label(*args) == label
-
-
-def test_count():
-    assert count(1, "collection") == "1 collection"
-    assert count(1200, "collection") == "1,200 collections"
 
 
 @pytest.mark.parametrize(

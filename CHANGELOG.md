@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- The plugin shows its window, messages, and plugin manager description in Spanish and French when QGIS runs in either language. Numbers and file sizes use that language's separators.
+- The documentation site is available in Spanish at `/es/` and in French at `/fr/`, with a language menu in the header.
+
 ## 0.2.0 - 2026-10-11
 
 - The plugin is no longer marked experimental, so the QGIS plugin manager lists it without the experimental option.

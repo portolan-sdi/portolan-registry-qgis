@@ -21,6 +21,7 @@ from qgis.PyQt import sip
 from qgis.PyQt.QtCore import QObject, QUrl, pyqtSignal
 
 from portolan_registry_qgis.core.download import split_collisions
+from portolan_registry_qgis.core.i18n import _
 from portolan_registry_qgis.core.multihash import ChecksumError, file_matches
 from portolan_registry_qgis.qgis_io.network import run_task
 
@@ -47,7 +48,9 @@ def target_path(folder: Path, planned: PlannedFile) -> Path:
     """Return where ``planned`` goes, refusing any path outside ``folder``."""
     path = (folder / planned.path).resolve()
     if not path.is_relative_to(folder.resolve()):
-        raise ValueError(f"{planned.path} would land outside {folder}")
+        raise ValueError(
+            _("{path} would land outside {folder}").format(path=planned.path, folder=folder)
+        )
     return path
 
 
@@ -79,7 +82,10 @@ class DownloadJob(QObject):
         self._settled = len(clashes)
         self._report = DownloadReport()
         self._report.failed.extend(
-            (planned.path, f"{planned.url} has the same local path as another file")
+            (
+                planned.path,
+                _("{url} has the same local path as another file").format(url=planned.url),
+            )
             for planned in clashes
         )
         # What each busy slot does, for the progress message.
@@ -166,7 +172,8 @@ class DownloadJob(QObject):
             lambda errors: self._download_ended(downloader, planned, path, "; ".join(errors))
         )
         downloader.downloadCanceled.connect(
-            lambda: self._download_ended(downloader, planned, path, "Cancelled")
+            # Translators: Why a file did not download. The user cancelled it.
+            lambda: self._download_ended(downloader, planned, path, _("Cancelled"))
         )
         self._downloaders.add(downloader)
         downloader.startDownload()
@@ -197,7 +204,7 @@ class DownloadJob(QObject):
 
     def _verify(self, planned: PlannedFile, path: Path, *, existing: bool) -> None:
         checksum = planned.checksum or ""
-        self._show(planned, f"Verifying {planned.path}")
+        self._show(planned, _("Verifying {path}").format(path=planned.path))
 
         def hash_file(task: object) -> bool:
             cancelled = getattr(task, "isCanceled", lambda: False)
@@ -213,7 +220,7 @@ class DownloadJob(QObject):
                     self._report.skipped.append(planned.path)
                 self._release(planned)
             elif error is not None:
-                self._fail(planned, f"Checksum check failed: {error}")
+                self._fail(planned, _("Checksum check failed: {error}").format(error=error))
             elif result:
                 self._report.verified += 1
                 if existing:
@@ -225,9 +232,9 @@ class DownloadJob(QObject):
                 self._fetch(planned, path)
             else:
                 path.unlink(missing_ok=True)
-                self._fail(planned, "Downloaded bytes do not match file:checksum")
+                self._fail(planned, _("Downloaded bytes do not match file:checksum"))
 
-        task = run_task(f"Verify {planned.path}", hash_file, done)
+        task = run_task(_("Verify {path}").format(path=planned.path), hash_file, done)
         self._tasks.add(task)
 
     def _fail(self, planned: PlannedFile, reason: str) -> None:

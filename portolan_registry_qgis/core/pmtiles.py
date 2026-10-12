@@ -17,6 +17,8 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from portolan_registry_qgis.core.i18n import _
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -71,9 +73,11 @@ def parse_header(data: bytes) -> Header:
         PmtilesError: The bytes do not start with a PMTiles v3 header.
     """
     if len(data) < HEADER_LENGTH or data[:7] != b"PMTiles":
-        raise PmtilesError("Not a PMTiles archive")
+        raise PmtilesError(_("Not a PMTiles archive"))
     if data[7] != 3:
-        raise PmtilesError(f"PMTiles version {data[7]} is not supported; version 3 is")
+        raise PmtilesError(
+            _("PMTiles version {version} is not supported; version 3 is").format(version=data[7])
+        )
     numbers = struct.unpack_from("<11Q", data, 8)
     clustered_etc = struct.unpack_from("<BBBBBB", data, 96)
     west, south, east, north = struct.unpack_from("<iiii", data, 102)
@@ -106,14 +110,18 @@ def decompress(data: bytes, compression: str) -> bytes:
         return data
     if compression == "gzip":
         return gzip.decompress(data)
-    raise PmtilesError(f"{compression} compression is not supported")
+    raise PmtilesError(
+        # Translators: {compression} is a method such as brotli or zstd.
+        _("{compression} compression is not supported").format(compression=compression)
+    )
 
 
 def _varint(data: bytes, position: int) -> tuple[int, int]:
     value = shift = 0
     while True:
         if position >= len(data):
-            raise PmtilesError("Truncated directory")
+            # Translators: A PMTiles directory is the index that locates the tiles.
+            raise PmtilesError(_("Truncated directory"))
         byte = data[position]
         position += 1
         value |= (byte & 0x7F) << shift
@@ -126,9 +134,9 @@ def parse_directory(data: bytes) -> list[Entry]:
     """Decode a decompressed directory into its entries."""
     count, position = _varint(data, 0)
     columns: list[list[int]] = []
-    for _ in range(4):
+    for _column in range(4):
         column = []
-        for _ in range(count):
+        for _index in range(count):
             value, position = _varint(data, position)
             column.append(value)
         columns.append(column)
@@ -157,7 +165,9 @@ def _rotate(size: int, x: int, y: int, rx: int, ry: int) -> tuple[int, int]:
 def zxy_to_tile_id(z: int, x: int, y: int) -> int:
     """Return the Hilbert tile id of a tile, as the specification defines it."""
     if z > 31 or not (0 <= x < (1 << z) and 0 <= y < (1 << z)):
-        raise ValueError(f"Tile {z}/{x}/{y} is outside the tile pyramid")
+        raise ValueError(
+            f"Tile {z}/{x}/{y} is outside the tile pyramid"  # i18n: skip
+        )
     tile_id = ((1 << (z * 2)) - 1) // 3
     for level in range(z - 1, -1, -1):
         size = 1 << level
@@ -262,7 +272,7 @@ class Reader:
         except ValueError:
             return None
         entries = self._root or []
-        for _ in range(_MAX_DEPTH):
+        for _depth in range(_MAX_DEPTH):
             entry = find_entry(entries, tile_id)
             if entry is None:
                 return None
@@ -270,4 +280,4 @@ class Reader:
                 raw = self._fetch(header.data_offset + entry.offset, entry.length)
                 return decompress(raw, header.tile_compression)
             entries = self._leaf(header, entry.offset, entry.length)
-        raise PmtilesError("Directory nesting is deeper than the specification allows")
+        raise PmtilesError(_("Directory nesting is deeper than the specification allows"))

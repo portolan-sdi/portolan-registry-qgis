@@ -1,0 +1,1369 @@
+# Translations template for portolan-registry-qgis.
+# Copyright (C) 2026 ORGANIZATION
+# This file is distributed under the same license as the portolan-registry-qgis
+# project.
+# FIRST AUTHOR <EMAIL@ADDRESS>, 2026.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: portolan-registry-qgis VERSION\n"
+"Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
+"POT-Creation-Date: 2026-10-12 00:00+0000\n"
+"PO-Revision-Date: 2026-10-12 00:00+0000\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=utf-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Generated-By: Babel 2.18.0\n"
+
+#: portolan_registry_qgis/gui/window.py
+msgid "A layer in the project already reads this file."
+msgstr ""
+
+#: portolan_registry_qgis/core/geoparquet.py
+msgid "A table has no geometry column"
+msgstr ""
+
+#. the title of the section that describes the dataset.
+#: portolan_registry_qgis/gui/window.py
+msgid "About"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "Add as one layer"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "Add selected"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "Add the COG files in the area as one raster layer, clipped to the area"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "Add the mosaic?"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "Add the selected files to the map, whole"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "Add to map"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "Added {name}."
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "Added {n} feature from {name}."
+msgid_plural "Added {n} features from {name}."
+msgstr[0] ""
+msgstr[1] ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "Added {n} file of {name} as one layer."
+msgid_plural "Added {n} files of {name} as one layer."
+msgstr[0] ""
+msgstr[1] ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "Added {n} row from {name}."
+msgid_plural "Added {n} rows from {name}."
+msgstr[0] ""
+msgstr[1] ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "Added {n} vector tile layer from {title}."
+msgid_plural "Added {n} vector tile layers from {title}."
+msgstr[0] ""
+msgstr[1] ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "Adds the raster (Cloud Optimized GeoTIFF), read in place over HTTP."
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "Adds the vector tiles (PMTiles). They read only the tiles on screen."
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "All features and attributes, for analysis."
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "All files"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "All files ({count})"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "All files and metadata in the Portolan browser"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "All publishers"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "All rows and columns, as a table with no geometry."
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "Area of interest"
+msgstr ""
+
+#. The symbol for bytes in a file size. French writes "o", for octet.
+#: portolan_registry_qgis/core/format.py
+msgid "B"
+msgstr ""
+
+#: portolan_registry_qgis/plugin.py
+msgid "Browse the Portolan registry"
+msgstr ""
+
+#. The description line of the QGIS plugin manager.
+#: portolan_registry_qgis/metadata.txt
+msgctxt "metadata.txt"
+msgid ""
+"Browse the Portolan registry of cloud-native geospatial catalogs, add their "
+"data to the map, and download it."
+msgstr ""
+
+#: mkdocs.yml
+msgctxt "docs"
+msgid "Browse, load, and download data from the Portolan registry in QGIS"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "Build a mosaic of {name}"
+msgstr ""
+
+#: portolan_registry_qgis/plugin.py
+#, python-brace-format
+msgid "Build the mosaic {name} again"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "Building a mosaic of {n} file…"
+msgid_plural "Building a mosaic of {n} files…"
+msgstr[0] ""
+msgstr[1] ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "Cancel"
+msgstr ""
+
+#. Why a file did not download. The user cancelled it.
+#. Why a task stopped. The user cancelled it.
+#: portolan_registry_qgis/qgis_io/downloader.py
+#: portolan_registry_qgis/qgis_io/mosaic.py
+#: portolan_registry_qgis/qgis_io/network.py
+msgid "Cancelled"
+msgstr ""
+
+#: portolan_registry_qgis/gui/scope.py
+#, python-brace-format
+msgid "Cannot join the polygons of {layer}."
+msgstr ""
+
+#: portolan_registry_qgis/qgis_io/parquet_layer.py
+msgid "Cannot transform the area into the file CRS"
+msgstr ""
+
+#: portolan_registry_qgis/qgis_io/parquet_layer.py
+#, python-brace-format
+msgid "Cannot transform the area into {crs}"
+msgstr ""
+
+#: portolan_registry_qgis/gui/scope.py
+#, python-brace-format
+msgid "Cannot transform the area to {crs}."
+msgstr ""
+
+#: portolan_registry_qgis/gui/scope.py
+#, python-brace-format
+msgid "Cannot transform the area to {crs}: {error}"
+msgstr ""
+
+#: mkdocs.yml
+msgctxt "docs"
+msgid "Changelog"
+msgstr ""
+
+#: portolan_registry_qgis/qgis_io/downloader.py
+#, python-brace-format
+msgid "Checksum check failed: {error}"
+msgstr ""
+
+#: portolan_registry_qgis/gui/scope.py
+msgid "Choose a polygon layer."
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "Choose a publisher on the left to see its data here."
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "Choose {title} to add or download these files"
+msgstr ""
+
+#: portolan_registry_qgis/plugin.py
+#, python-brace-format
+msgid "Copy {url} again with DuckDB"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "Copy {url} with DuckDB"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "Copying about {n} feature of {name} with DuckDB…"
+msgid_plural "Copying about {n} features of {name} with DuckDB…"
+msgstr[0] ""
+msgstr[1] ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "Copying the features of {name} with DuckDB…"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "Could not add vector tiles: {error}"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "Could not build the mosaic of {name}: {error}"
+msgstr ""
+
+#: portolan_registry_qgis/plugin.py
+#, python-brace-format
+msgid "Could not build the mosaic {name} again: {error}"
+msgstr ""
+
+#: portolan_registry_qgis/plugin.py
+#, python-brace-format
+msgid "Could not clean the scratch folder: {error}"
+msgstr ""
+
+#: portolan_registry_qgis/plugin.py
+#, python-brace-format
+msgid "Could not copy {url} again: DuckDB is not installed."
+msgstr ""
+
+#. {version} is the installed DuckDB version, which is too old.
+#: portolan_registry_qgis/plugin.py
+#, python-brace-format
+msgid "Could not copy {url} again: DuckDB {version}."
+msgstr ""
+
+#: portolan_registry_qgis/plugin.py
+#, python-brace-format
+msgid "Could not copy {url} again: {error}"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "Could not list the files of {title}: {error}"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "Could not list {title}: {error}"
+msgstr ""
+
+#: portolan_registry_qgis/qgis_io/layers.py
+#, python-brace-format
+msgid "Could not load the style's sprite at {url}: {error}"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "Could not place {name} on the map: {error}"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "Could not read the Portolan registry. Check the connection, then reload."
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "Could not read the Portolan registry: {error}"
+msgstr ""
+
+#: portolan_registry_qgis/qgis_io/layers.py
+#, python-brace-format
+msgid "Could not read the style {url}: {error}"
+msgstr ""
+
+#: portolan_registry_qgis/qgis_io/mosaic.py
+#, python-brace-format
+msgid "Could not read {n} document below {start}, first {first}"
+msgid_plural "Could not read {n} documents below {start}, first {first}"
+msgstr[0] ""
+msgstr[1] ""
+
+#: portolan_registry_qgis/qgis_io/mosaic.py
+#, python-brace-format
+msgid "Could not read {url}, so the plugin reads each item: {error}"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "Could not read {url}: {error}"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "Could not read: {error}"
+msgstr ""
+
+#: portolan_registry_qgis/plugin.py
+#, python-brace-format
+msgid "Could not reopen {url}: {error}"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "Could not transform the extent: {error}"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "Could not write {path}: {error}"
+msgstr ""
+
+#: portolan_registry_qgis/core/format.py
+msgid "Custom terms"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "Details"
+msgstr ""
+
+#: mkdocs.yml
+msgctxt "docs"
+msgid "Development"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "Did not add {title}."
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "Did not load {name}."
+msgstr ""
+
+#: portolan_registry_qgis/core/pmtiles.py
+msgid "Directory nesting is deeper than the specification allows"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "Documentation"
+msgstr ""
+
+#. the title of the dialog that confirms a download.
+#: portolan_registry_qgis/gui/window.py
+msgid "Download"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "Download cancelled: {summary}."
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "Download into folder"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "Download into {folder} finished with errors: {summary}."
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "Download into {folder} finished: {summary}."
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "Download now?"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "Download selected…"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "Download the files of {title} in the area"
+msgstr ""
+
+#: portolan_registry_qgis/qgis_io/downloader.py
+msgid "Downloaded bytes do not match file:checksum"
+msgstr ""
+
+#. a button that asks where to download the files.
+#: portolan_registry_qgis/gui/window.py
+msgid "Download…"
+msgstr ""
+
+#: portolan_registry_qgis/gui/scope.py
+msgid "Draw a new area on the map"
+msgstr ""
+
+#: portolan_registry_qgis/gui/scope.py
+msgid "Draw again"
+msgstr ""
+
+#: portolan_registry_qgis/gui/scope.py
+msgid "Draw an area on the map first."
+msgstr ""
+
+#: portolan_registry_qgis/gui/scope.py
+msgid "Draw an area…"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "DuckDB could not read {url}: {error}"
+msgstr ""
+
+#: portolan_registry_qgis/core/parquet_query.py
+msgid "DuckDB is not installed"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "DuckDB {version} is too old. GeoParquet needs {minimum} or newer."
+msgstr ""
+
+#. A scope choice. Add or download the whole dataset.
+#: portolan_registry_qgis/gui/scope.py
+msgid "Everything"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "Fast. Draws with the publisher's style."
+msgstr ""
+
+#. The format of a file whose format is not known.
+#: portolan_registry_qgis/core/format.py
+msgid "File"
+msgstr ""
+
+#. {title} names a file, and {format} its format, such as GeoParquet.
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "File: {title} ({format})"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "Finding the files of {title} in the area…"
+msgstr ""
+
+#: portolan_registry_qgis/gui/scope.py
+msgid "Finish the area on the map first."
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "For a quick look, use View on map instead."
+msgstr ""
+
+#: portolan_registry_qgis/gui/scope.py
+msgid "From a layer…"
+msgstr ""
+
+#. The symbol for gigabytes in a file size. French writes "Go", for gigaoctet.
+#: portolan_registry_qgis/core/format.py
+msgid "GB"
+msgstr ""
+
+#: portolan_registry_qgis/qgis_io/mosaic.py
+#, python-brace-format
+msgid "GDAL could not build a mosaic of {n} file. {error}"
+msgid_plural "GDAL could not build a mosaic of {n} files. {error}"
+msgstr[0] ""
+msgstr[1] ""
+
+#: portolan_registry_qgis/qgis_io/mosaic.py
+msgid "GDAL could not clip the mosaic"
+msgstr ""
+
+#: portolan_registry_qgis/qgis_io/mosaic.py
+#, python-brace-format
+msgid "GDAL could not open {url}: {reason}"
+msgstr ""
+
+#: portolan_registry_qgis/qgis_io/layers.py
+msgid "GDAL gave no reason"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid ""
+"GeoParquet loads, mosaics, and downloads read only the data in this area. A "
+"mosaic shows only the pixels inside it."
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "GeoParquet needs DuckDB {minimum} or newer, and it is not installed."
+msgstr ""
+
+#: mkdocs.yml
+msgctxt "docs"
+msgid "Home"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "In map extent"
+msgstr ""
+
+#: mkdocs.yml
+msgctxt "docs"
+msgid "Install"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "Install it from a terminal with the Python that QGIS uses:"
+msgstr ""
+
+#. The symbol for kilobytes in a file size. French writes "ko", for kilooctet.
+#: portolan_registry_qgis/core/format.py
+msgid "KB"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "Layers: {layers}"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "License"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "List the files of {title}"
+msgstr ""
+
+#. a task in the QGIS task manager that lists the files below {title}.
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "List {title}"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "Listing everything below {title}…"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "Listing of {title} cancelled."
+msgstr ""
+
+#. The about line of the QGIS plugin manager.
+#: portolan_registry_qgis/metadata.txt
+msgctxt "metadata.txt"
+msgid ""
+"Lists every catalog in the Portolan registry and walks each catalog's STAC "
+"tree. Adds PMTiles as vector tile layers styled with the catalog's own "
+"MapLibre style, read through QGIS's network settings. Loads GeoParquet "
+"through DuckDB, limited to the map extent when you choose. Opens GeoJSON, "
+"FlatGeobuf, COG, and COPC assets over HTTP without a download. Downloads an "
+"asset, a collection, or a whole catalog into a folder that keeps the "
+"catalog's layout, and verifies each file against its file:checksum. "
+"GeoParquet needs DuckDB 1.5.0 or newer in QGIS's Python; the plugin shows "
+"the install command when it is missing."
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "Load GeoParquet"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "Load full data"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "Load table"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "Load the features?"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "Loads the CSV, read in place over HTTP."
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "Loads the FlatGeobuf, read in place over HTTP."
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "Loads the GeoJSON, read in place over HTTP."
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "Loads the GeoParquet. DuckDB copies the features in the area of interest."
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "Loads the Parquet table. It has no geometry, so it loads whole."
+msgstr ""
+
+#. The symbol for megabytes in a file size. French writes "Mo", for mégaoctet.
+#: portolan_registry_qgis/core/format.py
+msgid "MB"
+msgstr ""
+
+#: portolan_registry_qgis/gui/scope.py
+msgid "Map extent"
+msgstr ""
+
+#. the label of the row that links to more about the dataset.
+#: portolan_registry_qgis/gui/window.py
+msgid "More"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "No COG file of {title} lies in the chosen area."
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "No feature intersects the chosen area."
+msgstr ""
+
+#: portolan_registry_qgis/qgis_io/mosaic.py
+msgid "No file intersects the area"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "No publisher matches these filters."
+msgstr ""
+
+#: portolan_registry_qgis/qgis_io/layers.py
+#, python-brace-format
+msgid "No style in {title} draws {url}."
+msgstr ""
+
+#: portolan_registry_qgis/qgis_io/layers.py
+msgid "Not a MapLibre GL style (version 8)"
+msgstr ""
+
+#: portolan_registry_qgis/core/pmtiles.py
+msgid "Not a PMTiles archive"
+msgstr ""
+
+#: portolan_registry_qgis/qgis_io/parquet_layer.py
+#, python-brace-format
+msgid "Not a Polygon or MultiPolygon: {wkt}"
+msgstr ""
+
+#: portolan_registry_qgis/core/stac.py
+#, python-brace-format
+msgid "Not a STAC catalog, collection, or item (type is {kind})"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "Open data registry"
+msgstr ""
+
+#. {arrow} is an arrow that marks a link that leaves QGIS.
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "Open in Portolan browser {arrow}"
+msgstr ""
+
+#: portolan_registry_qgis/core/diagnose.py
+#, python-brace-format
+msgid "Open it in a QGIS whose GDAL includes {name}."
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "Open vector tiles of {title}"
+msgstr ""
+
+#. The symbol for petabytes in a file size. French writes "Po", for pétaoctet.
+#: portolan_registry_qgis/core/format.py
+msgid "PB"
+msgstr ""
+
+#: portolan_registry_qgis/core/pmtiles.py
+#, python-brace-format
+msgid "PMTiles version {version} is not supported; version 3 is"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "Portolan Registry: DuckDB needed"
+msgstr ""
+
+#: portolan_registry_qgis/core/format.py
+msgid "Proprietary"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "Publisher"
+msgstr ""
+
+#: portolan_registry_qgis/qgis_io/mosaic.py
+#, python-brace-format
+msgid "QGIS could not open the mosaic {path}"
+msgstr ""
+
+#: portolan_registry_qgis/qgis_io/mosaic.py
+#, python-brace-format
+msgid "QGIS could not open the mosaic: {error}"
+msgstr ""
+
+#: portolan_registry_qgis/qgis_io/layers.py
+#, python-brace-format
+msgid "QGIS could not open the tiles of {url}"
+msgstr ""
+
+#: portolan_registry_qgis/core/diagnose.py
+#, python-brace-format
+msgid "QGIS could not open {href}"
+msgstr ""
+
+#. {name} is a compression method, such as ZSTD or LERC.
+#: portolan_registry_qgis/core/diagnose.py
+#, python-brace-format
+msgid ""
+"QGIS could not open {href}. The file uses {name} compression, and the GDAL "
+"in this QGIS cannot decode {name}."
+msgstr ""
+
+#. {reason} is GDAL's error message, in English.
+#: portolan_registry_qgis/core/diagnose.py
+#, python-brace-format
+msgid "QGIS could not open {href}: {reason}"
+msgstr ""
+
+#: portolan_registry_qgis/qgis_io/parquet_layer.py
+#, python-brace-format
+msgid "QGIS could not open {path}"
+msgstr ""
+
+#: portolan_registry_qgis/qgis_io/parquet_layer.py
+#, python-brace-format
+msgid "QGIS could not open {path}: {error}"
+msgstr ""
+
+#: portolan_registry_qgis/qgis_io/layers.py
+#, python-brace-format
+msgid ""
+"QGIS could not open {url}. The GDAL setting {name} is {setting}, so GDAL "
+"reads no file without an extension over HTTP. Remove the setting in Settings"
+" > Options, under System > Environment or GDAL. Then restart QGIS."
+msgstr ""
+
+#. {name} is a GDAL setting name and {setting} its quoted value.
+#. Keep "Settings > Options" and "System > Environment" as QGIS names its menus.
+#: portolan_registry_qgis/qgis_io/layers.py
+#, python-brace-format
+msgid ""
+"QGIS could not open {url}. The GDAL setting {name} is {setting}, so GDAL "
+"reads no {extension} file over HTTP. Remove the setting, or add {extension} "
+"to it, in Settings > Options, under System > Environment or GDAL. Then "
+"restart QGIS."
+msgstr ""
+
+#: portolan_registry_qgis/qgis_io/layers.py
+#, python-brace-format
+msgid "QGIS could not open {url}: {error}"
+msgstr ""
+
+#: portolan_registry_qgis/qgis_io/layers.py
+msgid "QGIS default style"
+msgstr ""
+
+#: portolan_registry_qgis/qgis_io/layers.py
+msgid ""
+"QGIS reads the file, but GDAL does not. A GDAL network setting, such as a "
+"proxy or a certificate setting in Settings > Options, may block GDAL"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid ""
+"QGIS runs in a Flatpak, so install DuckDB into your user folder from a "
+"terminal:"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "Read the Portolan registry"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "Read the registry again"
+msgstr ""
+
+#. A background task that reads the image at {url}.
+#. a task in the QGIS task manager that reads the document at {url}.
+#: portolan_registry_qgis/gui/pictures.py portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "Read {url}"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "Read {url} with DuckDB"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "Reading the Portolan registry…"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "Reading {name} with DuckDB…"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "Reading…"
+msgstr ""
+
+#. A catalog status. The catalog is gone from its address.
+#: portolan_registry_qgis/gui/widgets.py
+msgid "Removed"
+msgstr ""
+
+#: portolan_registry_qgis/plugin.py
+#, python-brace-format
+msgid "Reopen {url}"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "Roles: {roles}"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "Search publishers by name or license"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "See every file and all metadata of this dataset"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "Select files, then add them to the map or download them"
+msgstr ""
+
+#: portolan_registry_qgis/gui/scope.py
+#, python-brace-format
+msgid "Select one or more features in {layer}."
+msgstr ""
+
+#: portolan_registry_qgis/gui/scope.py
+msgid "Selected features only"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "Show only publishers whose data overlaps the map"
+msgstr ""
+
+#: portolan_registry_qgis/gui/widgets.py
+msgid "Show the publisher's details"
+msgstr ""
+
+#: portolan_registry_qgis/gui/widgets.py
+#, python-brace-format
+msgid "Show {shown} more of {total}"
+msgstr ""
+
+#: portolan_registry_qgis/gui/widgets.py
+#, python-brace-format
+msgid "Show {shown} more of {total} file"
+msgid_plural "Show {shown} more of {total} files"
+msgstr[0] ""
+msgstr[1] ""
+
+#: portolan_registry_qgis/gui/widgets.py
+#, python-brace-format
+msgid "Show {shown} more of {total} publisher"
+msgid_plural "Show {shown} more of {total} publishers"
+msgstr[0] ""
+msgstr[1] ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "Size"
+msgstr ""
+
+#. the label of the row that links to where the data comes from.
+#: portolan_registry_qgis/gui/window.py
+msgid "Source"
+msgstr ""
+
+#. A catalog status. The registry has not checked the catalog recently.
+#: portolan_registry_qgis/gui/widgets.py
+msgid "Stale"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "Stopped reading {name}."
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "Stopped the copy of {name}."
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "Stopped the download of {name}."
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "Stopped the mosaic of {name}."
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "Stopped the search for the files of {title}."
+msgstr ""
+
+#: portolan_registry_qgis/qgis_io/layers.py
+#, python-brace-format
+msgid ""
+"Style layer {layer} reads source {source}, which is not a PMTiles archive; "
+"skipped."
+msgstr ""
+
+#. The symbol for terabytes in a file size. French writes "To", for téraoctet.
+#: portolan_registry_qgis/core/format.py
+msgid "TB"
+msgstr ""
+
+#: portolan_registry_qgis/core/registry.py
+msgid "The Portolan registry returned an invalid catalog list"
+msgstr ""
+
+#: portolan_registry_qgis/core/diagnose.py
+#, python-brace-format
+msgid ""
+"The QGIS Flatpak builds GDAL without {name}. Open the file in a QGIS from "
+"your Linux distribution, conda-forge, or the QGIS installers."
+msgstr ""
+
+#: portolan_registry_qgis/gui/scope.py
+msgid "The area is empty."
+msgstr ""
+
+#: portolan_registry_qgis/gui/scope.py
+msgid "The area is not a polygon."
+msgstr ""
+
+#: portolan_registry_qgis/qgis_io/mosaic.py
+msgid "The clip is not WKT"
+msgstr ""
+
+#: portolan_registry_qgis/qgis_io/mosaic.py
+msgid "The file has no bbox or assets column"
+msgstr ""
+
+#: portolan_registry_qgis/core/geoparquet.py
+msgid "The file has no columns"
+msgstr ""
+
+#: portolan_registry_qgis/core/geoparquet.py
+msgid "The file has no geometry column that its metadata names"
+msgstr ""
+
+#: portolan_registry_qgis/core/stac.py
+msgid "The link did not return a STAC document"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "The listing stopped at its document limit."
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "The map moved to show it."
+msgstr ""
+
+#: portolan_registry_qgis/qgis_io/mosaic.py
+#, python-brace-format
+msgid "The mosaic left out {url}: {reason}"
+msgstr ""
+
+#: portolan_registry_qgis/plugin.py
+msgid ""
+"The project saves each GeoParquet layer as a link to its source file. When "
+"the project opens, QGIS copies the features again, without your edits. To "
+"keep edits, export the layer with Save Features As."
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid ""
+"The publisher made {n} style for these vector tiles. After you add the "
+"tiles, switch styles from the layer's Styles menu."
+msgid_plural ""
+"The publisher made {n} styles for these vector tiles. After you add the "
+"tiles, switch styles from the layer's Styles menu."
+msgstr[0] ""
+msgstr[1] ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "Then restart QGIS."
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "This entry has no files of its own. Choose a dataset in the tree."
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "This entry lists no files QGIS can open."
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "This level lists {n} more"
+msgid_plural "This level lists {n} more"
+msgstr[0] ""
+msgstr[1] ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid ""
+"To add every file in the area as one layer, use Add as one layer above. "
+"Select files here to add or download them whole."
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "To add fewer files, draw a smaller area."
+msgstr ""
+
+#. A PMTiles directory is the index that locates the tiles.
+#: portolan_registry_qgis/core/pmtiles.py
+msgid "Truncated directory"
+msgstr ""
+
+#. A catalog status. The registry gives no status.
+#: portolan_registry_qgis/gui/widgets.py
+msgid "Unknown"
+msgstr ""
+
+#: mkdocs.yml
+msgctxt "docs"
+msgid "Use"
+msgstr ""
+
+#: portolan_registry_qgis/core/format.py
+msgid "Various"
+msgstr ""
+
+#. The name of a PMTiles archive whose link has no title.
+#: portolan_registry_qgis/core/stac.py
+msgid "Vector tiles"
+msgstr ""
+
+#: portolan_registry_qgis/qgis_io/downloader.py
+#, python-brace-format
+msgid "Verify {path}"
+msgstr ""
+
+#: portolan_registry_qgis/qgis_io/downloader.py
+#, python-brace-format
+msgid "Verifying {path}"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "View on map"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "Wait for the download to finish, or cancel it."
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "Wait for the list of files to download to finish, or cancel it."
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "Wait for the mosaic to finish, or cancel it."
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "Write {name} in the chosen area"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "Writing the features of {name} in the chosen area to {path}…"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "Wrote {n} feature of {name} to {path}."
+msgid_plural "Wrote {n} features of {name} to {path}."
+msgstr[0] ""
+msgstr[1] ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "Zoom the map to the extent of this dataset"
+msgstr ""
+
+#. a button that zooms the map to the dataset's extent.
+#: portolan_registry_qgis/gui/window.py
+msgid "Zoom to"
+msgstr ""
+
+#: portolan_registry_qgis/qgis_io/layers.py
+#, python-brace-format
+msgid "the server answered HTTP {status}"
+msgstr ""
+
+#: portolan_registry_qgis/qgis_io/layers.py
+#, python-brace-format
+msgid "{asset} has no format QGIS can open in place"
+msgstr ""
+
+#. {compression} is a method such as brotli or zstd.
+#: portolan_registry_qgis/core/pmtiles.py
+#, python-brace-format
+msgid "{compression} compression is not supported"
+msgstr ""
+
+#. Two license names, such as "CC0-1.0 and ODbL-1.0".
+#: portolan_registry_qgis/core/format.py
+#, python-brace-format
+msgid "{first} and {second}"
+msgstr ""
+
+#: portolan_registry_qgis/gui/scope.py
+#, python-brace-format
+msgid "{layer} has no polygon."
+msgstr ""
+
+#: portolan_registry_qgis/qgis_io/mosaic.py
+#, python-brace-format
+msgid "{layer} keeps no mosaic sources"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid ""
+"{name} holds about {n} feature in the chosen area. DuckDB copies them to a "
+"GeoPackage on disk, which takes time and disk space."
+msgid_plural ""
+"{name} holds about {n} features in the chosen area. DuckDB copies them to a "
+"GeoPackage on disk, which takes time and disk space."
+msgstr[0] ""
+msgstr[1] ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid ""
+"{name} holds about {n} feature in the file. DuckDB copies them to a "
+"GeoPackage on disk, which takes time and disk space."
+msgid_plural ""
+"{name} holds about {n} features in the file. DuckDB copies them to a "
+"GeoPackage on disk, which takes time and disk space."
+msgstr[0] ""
+msgstr[1] ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "{name} is empty."
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid ""
+"{n} GeoParquet file downloads as GeoPackage, with the features in the area "
+"only."
+msgid_plural ""
+"{n} GeoParquet files download as GeoPackage, with the features in the area "
+"only."
+msgstr[0] ""
+msgstr[1] ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "{n} already present"
+msgid_plural "{n} already present"
+msgstr[0] ""
+msgstr[1] ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "{n} checksum verified"
+msgid_plural "{n} checksums verified"
+msgstr[0] ""
+msgstr[1] ""
+
+#: portolan_registry_qgis/core/format.py
+#, python-brace-format
+msgid "{n} collection"
+msgid_plural "{n} collections"
+msgstr[0] ""
+msgstr[1] ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "{n} document could not be read and is left out."
+msgid_plural "{n} documents could not be read and are left out."
+msgstr[0] ""
+msgstr[1] ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "{n} downloaded"
+msgid_plural "{n} downloaded"
+msgstr[0] ""
+msgstr[1] ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "{n} failed"
+msgid_plural "{n} failed"
+msgstr[0] ""
+msgstr[1] ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "{n} file"
+msgid_plural "{n} files"
+msgstr[0] ""
+msgstr[1] ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "{n} file does not declare a size."
+msgid_plural "{n} files do not declare a size."
+msgstr[0] ""
+msgstr[1] ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid ""
+"{n} file of {title} lies in the chosen area. GDAL opens each file to build "
+"the mosaic, which takes time."
+msgid_plural ""
+"{n} files of {title} lie in the chosen area. GDAL opens each file to build "
+"the mosaic, which takes time."
+msgstr[0] ""
+msgstr[1] ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "{n} file, at least {size}."
+msgid_plural "{n} files, at least {size}."
+msgstr[0] ""
+msgstr[1] ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "{n} item outside the chosen area is left out."
+msgid_plural "{n} items outside the chosen area are left out."
+msgstr[0] ""
+msgstr[1] ""
+
+#: portolan_registry_qgis/core/format.py
+#, python-brace-format
+msgid "{n} license"
+msgid_plural "{n} licenses"
+msgstr[0] ""
+msgstr[1] ""
+
+#. {geometry_type} is a geometry type, such as Point or Polygon.
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid ""
+"{n} of them has no geometry, because its geometry type does not fit a "
+"{geometry_type} layer."
+msgid_plural ""
+"{n} of them have no geometry, because their geometry type does not fit a "
+"{geometry_type} layer."
+msgstr[0] ""
+msgstr[1] ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "{n} publisher"
+msgid_plural "{n} publishers"
+msgstr[0] ""
+msgstr[1] ""
+
+#: portolan_registry_qgis/qgis_io/downloader.py
+#, python-brace-format
+msgid "{path} would land outside {folder}"
+msgstr ""
+
+#. {shown} publishers pass the filters, of {n} in the registry.
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "{shown} of {n} publisher"
+msgid_plural "{shown} of {n} publishers"
+msgstr[0] ""
+msgstr[1] ""
+
+#. A warning about one style. {style} is the style's name.
+#: portolan_registry_qgis/qgis_io/layers.py
+#, python-brace-format
+msgid "{style}: {warning}"
+msgstr ""
+
+#: portolan_registry_qgis/qgis_io/network.py
+#, python-brace-format
+msgid ""
+"{task} failed after the task ended:\n"
+"{trace}"
+msgstr ""
+
+#: portolan_registry_qgis/qgis_io/network.py
+#, python-brace-format
+msgid "{url} did not return JSON: {error}"
+msgstr ""
+
+#: portolan_registry_qgis/qgis_io/downloader.py
+#, python-brace-format
+msgid "{url} has the same local path as another file"
+msgstr ""
+
+#. {kind} is a tile format, such as "png".
+#: portolan_registry_qgis/qgis_io/tileserver.py
+#, python-brace-format
+msgid "{url} holds {kind} tiles, not vector tiles"
+msgstr ""
+
+#: portolan_registry_qgis/qgis_io/network.py
+#, python-brace-format
+msgid "{url}: the server ignores HTTP range requests"
+msgstr ""
+
+#. An error about the file at {url}.
+#: portolan_registry_qgis/qgis_io/network.py
+#: portolan_registry_qgis/qgis_io/tileserver.py
+#, python-brace-format
+msgid "{url}: {error}"
+msgstr ""

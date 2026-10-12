@@ -24,6 +24,8 @@ from qgis.core import (
 from qgis.PyQt.QtCore import QRunnable, Qt, QThreadPool, QUrl
 from qgis.PyQt.QtNetwork import QNetworkRequest
 
+from portolan_registry_qgis.core.i18n import _
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -53,7 +55,8 @@ def fetch_bytes(url: str, accept: bytes = _ACCEPT) -> bytes:
     blocking = QgsBlockingNetworkRequest()
     code = blocking.get(request, forceRefresh=False)
     if code != QgsBlockingNetworkRequest.ErrorCode.NoError:
-        raise NetworkError(f"{url}: {blocking.errorMessage()}")
+        # Translators: An error about the file at {url}.
+        raise NetworkError(_("{url}: {error}").format(url=url, error=blocking.errorMessage()))
     return bytes(blocking.reply().content())
 
 
@@ -119,9 +122,10 @@ def _range(url: str, offset: int, length: int) -> tuple[bytes, bytes]:
     reply = blocking.reply()
     status = reply.attribute(QNetworkRequest.Attribute.HttpStatusCodeAttribute)
     if feedback.isCanceled() or status == 200:
-        raise NetworkError(f"{url}: the server ignores HTTP range requests")
+        raise NetworkError(_("{url}: the server ignores HTTP range requests").format(url=url))
     if code != QgsBlockingNetworkRequest.ErrorCode.NoError:
-        raise NetworkError(f"{url}: {blocking.errorMessage()}")
+        # Translators: An error about the file at {url}.
+        raise NetworkError(_("{url}: {error}").format(url=url, error=blocking.errorMessage()))
     return bytes(reply.content()), bytes(reply.rawHeader(b"Cache-Control"))
 
 
@@ -184,7 +188,9 @@ def fetch_json(url: str) -> object:
     try:
         return json.loads(body)
     except ValueError as error:
-        raise ValueError(f"{url} did not return JSON: {error}") from error
+        raise ValueError(
+            _("{url} did not return JSON: {error}").format(url=url, error=error)
+        ) from error
 
 
 def report_failure(text: str) -> None:
@@ -215,13 +221,18 @@ def run_task(
     def finished(exception: BaseException | None, result: object = None) -> None:
         _RUNNING.discard(task)
         if exception is None and result is None and task.isCanceled():
-            exception = NetworkError("Cancelled")
+            # Translators: Why a task stopped. The user cancelled it.
+            exception = NetworkError(_("Cancelled"))
         try:
             on_done(None if exception else result, exception)
         except Exception:  # noqa: BLE001 - QGIS drops an error that leaves this function
             # QGIS swallows an exception in a task's finished handler. Then
             # an action that fails looks like an action that did nothing.
-            report_failure(f"{description} failed after the task ended:\n{traceback.format_exc()}")
+            report_failure(
+                _("{task} failed after the task ended:\n{trace}").format(
+                    task=description, trace=traceback.format_exc()
+                )
+            )
 
     flags = QgsTask.Flag.CanCancel
     if hidden:

@@ -69,6 +69,18 @@ repos:
 
   - repo: local
     hooks:
+      # English is the source language. The check fails when a string a
+      # person reads skips translation, or when the Spanish or French
+      # catalogs, metadata.txt, or docs-i18n/ lag the English.
+      - id: i18n
+        name: translations
+        description: Spanish and French keep level with the English
+        entry: uv run python scripts/i18n.py check
+        language: system
+        pass_filenames: false
+        files: ^(portolan_registry_qgis/|docs/|docs-i18n/|mkdocs\.yml$|scripts/i18n\.py$)
+        stages: [pre-commit]
+
       - id: mypy
         name: mypy
         description: Static type check (same gate as CI)

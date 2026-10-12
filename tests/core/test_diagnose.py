@@ -34,3 +34,16 @@ def test_other_failures_pass_gdal_on_or_stay_short():
         f"QGIS could not open {URL}: HTTP response code: 403"
     )
     assert open_failure(URL, GONE, False) == f"QGIS could not open {URL}"
+
+
+def test_gdal_reason_drops_the_translated_qgis_wrapper():
+    # QGIS in Spanish translates the provider line, but not the GDAL prefix.
+    detail = (
+        f"Cannot open GDAL dataset /vsicurl/{URL}:\n"
+        "tile.tif: HTTP response code: 404\n"
+        "El proveedor no es válido (proveedor: gdal, URL: x)"
+    )
+    invalid = "El proveedor no es válido (proveedor: "
+    assert gdal_reason(detail, invalid) == "tile.tif: HTTP response code: 404"
+    assert "El proveedor" in gdal_reason(detail)
+    assert open_failure(URL, detail, False, invalid).endswith("HTTP response code: 404")

@@ -34,12 +34,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import TYPE_CHECKING, Any
 from urllib.parse import unquote
 
+from portolan_registry_qgis.core.i18n import _
 from portolan_registry_qgis.core.pmtiles import PmtilesError, Reader
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-__all__ = ["Archive", "PmtilesError", "TileServer", "open_archive", "read_tile"]
+__all__ = ["Archive", "PmtilesError", "TileServer", "open_archive", "read_tile"]  # i18n: skip
 
 
 @dataclass(frozen=True)
@@ -76,9 +77,13 @@ def open_archive(url: str, fetch_range: Callable[[int, int], bytes] | None = Non
     try:
         header = reader.header()
     except PmtilesError as error:
-        raise PmtilesError(f"{url}: {error}") from error
+        # Translators: An error about the file at {url}.
+        raise PmtilesError(_("{url}: {error}").format(url=url, error=error)) from error
     if header.tile_type != "mvt":
-        raise PmtilesError(f"{url} holds {header.tile_type} tiles, not vector tiles")
+        raise PmtilesError(
+            # Translators: {kind} is a tile format, such as "png".
+            _("{url} holds {kind} tiles, not vector tiles").format(url=url, kind=header.tile_type)
+        )
     metadata = reader.metadata()
     layers = metadata.get("vector_layers")
     names = (
@@ -141,7 +146,7 @@ class _Handler(BaseHTTPRequestHandler):
             self.end_headers()
             return
         self.send_response(200)
-        self.send_header("Content-Type", "application/vnd.mapbox-vector-tile")
+        self.send_header("Content-Type", "application/vnd.mapbox-vector-tile")  # i18n: skip
         self.send_header("Content-Length", str(len(tile)))
         self.send_header("Cache-Control", _cache_control(archive))
         self.end_headers()

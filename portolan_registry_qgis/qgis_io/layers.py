@@ -31,6 +31,7 @@ from qgis.core import (
     QgsVectorLayer,
     QgsVectorTileLayer,
 )
+from qgis.PyQt.QtCore import QCoreApplication
 
 from portolan_registry_qgis.core.diagnose import open_failure
 from portolan_registry_qgis.core.hrefs import (
@@ -39,6 +40,7 @@ from portolan_registry_qgis.core.hrefs import (
     url_extension,
     vsicurl_path,
 )
+from portolan_registry_qgis.core.i18n import N_, _
 from portolan_registry_qgis.core.parquet_query import is_flatpak
 from portolan_registry_qgis.qgis_io.network import NetworkError, fetch_range, http_status
 from portolan_registry_qgis.qgis_io.tileserver import Archive, TileServer, open_archive
@@ -49,7 +51,8 @@ if TYPE_CHECKING:
     from portolan_registry_qgis.core.stac import Asset, Document
 
 PMTILES_PROPERTY = "portolan/pmtiles_url"
-DEFAULT_STYLE_NAME = "QGIS default style"
+# The name the layer's own style gets in its style manager. Translate it where it is used.
+DEFAULT_STYLE_NAME = N_("QGIS default style")
 _PMTILES_SCHEME = "pmtiles://"
 # Header names that hold point coordinates in EPSG:4326, in order of
 # preference. The comparison ignores case.
@@ -93,13 +96,22 @@ def blocked_message(url: str) -> str | None:
     setting = gdal.GetConfigOption(_ALLOWED)
     if not extension_blocked(url, setting):
         return None
-    extension = url_extension(url) or "files with no extension"
-    return (
-        f"QGIS could not open {url}. The GDAL setting {_ALLOWED} is {setting!r}, "
-        f"so GDAL reads no {extension} file over HTTP. Remove the setting, or add "
-        f"{extension} to it, in Settings > Options, under System > Environment or GDAL. "
+    extension = url_extension(url)
+    if not extension:
+        return _(
+            "QGIS could not open {url}. The GDAL setting {name} is {setting}, "
+            "so GDAL reads no file without an extension over HTTP. Remove the setting "
+            "in Settings > Options, under System > Environment or GDAL. "
+            "Then restart QGIS."
+        ).format(url=url, name=_ALLOWED, setting=repr(setting))
+    # Translators: {name} is a GDAL setting name and {setting} its quoted value.
+    # Keep "Settings > Options" and "System > Environment" as QGIS names its menus.
+    return _(
+        "QGIS could not open {url}. The GDAL setting {name} is {setting}, "
+        "so GDAL reads no {extension} file over HTTP. Remove the setting, or add "
+        "{extension} to it, in Settings > Options, under System > Environment or GDAL. "
         "Then restart QGIS."
-    )
+    ).format(url=url, name=_ALLOWED, setting=repr(setting), extension=extension)
 
 
 @contextlib.contextmanager
@@ -128,7 +140,20 @@ def remote_reads(urls: list[str]) -> Iterator[None]:
 
 # GDAL gives this text for a /vsicurl path it cannot read, whatever the
 # reason. A 404, a refused path, and a network block all read the same.
-_GENERIC = "does not exist in the file system"
+# GDAL writes it in English, so it stays English here.
+_GENERIC = "does not exist in the file system"  # i18n: skip - GDAL's text, matched
+
+
+def _provider_invalid() -> str:
+    """Return the start of the line QGIS adds when a raster provider fails.
+
+    QGIS translates that line, so the start comes from its own catalog.
+    """
+    line = QCoreApplication.translate(
+        "QgsRasterLayer",
+        "Provider is not valid (provider: %1, URI: %2",  # i18n: skip - QGIS's own text
+    )
+    return str(line).split("%1", 1)[0]
 
 
 def explain_open_error(url: str, message: str) -> str:
@@ -145,9 +170,9 @@ def explain_open_error(url: str, message: str) -> str:
         return blocked
     status, error = http_status(url)
     if status is not None and status >= 400:
-        return f"the server answered HTTP {status}"
+        return _("the server answered HTTP {status}").format(status=status)
     if status is not None:
-        return (
+        return _(
             "QGIS reads the file, but GDAL does not. A GDAL network setting, such as a "
             "proxy or a certificate setting in Settings > Options, may block GDAL"
         )
@@ -169,7 +194,7 @@ def gdal_open_error(path: str) -> str:
             return str(error)
         if dataset is not None:
             return ""
-        return gdal.GetLastErrorMsg() or "GDAL gave no reason"
+        return gdal.GetLastErrorMsg() or _("GDAL gave no reason")
     finally:
         gdal.PopErrorHandler()
 
@@ -244,8 +269,10 @@ def split_style(style: dict[str, Any], style_url: str, fallback: str | None = No
             url = sources.get(str(source)) if source is not None else None
         if url is None:
             result.warnings.append(
-                f"Style layer {layer.get('id')!r} reads source {source!r}, "
-                "which is not a PMTiles archive; skipped."
+                _(
+                    "Style layer {layer} reads source {source}, "
+                    "which is not a PMTiles archive; skipped."
+                ).format(layer=repr(layer.get("id")), source=repr(source))
             )
             continue
         target = result.by_source.setdefault(url, {**style, "layers": []})
@@ -290,7 +317,7 @@ def vector_tile_layer(
     uri.setParam("zmax", str(archive.max_zoom))
     layer = QgsVectorTileLayer(bytes(uri.encodedUri()).decode(), name)
     if not layer.isValid():
-        raise LayerError(f"QGIS could not open the tiles of {archive.url}")
+        raise LayerError(_("QGIS could not open the tiles of {url}").format(url=archive.url))
     layer.setCustomProperty(PMTILES_PROPERTY, archive.url)
     return layer
 
@@ -351,13 +378,19 @@ def prepare_pmtiles(
         try:
             style = parse_style(fetch_bytes(asset.href))
         except (OSError, ValueError) as error:
-            warnings.append(f"Could not read the style {asset.href}: {error}")
+            warnings.append(
+                _("Could not read the style {url}: {error}").format(url=asset.href, error=error)
+            )
             continue
         styled = split_style(style, asset.href, fallback)
         used = [url for url in styled.by_source if url in by_archive]
         if not used:
             continue
-        warnings.extend(f"{asset.label}: {note}" for note in styled.warnings)
+        warnings.extend(
+            # Translators: A warning about one style. {style} is the style's name.
+            _("{style}: {warning}").format(style=asset.label, warning=note)
+            for note in styled.warnings
+        )
         sprite = _sprite(style, asset.href, fetch_bytes, warnings, sprites)
         for url in used:
             by_archive[url].append(TileStyle(asset.label, styled.by_source[url], sprite))
@@ -365,7 +398,9 @@ def prepare_pmtiles(
     parts = []
     for url in urls:
         if document.styles and not by_archive[url]:
-            warnings.append(f"No style in {document.title} draws {url}.")
+            warnings.append(
+                _("No style in {title} draws {url}.").format(title=document.title, url=url)
+            )
         title = titles.get(url) or document.title
         parts.append(TilePart(open_archive(url), title, by_archive[url]))
     return PreparedTiles(parts=parts, warnings=warnings)
@@ -409,7 +444,11 @@ def add_styles(
         if style.sprite is not None:
             sprite = (load_image(style.sprite[0]), style.sprite[1])
         renderer, labeling, notes = convert_style(style.style, sprite)
-        warnings.extend(f"{style.name}: {note}" for note in notes)
+        warnings.extend(
+            # Translators: A warning about one style. {style} is the style's name.
+            _("{style}: {warning}").format(style=style.name, warning=note)
+            for note in notes
+        )
         if renderer is None:
             continue
         layer.setRenderer(renderer)
@@ -421,7 +460,7 @@ def add_styles(
     # state into the current style before it switches.
     original.writeToLayer(layer)
     manager = layer.styleManager()
-    manager.renameStyle(manager.currentStyle(), DEFAULT_STYLE_NAME)
+    manager.renameStyle(manager.currentStyle(), _(DEFAULT_STYLE_NAME))
     for name, captured in named.items():
         manager.addStyle(name, captured)
     if named:
@@ -431,7 +470,8 @@ def add_styles(
 
 def _unique(name: str, taken: dict[str, Any]) -> str:
     candidate, number = name, 2
-    while candidate in taken or candidate == DEFAULT_STYLE_NAME:
+    default = _(DEFAULT_STYLE_NAME)
+    while candidate in taken or candidate == default:
         candidate, number = f"{name} ({number})", number + 1
     return candidate
 
@@ -453,7 +493,11 @@ def _sprite(
             index = json.loads(fetch_bytes(f"{root}.json"))
             image = fetch_bytes(f"{root}.png")
         except (OSError, ValueError) as error:
-            warnings.append(f"Could not load the style's sprite at {root}: {error}")
+            warnings.append(
+                _("Could not load the style's sprite at {url}: {error}").format(
+                    url=root, error=error
+                )
+            )
         else:
             if isinstance(index, dict):
                 cache[root] = (image, index)
@@ -589,14 +633,18 @@ def asset_layer(asset: Asset, name: str | None = None) -> QgsMapLayer:
         elif asset.format == "copc":
             layer = QgsPointCloudLayer(asset.href, title, "copc")
         else:
-            raise LayerError(f"{asset.label} has no format QGIS can open in place")
+            raise LayerError(
+                _("{asset} has no format QGIS can open in place").format(asset=asset.label)
+            )
     if not layer.isValid():
         summary = layer.error().summary()
         if _GENERIC in summary:
             raise LayerError(
-                f"QGIS could not open {asset.href}: {explain_open_error(asset.href, summary)}"
+                _("QGIS could not open {url}: {error}").format(
+                    url=asset.href, error=explain_open_error(asset.href, summary)
+                )
             )
-        raise LayerError(open_failure(asset.href, summary, is_flatpak()))
+        raise LayerError(open_failure(asset.href, summary, is_flatpak(), _provider_invalid()))
     return layer
 
 
@@ -604,5 +652,5 @@ def parse_style(raw: bytes) -> dict[str, Any]:
     """Parse a style file, rejecting anything but a MapLibre v8 style object."""
     style = json.loads(raw)
     if not isinstance(style, dict) or style.get("version") != 8:
-        raise ValueError("Not a MapLibre GL style (version 8)")
+        raise ValueError(_("Not a MapLibre GL style (version 8)"))
     return style

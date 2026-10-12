@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from portolan_registry_qgis.core.hrefs import absolute_href, asset_href, folder_name, is_http_url
+from portolan_registry_qgis.core.i18n import _
 
 Bbox = tuple[float, float, float, float]
 NodeKind = Literal["catalog", "collection", "item"]
@@ -22,7 +23,7 @@ AssetFormat = Literal["pmtiles", "geojson", "cog", "parquet", "flatgeobuf", "cop
 
 _COLLECTION_HREF = re.compile(r"/collection\.json($|[?#])", re.IGNORECASE)
 _IMAGE_HREF = re.compile(r"\.(png|jpe?g|webp|gif|svg)($|[?#])", re.IGNORECASE)
-STYLE_MEDIA_TYPE = "application/vnd.mapbox.style+json"
+STYLE_MEDIA_TYPE = "application/vnd.mapbox.style+json"  # i18n: skip - a media type
 # The order in which the panel picks an asset to add. PMTiles draw at every
 # zoom with the catalog's style. A COG or COPC is the data itself. GeoParquet
 # reads only the map extent, and FlatGeobuf and GeoJSON come next. A CSV comes
@@ -179,7 +180,8 @@ class Document:
         """
         shared = self.pmtiles_duplicates
         found = [
-            Loadable(link.href, link.title or "Vector tiles", "pmtiles", layers=link.layers)
+            # Translators: The name of a PMTiles archive whose link has no title.
+            Loadable(link.href, link.title or _("Vector tiles"), "pmtiles", layers=link.layers)
             for link in self.pmtiles
         ]
         found += [
@@ -333,10 +335,10 @@ def asset_format(href: str, media_type: str | None) -> AssetFormat | None:
     if not is_http_url(href):
         return None
     media = (media_type or "").lower()
-    for name, fragment, _ in _FORMAT_RULES:
+    for name, fragment, _pattern in _FORMAT_RULES:
         if fragment in media:
             return name
-    for name, _, extension in _FORMAT_RULES:
+    for name, _media, extension in _FORMAT_RULES:
         if extension.search(href):
             return name
     return None
@@ -347,7 +349,7 @@ def _int_or_none(value: object) -> int | None:
 
 
 def _account(raw: dict[str, Any], fallback: str | None) -> str | None:
-    storage = raw.get("table:storage_options")
+    storage = raw.get("table:storage_options")  # i18n: skip - a STAC key
     if isinstance(storage, dict) and isinstance(storage.get("account_name"), str):
         return str(storage["account_name"])
     return fallback
@@ -402,9 +404,9 @@ def assets_of(document: dict[str, Any], base: str) -> tuple[Asset, ...]:
         return ()
     properties = document.get("properties")
     item_account = _account(properties, None) if isinstance(properties, dict) else None
-    shared_columns = document.get("table:columns")
+    shared_columns = document.get("table:columns")  # i18n: skip - a STAC key
     if shared_columns is None and isinstance(properties, dict):
-        shared_columns = properties.get("table:columns")
+        shared_columns = properties.get("table:columns")  # i18n: skip - a STAC key
     assets = []
     for key, raw in raw_assets.items():
         if not isinstance(raw, dict) or not isinstance(raw.get("href"), str):
@@ -416,9 +418,9 @@ def assets_of(document: dict[str, Any], base: str) -> tuple[Asset, ...]:
         roles = raw.get("roles")
         title = raw.get("title")
         media = raw.get("type")
-        checksum = raw.get("file:checksum")
+        checksum = raw.get("file:checksum")  # i18n: skip - a STAC key
         detected = asset_format(href, media if isinstance(media, str) else None)
-        columns = raw.get("table:columns", shared_columns)
+        columns = raw.get("table:columns", shared_columns)  # i18n: skip - a STAC key
         assets.append(
             Asset(
                 key=str(key),
@@ -428,7 +430,7 @@ def assets_of(document: dict[str, Any], base: str) -> tuple[Asset, ...]:
                 roles=tuple(r for r in roles if isinstance(r, str))
                 if isinstance(roles, list)
                 else (),
-                size=_int_or_none(raw.get("file:size")),
+                size=_int_or_none(raw.get("file:size")),  # i18n: skip - a STAC key
                 checksum=checksum if isinstance(checksum, str) else None,
                 format=detected,
                 tabular=detected == "parquet" and is_tabular(columns),
@@ -443,7 +445,7 @@ def pmtiles_links(links: tuple[Link, ...]) -> tuple[PmtilesLink, ...]:
     for link in links:
         if link.rel != "pmtiles" or not is_http_url(link.href):
             continue
-        layers = link.extra.get("pmtiles:layers")
+        layers = link.extra.get("pmtiles:layers")  # i18n: skip - a STAC key
         names = tuple(n for n in layers if isinstance(n, str)) if isinstance(layers, list) else ()
         found.append(PmtilesLink(link.href, link.title, names))
     return tuple(found)
@@ -457,7 +459,9 @@ def _kind_of(document: dict[str, Any]) -> NodeKind:
         return "item"
     if kind == "Catalog":
         return "catalog"
-    raise StacError(f"Not a STAC catalog, collection, or item (type is {kind!r})")
+    raise StacError(
+        _("Not a STAC catalog, collection, or item (type is {kind})").format(kind=repr(kind))
+    )
 
 
 def _bbox_of(document: dict[str, Any], kind: NodeKind) -> Bbox | None:
@@ -488,7 +492,7 @@ def read_document(document: object, href: str) -> Document:
         StacError: The JSON is not a STAC catalog, collection, or item.
     """
     if not isinstance(document, dict):
-        raise StacError("The link did not return a STAC document")
+        raise StacError(_("The link did not return a STAC document"))
     kind = _kind_of(document)
     links = links_of(document.get("links"), href)
     properties = document.get("properties")

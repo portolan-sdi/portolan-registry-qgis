@@ -55,6 +55,7 @@ from qgis.core import (
 
 from portolan_registry_qgis.core import parquet_query
 from portolan_registry_qgis.core.geoparquet import LAYER
+from portolan_registry_qgis.core.i18n import _
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -74,11 +75,11 @@ AREA_PROPERTY = "portolan/parquet_area"
 # ended without cleaning up.
 STALE_SECONDS = 7 * 24 * 3600
 _SESSION_PREFIX = "session-"
-_PLACEHOLDER = "placeholder.gpkg"
-_PLACEHOLDER_VRT = "placeholder.vrt"
+_PLACEHOLDER = "placeholder.gpkg"  # i18n: skip - a file name
+_PLACEHOLDER_VRT = "placeholder.vrt"  # i18n: skip - a file name
 # A raster with one empty pixel. It stands in for a mosaic a saved project lost.
 _EMPTY_VRT = (
-    '<VRTDataset rasterXSize="1" rasterYSize="1">'
+    '<VRTDataset rasterXSize="1" rasterYSize="1">'  # i18n: skip - VRT XML
     "<SRS>EPSG:4326</SRS><GeoTransform>0, 1, 0, 0, 0, -1</GeoTransform>"
     '<VRTRasterBand dataType="Byte" band="1"><NoDataValue>0</NoDataValue></VRTRasterBand>'
     "</VRTDataset>\n"
@@ -92,7 +93,7 @@ _SCRATCH_FILE = re.compile(
 )
 # SQLite keeps the first four next to a GeoPackage while a connection is
 # open. GDAL writes raster statistics to the last.
-_SIDECARS = ("", "-wal", "-shm", "-journal", ".aux.xml")
+_SIDECARS = ("", "-wal", "-shm", "-journal", ".aux.xml")  # i18n: skip - file suffixes
 _lock = threading.Lock()
 _session: Path | None = None
 _pending: set[Path] = set()
@@ -181,10 +182,13 @@ def file_area(
     """
     geometry = QgsGeometry.fromWkt(area)
     if geometry.isNull() or geometry.type() != Qgis.GeometryType.Polygon:
-        raise ValueError(f"Not a Polygon or MultiPolygon: {area[:80]}")
+        raise ValueError(_("Not a Polygon or MultiPolygon: {wkt}").format(wkt=area[:80]))
     transform = QgsCoordinateTransform(QgsCoordinateReferenceSystem("EPSG:4326"), file_crs, context)
     if geometry.transform(transform) != Qgis.GeometryOperationResult.Success:
-        raise ValueError(f"Cannot transform the area into {file_crs.authid() or 'the file CRS'}")
+        crs = file_crs.authid()
+        if crs:
+            raise ValueError(_("Cannot transform the area into {crs}").format(crs=crs))
+        raise ValueError(_("Cannot transform the area into the file CRS"))
     rect = geometry.boundingBox()
     return geometry.asWkt(), (rect.xMinimum(), rect.yMinimum(), rect.xMaximum(), rect.yMaximum())
 
@@ -280,7 +284,11 @@ def build(prepared: Prepared, name: str) -> tuple[QgsVectorLayer, int]:
     layer = QgsVectorLayer(f"{prepared.path}|layername={LAYER}", name, "ogr")
     if not layer.isValid():
         discard_path(prepared.path)
-        raise OSError(f"QGIS could not open {prepared.path}: {layer.error().summary()}")
+        raise OSError(
+            _("QGIS could not open {path}: {error}").format(
+                path=prepared.path, error=layer.error().summary()
+            )
+        )
     release_path(prepared.path)
     layer.setCustomProperty(SOURCE_PROPERTY, prepared.url)
     bbox = prepared.bbox
@@ -419,7 +427,7 @@ def reopen(layer: QgsVectorLayer, prepared: Prepared) -> None:
     layer.setDataSource(f"{prepared.path}|layername={LAYER}", layer.name(), "ogr")
     if not layer.isValid():
         discard_path(prepared.path)
-        raise OSError(f"QGIS could not open {prepared.path}")
+        raise OSError(_("QGIS could not open {path}").format(path=prepared.path))
     release_path(prepared.path)
     layer.triggerRepaint()
 
@@ -446,7 +454,8 @@ def new_path(suffix: str) -> Path:
     """
     global _session  # noqa: PLW0603 - one scratch folder per QGIS session
     if suffix not in _SUFFIXES:
-        raise ValueError(f"The scratch folder holds no {suffix} files")
+        # A programming error. The callers pass a suffix from _SUFFIXES.
+        raise ValueError(f"The scratch folder holds no {suffix} files")  # i18n: skip
     with _lock:
         if _session is None or not _session.is_dir():
             _session = Path(tempfile.mkdtemp(prefix=_own_prefix(), dir=scratch_folder()))

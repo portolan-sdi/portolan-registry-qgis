@@ -28,6 +28,7 @@ from portolan_registry_qgis.core.geoparquet import (
     quote,
     type_from_first,
 )
+from portolan_registry_qgis.core.i18n import _
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -74,10 +75,10 @@ def install_command(upgrade: bool) -> str:
     flag = "--upgrade " if upgrade else ""
     if is_flatpak():
         return (
-            "flatpak run --command=python3 org.qgis.qgis \\\n"
-            f"  -m pip install --user {flag}'duckdb>={minimum}'"
+            "flatpak run --command=python3 org.qgis.qgis \\\n"  # i18n: skip - a command
+            f"  -m pip install --user {flag}'duckdb>={minimum}'"  # i18n: skip - a command
         )
-    return f"{sys.executable} -m pip install --user {flag}'duckdb>={minimum}'"
+    return f"{sys.executable} -m pip install --user {flag}'duckdb>={minimum}'"  # i18n: skip - a command
 
 
 def connection(extension_dir: str | None = None) -> Any:
@@ -93,7 +94,7 @@ def connection(extension_dir: str | None = None) -> Any:
     global _connection  # noqa: PLW0603 - one connection per QGIS session
     ok, version = duckdb_status()
     if not ok:
-        raise DuckDBMissingError(f"DuckDB {version or 'is not installed'}")
+        raise DuckDBMissingError(f"DuckDB {version}" if version else _("DuckDB is not installed"))
     import duckdb
 
     with _lock:
@@ -219,7 +220,9 @@ def _null_geometries(path: str) -> int:
     stays fast on a large local file.
     """
     with contextlib.closing(sqlite3.connect(path)) as gpkg:
-        row = gpkg.execute("SELECT table_name, column_name FROM gpkg_geometry_columns").fetchone()
+        row = gpkg.execute(
+            "SELECT table_name, column_name FROM gpkg_geometry_columns"  # i18n: skip - SQL
+        ).fetchone()
         if row is None:
             return 0
         table, column = (str(part).replace('"', '""') for part in row)
@@ -285,7 +288,9 @@ def _drop_geometry(path: str) -> None:
     and QGIS then open the layer as a table with no geometry.
     """
     with contextlib.closing(sqlite3.connect(path)) as gpkg:
-        row = gpkg.execute("SELECT table_name, column_name FROM gpkg_geometry_columns").fetchone()
+        row = gpkg.execute(
+            "SELECT table_name, column_name FROM gpkg_geometry_columns"  # i18n: skip - SQL
+        ).fetchone()
         if row is None:
             return
         table, column = (str(part) for part in row)

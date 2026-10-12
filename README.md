@@ -15,7 +15,7 @@ Restart QGIS, enable **Portolan Registry** in the plugin manager, and open it fr
 
 ## Documentation
 
-See the [documentation](https://portolan-sdi.github.io/portolan-registry-qgis/) for installation, including Flatpak, usage, and development.
+See the [documentation](https://portolan-sdi.github.io/portolan-registry-qgis/) for installation, including Flatpak, usage, and development. The plugin and its documentation are also in [Spanish](https://portolan-sdi.github.io/portolan-registry-qgis/es/) and [French](https://portolan-sdi.github.io/portolan-registry-qgis/fr/).
 
 ## Contributing
 

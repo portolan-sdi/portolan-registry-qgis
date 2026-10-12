@@ -18,6 +18,8 @@ import json
 from dataclasses import dataclass
 from typing import Literal
 
+from portolan_registry_qgis.core.i18n import _
+
 FieldKind = Literal["bool", "int", "double", "string", "date", "datetime"]
 
 _INT_TYPES = (
@@ -43,7 +45,7 @@ _MULTI = {
 DEFAULT_CRS = "OGC:CRS84"
 # The geometry type of a table. QGIS uses this name for a memory layer with
 # no geometry.
-NO_GEOMETRY = "None"
+NO_GEOMETRY = "None"  # i18n: skip - a QGIS geometry type
 # The name of the one layer in each GeoPackage. A fixed name lets a saved
 # project open a placeholder in place of a file that is gone.
 LAYER = "features"
@@ -161,7 +163,7 @@ def layer_geometry_type(types: list[str]) -> str:
     else:
         families = {_MULTI.get(name, name) for name in names}
         if len(families) != 1:
-            return "Unknown"
+            return "Unknown"  # i18n: skip - a QGIS geometry type
         family = families.pop()
     return f"{family}Z" if has_z else family
 
@@ -255,12 +257,12 @@ def plan_read(schema: list[tuple[str, str]], geo_json: str | bytes | None) -> Re
             names a geometry column that the schema does not hold.
     """
     if not schema:
-        raise GeoParquetError("The file has no columns")
+        raise GeoParquetError(_("The file has no columns"))
     geo = _geo_metadata(geo_json)
     picked = _pick_geometry(schema, geo)
     if picked is None:
         if _declares_geometry(geo):
-            raise GeoParquetError("The file has no geometry column that its metadata names")
+            raise GeoParquetError(_("The file has no geometry column that its metadata names"))
         return _table_plan(schema)
     geometry, info = picked
     types = info.get("geometry_types")
@@ -302,7 +304,7 @@ def _geometry(plan: ReadPlan) -> str:
         GeoParquetError: The plan is for a table, which has no geometry.
     """
     if plan.geometry is None:
-        raise GeoParquetError("A table has no geometry column")
+        raise GeoParquetError(_("A table has no geometry column"))
     return plan.geometry
 
 
@@ -314,7 +316,7 @@ def shape(plan: ReadPlan) -> str:
 
 def _check_area(bbox: tuple[float, float, float, float] | None, area: str | None) -> None:
     if area is not None and bbox is None:
-        raise ValueError("An area needs its envelope as the bbox")
+        raise ValueError("An area needs its envelope as the bbox")  # i18n: skip - a caller bug
 
 
 def _where(
@@ -426,9 +428,10 @@ def type_from_first(row: tuple[object, object] | None) -> str:
     geometry in range gives ``Point``.
     """
     if row is None or not isinstance(row[0], str):
-        return "Point"
+        return "Point"  # i18n: skip - a QGIS geometry type
     family = {name.upper(): name for name in (*_MULTI, *_MULTI.values(), "GeometryCollection")}.get(
-        row[0].upper(), "Point"
+        row[0].upper(),
+        "Point",  # i18n: skip - a QGIS geometry type
     )
     family = _MULTI.get(family, family)
     return f"{family}Z" if row[1] else family

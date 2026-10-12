@@ -40,6 +40,8 @@ class Hasher(Protocol):
         """Return the digest of the bytes fed so far."""
 
 
+# No person reads the text of a ChecksumError, so it is not translated. The
+# downloader treats the error as an unreadable checksum and keeps the file.
 class ChecksumError(ValueError):
     """A ``file:checksum`` value is not a multihash this module can verify."""
 
@@ -69,7 +71,9 @@ def _varint(data: bytes, offset: int) -> tuple[int, int]:
         shift += 7
         if shift > 63:
             break
-    raise ChecksumError("Truncated or oversized varint in multihash")
+    raise ChecksumError(
+        "Truncated or oversized varint in multihash"  # i18n: skip
+    )
 
 
 def decode(value: str) -> Multihash:
@@ -82,15 +86,21 @@ def decode(value: str) -> Multihash:
     try:
         data = bytes.fromhex(value.strip())
     except ValueError as error:
-        raise ChecksumError(f"Not a hex string: {value!r}") from error
+        raise ChecksumError(
+            f"Not a hex string: {value!r}"  # i18n: skip
+        ) from error
     code, offset = _varint(data, 0)
     length, offset = _varint(data, offset)
     digest = data[offset:]
     if len(digest) != length:
-        raise ChecksumError(f"Digest is {len(digest)} bytes, but the multihash says {length}")
+        raise ChecksumError(
+            f"Digest is {len(digest)} bytes, but the multihash says {length}"  # i18n: skip
+        )
     algorithm = _ALGORITHMS.get(code)
     if algorithm is None:
-        raise ChecksumError(f"Unsupported multihash function 0x{code:x}")
+        raise ChecksumError(
+            f"Unsupported multihash function 0x{code:x}"  # i18n: skip
+        )
     return Multihash(algorithm, digest)
 
 

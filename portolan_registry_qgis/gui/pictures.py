@@ -27,6 +27,7 @@ from qgis.PyQt.QtGui import QColor, QImage, QPainter, QPainterPath, QPalette, QP
 from qgis.PyQt.QtSvg import QSvgRenderer
 
 from portolan_registry_qgis.core import footprint
+from portolan_registry_qgis.core.i18n import _
 from portolan_registry_qgis.qgis_io.network import fetch_bytes, run_task
 
 if TYPE_CHECKING:
@@ -46,8 +47,8 @@ FORMAT_COLORS = {
 # The Portolan logomark in the brand blue, for a light theme, and in
 # off-white, for a dark theme.
 _IMAGES = Path(__file__).resolve().parent.parent / "images"
-LOGOMARK_LIGHT = _IMAGES / "portolan-logomark-4163cc.svg"
-LOGOMARK_DARK = _IMAGES / "portolan-logomark-fcfcfa.svg"
+LOGOMARK_LIGHT = _IMAGES / "portolan-logomark-4163cc.svg"  # i18n: skip - a file name
+LOGOMARK_DARK = _IMAGES / "portolan-logomark-fcfcfa.svg"  # i18n: skip - a file name
 _WORLD_SIZE = QSize(2048, 1024)
 _LARGEST_IMAGE = 720
 _LARGEST_SVG = 192
@@ -202,7 +203,8 @@ class ImageCache(QObject):
             with contextlib.suppress(RuntimeError):
                 self.loaded.emit(url)
 
-        run_task(f"Read {url}", read, done, hidden=True)
+        # Translators: A background task that reads the image at {url}.
+        run_task(_("Read {url}").format(url=url), read, done, hidden=True)
 
 
 class WorldMap(QObject):
@@ -221,7 +223,8 @@ class WorldMap(QObject):
     @staticmethod
     def path() -> Path:
         """Return where QGIS keeps its world map."""
-        return Path(QgsApplication.pkgDataPath()) / "resources" / "data" / "world_map.gpkg"
+        data = Path(QgsApplication.pkgDataPath()) / "resources" / "data"
+        return data / "world_map.gpkg"  # i18n: skip - a file name
 
     def image(self, color: QColor) -> QImage | None:
         """Return the land in ``color`` on a clear background, once it is rendered."""

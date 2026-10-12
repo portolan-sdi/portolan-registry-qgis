@@ -33,6 +33,21 @@ extra_css:
   - assets/stylesheets/_brand-vars.css
   - assets/stylesheets/extra.css
 
+# The language menu in the header. scripts/i18n.py build-docs builds each
+# translation from docs-i18n/<lang>/ into site/<lang>/. Zensical requires
+# absolute links here.
+extra:
+  alternate:
+    - name: English
+      link: https://portolan-sdi.github.io/portolan-registry-qgis/
+      lang: en
+    - name: Español
+      link: https://portolan-sdi.github.io/portolan-registry-qgis/es/
+      lang: es
+    - name: Français
+      link: https://portolan-sdi.github.io/portolan-registry-qgis/fr/
+      lang: fr
+
 plugins:
   - search
 

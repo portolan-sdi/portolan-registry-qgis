@@ -1,0 +1,4 @@
+# scripts/i18n.py update compiles these from messages.po. The plugin zip
+# needs them, and qgis-plugin-ci packages tracked files only.
+*.mo binary linguist-generated=true
+*.pot linguist-generated=true

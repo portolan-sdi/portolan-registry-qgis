@@ -24,17 +24,20 @@ from qgis.PyQt.QtCore import Qt, pyqtSignal
 from qgis.PyQt.QtGui import QColor
 from qgis.PyQt.QtWidgets import QCheckBox, QComboBox, QHBoxLayout, QToolButton, QVBoxLayout, QWidget
 
+from portolan_registry_qgis.core.i18n import N_, _
 from portolan_registry_qgis.core.scope import Area, Everything, MapView, Scope
 
 EVERYTHING = "everything"
 MAP_VIEW = "view"
 DRAW = "draw"
 FROM_LAYER = "layer"
+# The labels hold English in N_(). The picker translates them when it is built.
 CHOICES = (
-    (EVERYTHING, "Everything"),
-    (MAP_VIEW, "Map extent"),
-    (DRAW, "Draw an area…"),
-    (FROM_LAYER, "From a layer…"),
+    # Translators: A scope choice. Add or download the whole dataset.
+    (EVERYTHING, N_("Everything")),
+    (MAP_VIEW, N_("Map extent")),
+    (DRAW, N_("Draw an area…")),
+    (FROM_LAYER, N_("From a layer…")),
 )
 WGS84 = "EPSG:4326"
 _WORLD = (-180.0, -90.0, 180.0, 90.0)
@@ -108,10 +111,10 @@ def area_of(geometry: QgsGeometry, crs: QgsCoordinateReferenceSystem) -> Area:
             transformed.
     """
     if geometry.isNull() or geometry.isEmpty():
-        raise ScopeError("The area is empty.")
+        raise ScopeError(_("The area is empty."))
     shape = QgsGeometry(geometry)
     if shape.type() != Qgis.GeometryType.Polygon:
-        raise ScopeError("The area is not a polygon.")
+        raise ScopeError(_("The area is not a polygon."))
     if shape.constGet().hasCurvedSegments():
         shape = QgsGeometry(shape.constGet().segmentize())
     projected = not crs.isGeographic()
@@ -145,9 +148,11 @@ def _to_wgs84(geometry: QgsGeometry, crs: QgsCoordinateReferenceSystem) -> QgsGe
     try:
         result = shape.transform(transform)
     except QgsCsException as error:
-        raise ScopeError(f"Cannot transform the area to {WGS84}: {error}") from error
+        raise ScopeError(
+            _("Cannot transform the area to {crs}: {error}").format(crs=WGS84, error=error)
+        ) from error
     if result != Qgis.GeometryOperationResult.Success:
-        raise ScopeError(f"Cannot transform the area to {WGS84}.")
+        raise ScopeError(_("Cannot transform the area to {crs}.").format(crs=WGS84))
     return shape
 
 
@@ -206,7 +211,9 @@ def layer_area(layer: QgsVectorLayer, selected_only: bool) -> Area:
     if selected_only:
         ids = layer.selectedFeatureIds()
         if not ids:
-            raise ScopeError(f"Select one or more features in {layer.name()}.")
+            raise ScopeError(
+                _("Select one or more features in {layer}.").format(layer=layer.name())
+            )
         request.setFilterFids(ids)
     geometries = [
         feature.geometry()
@@ -214,10 +221,10 @@ def layer_area(layer: QgsVectorLayer, selected_only: bool) -> Area:
         if feature.hasGeometry() and not feature.geometry().isEmpty()
     ]
     if not geometries:
-        raise ScopeError(f"{layer.name()} has no polygon.")
+        raise ScopeError(_("{layer} has no polygon.").format(layer=layer.name()))
     union = QgsGeometry.unaryUnion(geometries)
     if union.isNull() or union.isEmpty():
-        raise ScopeError(f"Cannot join the polygons of {layer.name()}.")
+        raise ScopeError(_("Cannot join the polygons of {layer}.").format(layer=layer.name()))
     if union.type() != Qgis.GeometryType.Polygon:
         union = union.convertToType(Qgis.GeometryType.Polygon, True)
     return area_of(union, layer.crs())
@@ -365,14 +372,14 @@ class ScopePicker(QWidget):
         self._canvas = iface.mapCanvas()
         self._choice = QComboBox()
         for key, label in CHOICES:
-            self._choice.addItem(label, key)
+            self._choice.addItem(_(label), key)
         self._current = EVERYTHING
         self._redraw = QToolButton()
-        self._redraw.setText("Draw again")
-        self._redraw.setToolTip("Draw a new area on the map")
+        self._redraw.setText(_("Draw again"))
+        self._redraw.setToolTip(_("Draw a new area on the map"))
         self._layers = QgsMapLayerComboBox()
         self._layers.setFilters(_polygon_filter())
-        self._selected = QCheckBox("Selected features only")
+        self._selected = QCheckBox(_("Selected features only"))
         self._area: Area | None = None
         self._area_band: QgsRubberBand | None = None
         self._tool: PolygonTool | None = None
@@ -417,7 +424,7 @@ class ScopePicker(QWidget):
         """Select a choice as if the user picked it. ``DRAW`` starts the map tool."""
         index = self._choice.findData(key)
         if index < 0:
-            raise ValueError(f"No scope choice {key!r}")
+            raise ValueError(f"No scope choice {key!r}")  # i18n: skip
         self._choice.setCurrentIndex(index)
         self._activated(index)
 
@@ -429,18 +436,18 @@ class ScopePicker(QWidget):
                 drawn, or the layer has no selected feature.
         """
         if self._tool is not None:
-            raise ScopeError("Finish the area on the map first.")
+            raise ScopeError(_("Finish the area on the map first."))
         if self._current == MAP_VIEW:
             settings = self._canvas.mapSettings()
             return MapView(view_bbox(self._canvas.extent(), settings.destinationCrs()))
         if self._current == DRAW:
             if self._area is None:
-                raise ScopeError("Draw an area on the map first.")
+                raise ScopeError(_("Draw an area on the map first."))
             return self._area
         if self._current == FROM_LAYER:
             layer = self._layers.currentLayer()
             if not isinstance(layer, QgsVectorLayer):
-                raise ScopeError("Choose a polygon layer.")
+                raise ScopeError(_("Choose a polygon layer."))
             self._follow_layer()
             if self._layer_area is None:
                 try:

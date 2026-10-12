@@ -1097,7 +1097,7 @@ def test_download_clips_the_parquet_to_the_scope(iface, server, catalog, tmp_pat
     clipped = tmp_path / "points.gpkg"
     wait_for(lambda: clipped.is_file() and window._job is None, timeout=60)
     wait_for(lambda: any("Wrote 11 features" in item.text() for item in iface.bar.items()))
-    assert "1 GeoParquet file download as GeoPackage" in asked[0]
+    assert "1 GeoParquet file downloads as GeoPackage" in asked[0]
     # The GeoJSON downloads whole. The GeoParquet does not download at all.
     assert (tmp_path / "points" / "points.geojson").is_file()
     assert not (tmp_path / "points" / "points.parquet").exists()

@@ -21,3 +21,7 @@ mutants/
 
 # Claude Code worktrees
 .claude/worktrees/
+
+# Translated documentation sources, assembled by scripts/i18n.py build-docs
+/build/
+/mkdocs.*.yml

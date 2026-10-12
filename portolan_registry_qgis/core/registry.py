@@ -12,10 +12,11 @@ from dataclasses import dataclass
 from typing import Any
 
 from portolan_registry_qgis.core.hrefs import is_http_url
+from portolan_registry_qgis.core.i18n import _
 from portolan_registry_qgis.core.stac import Bbox, horizontal_bbox, links_of
 
 REGISTRY_URL = (
-    "https://raw.githubusercontent.com/portolan-sdi/portolan-registry/"
+    "https://raw.githubusercontent.com/portolan-sdi/portolan-registry/"  # i18n: skip - a URL
     "refs/heads/main/exports/catalogs.json"
 )
 _PREFIX = "portolan_registry:"
@@ -103,10 +104,10 @@ def parse_registry(document: object, base: str = REGISTRY_URL) -> list[CatalogEn
         RegistryError: The document is not a STAC catalog with a links list.
     """
     if not isinstance(document, dict) or document.get("type") != "Catalog":
-        raise RegistryError("The Portolan registry returned an invalid catalog list")
+        raise RegistryError(_("The Portolan registry returned an invalid catalog list"))
     raw_links = document.get("links")
     if not isinstance(raw_links, list):
-        raise RegistryError("The Portolan registry returned an invalid catalog list")
+        raise RegistryError(_("The Portolan registry returned an invalid catalog list"))
     entries: list[CatalogEntry] = []
     for raw in raw_links:
         # One link at a time, so a link links_of drops cannot shift the

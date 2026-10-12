@@ -1,5 +1,5 @@
 ---
-source_sha256: e2451f322bdf0adf5d1434e5131980b3cff5e8d16661ed4010440bd35debef2d
+source_sha256: aeda9e0355eda095003303e738695ee4e07113745adbbc096e1702c9c6ab20b6
 ---
 
 <!-- vale off -->
@@ -51,9 +51,9 @@ status.setText(_("Could not open {url}").format(url=url))
 row.setText(count("{n} file", "{n} files", total))
 ```
 
-Comme l'extension choisit la langue après que Python a importé ses modules, une constante de module contient son anglais dans `N_()`, et le code qui l'affiche appelle `_()`. Les champs de substitution portent des noms, ce qui permet à une traduction de les réordonner. Un commentaire qui commence par `# Translators:` sur la ligne au-dessus d'un appel parvient au traducteur.
+Comme l'extension choisit la langue après que Python a importé ses modules, une constante de module stocke son texte anglais dans `N_()`, et le code qui l'affiche appelle `_()`. Les champs de substitution portent des noms, ce qui permet à une traduction de les réordonner. Babel copie un commentaire qui commence par `# Translators:`, sur la ligne au-dessus d'un appel, dans le catalogue à côté du message.
 
-Après avoir modifié un texte anglais, mettez à jour les catalogues, puis traduisez :
+Quand un texte anglais change, régénérez les catalogues et traduisez les nouvelles entrées :
 
 ```bash
 uv run python scripts/i18n.py update

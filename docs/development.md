@@ -45,9 +45,9 @@ status.setText(_("Could not open {url}").format(url=url))
 row.setText(count("{n} file", "{n} files", total))
 ```
 
-Because the plugin chooses the language after Python imports its modules, a module constant holds its English in `N_()`, and the code that shows it calls `_()`. Placeholders take names, which lets a translation reorder them. A comment that starts with `# Translators:` on the line above a call reaches the translator.
+Because the plugin chooses the language after Python imports its modules, a module constant stores its English text inside `N_()`, and the code that shows it calls `_()`. Placeholders take names, which lets a translation reorder them. Babel copies a comment that starts with `# Translators:`, on the line above a call, into the catalog next to the message.
 
-After you change English text, update the catalogs, then translate:
+When English text changes, regenerate the catalogs and translate the new entries:
 
 ```bash
 uv run python scripts/i18n.py update

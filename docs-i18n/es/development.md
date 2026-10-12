@@ -1,5 +1,5 @@
 ---
-source_sha256: e2451f322bdf0adf5d1434e5131980b3cff5e8d16661ed4010440bd35debef2d
+source_sha256: aeda9e0355eda095003303e738695ee4e07113745adbbc096e1702c9c6ab20b6
 ---
 
 <!-- vale off -->
@@ -51,9 +51,9 @@ status.setText(_("Could not open {url}").format(url=url))
 row.setText(count("{n} file", "{n} files", total))
 ```
 
-Como el complemento elige el idioma después de que Python importa sus módulos, una constante de módulo guarda su inglés en `N_()`, y el código que la muestra llama a `_()`. Los marcadores de posición tienen nombre, lo que permite que una traducción los reordene. Un comentario que empieza por `# Translators:` en la línea anterior a una llamada llega al traductor.
+Como el complemento elige el idioma después de que Python importa sus módulos, una constante de módulo almacena su texto en inglés dentro de `N_()`, y el código que la muestra llama a `_()`. Los marcadores de posición tienen nombre, lo que permite que una traducción los reordene. Babel copia un comentario que empieza por `# Translators:`, en la línea anterior a una llamada, al catálogo junto al mensaje.
 
-Después de cambiar un texto en inglés, actualice los catálogos y luego traduzca:
+Cuando cambie un texto en inglés, regenere los catálogos y traduzca las entradas nuevas:
 
 ```bash
 uv run python scripts/i18n.py update

@@ -38,6 +38,32 @@ jobs:
         with:
           path: ./site
 
+      # The Pages artifact holds a tarball. The link check needs the plain
+      # files, so the site goes up a second time.
+      - name: Upload the site for the link check
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: documentation-site
+          path: site
+          retention-days: 7
+
+  # Checks the relative links in the built site. zensical --strict checks
+  # Markdown links only. This also covers theme templates, navigation, and
+  # raw HTML.
+  site-links:
+    needs: build
+    if: github.event_name == 'pull_request'
+    uses: portolan-sdi/portolan-ops/.github/workflows/reusable-links.yml@v1
+    permissions:
+      contents: read
+      # The reusable job declares issues: write for its weekly mode. A
+      # caller must grant at least that, even though this mode never
+      # writes an issue.
+      issues: write
+    with:
+      site-artifact: documentation-site
+
   deploy:
     needs: build
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'

@@ -12,11 +12,14 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from portolan_registry_qgis.core.geoparquet import GEOMETRY_NAMES
 from portolan_registry_qgis.core.hrefs import absolute_href, asset_href, folder_name, is_http_url
 from portolan_registry_qgis.core.i18n import _
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 Bbox = tuple[float, float, float, float]
 NodeKind = Literal["catalog", "collection", "item"]
@@ -43,6 +46,8 @@ PREFERRED_FORMATS: tuple[AssetFormat, ...] = (
 # GeoParquet index of the collection's items, not the data. An ``archive``
 # asset is an earlier version of the data. The browser lists all three.
 _NOT_LOADABLE_ROLES = frozenset({"source", "collection-mirror", "archive"})
+# Asset roles that do not hold the data.
+_NOT_DATA_ROLES = frozenset({"thumbnail", "overview", "metadata"})
 
 
 def is_image(href: str, media_type: str | None) -> bool:
@@ -164,12 +169,7 @@ class Document:
     @property
     def data_assets(self) -> tuple[Asset, ...]:
         """Assets other than styles, thumbnails, and metadata sidecars."""
-        skip = {"thumbnail", "overview", "metadata"}
-        return tuple(
-            asset
-            for asset in self.assets
-            if not asset.is_style and not skip.intersection(asset.roles)
-        )
+        return only_data(self.assets)
 
     def loadable(self) -> tuple[Loadable, ...]:
         """Return the files the plugin can add, with no duplicates.
@@ -406,6 +406,15 @@ def is_tabular(columns: object) -> bool:
     if not isinstance(columns, list) or not columns:
         return False
     return not any(is_geometry_column(column) for column in columns)
+
+
+def only_data(assets: Iterable[Asset]) -> tuple[Asset, ...]:
+    """Return the assets other than styles, thumbnails, and metadata sidecars."""
+    return tuple(
+        asset
+        for asset in assets
+        if not asset.is_style and not _NOT_DATA_ROLES.intersection(asset.roles)
+    )
 
 
 def _roles(raw: object) -> tuple[str, ...]:

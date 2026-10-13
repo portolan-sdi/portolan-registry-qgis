@@ -11,11 +11,8 @@ range requests without a download. GeoParquet goes through DuckDB instead, in
 from __future__ import annotations
 
 import contextlib
-import csv
-import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urlsplit
 
 from osgeo import gdal
 from qgis.core import (
@@ -36,16 +33,25 @@ from qgis.core import (
 )
 from qgis.PyQt.QtCore import QCoreApplication
 
+from portolan_registry_qgis.core.coordinates import coordinate_columns
 from portolan_registry_qgis.core.diagnose import open_failure
 from portolan_registry_qgis.core.hrefs import (
-    absolute_href,
     extension_blocked,
     plain_vsicurl_path,
     url_extension,
     vsicurl_path,
 )
-from portolan_registry_qgis.core.i18n import N_, _
+from portolan_registry_qgis.core.i18n import _
 from portolan_registry_qgis.core.parquet_query import is_flatpak
+from portolan_registry_qgis.core.style import (
+    DEFAULT_STYLE_NAME,
+    Sprite,
+    archive_urls,
+    parse_style,
+    read_sprite,
+    split_style,
+    unique_name,
+)
 from portolan_registry_qgis.qgis_io.network import NetworkError, fetch_range, http_status
 from portolan_registry_qgis.qgis_io.tileserver import Archive, TileServer, open_archive
 
@@ -55,20 +61,8 @@ if TYPE_CHECKING:
     from portolan_registry_qgis.core.stac import Asset, Document
 
 PMTILES_PROPERTY = "portolan/pmtiles_url"
-# The name the layer's own style gets in its style manager. Translate it where it is used.
-DEFAULT_STYLE_NAME = N_("QGIS default style")
-_PMTILES_SCHEME = "pmtiles://"
-# Header names that hold point coordinates in EPSG:4326, in order of
-# preference. The comparison ignores case.
-LONGITUDE_NAMES = ("lon", "lng", "longitude", "x")
-LATITUDE_NAMES = ("lat", "latitude", "y")
-# Many CSVs use x and y for projected coordinates. These names count only
-# when the rows in the header bytes hold longitudes and latitudes.
-_PLANAR_NAMES = frozenset({"x", "y"})
 # The first request for a CSV reads this many bytes, enough for the header.
 CSV_HEADER_BYTES = 16384
-# The separators that GDAL's CSV driver detects in the header line.
-_CSV_SEPARATORS = (",", ";", "\t", "|")
 
 
 class LayerError(RuntimeError):
@@ -203,87 +197,6 @@ def gdal_open_error(path: str) -> str:
         gdal.PopErrorHandler()
 
 
-@dataclass
-class Styled:
-    """A style split per PMTiles source, ready for ``QgsMapBoxGlStyleConverter``."""
-
-    by_source: dict[str, dict[str, Any]] = field(default_factory=dict)
-    warnings: list[str] = field(default_factory=list)
-
-
-def archive_urls(document: Document) -> list[str]:
-    """Return the collection's PMTiles archives, from its links and its assets."""
-    urls = [link.href for link in document.pmtiles]
-    urls += [asset.href for asset in document.assets if asset.format == "pmtiles"]
-    return list(dict.fromkeys(urls))
-
-
-def pmtiles_sources(
-    style: dict[str, Any], style_url: str, fallback: str | None = None
-) -> dict[str, str]:
-    """Map each PMTiles source id in a MapLibre style to an absolute archive URL.
-
-    A Portolan style names its archive in ``sources.<id>.url``, relative to the
-    style file. Catalogs write the path bare (``../x.pmtiles``) or with the
-    ``pmtiles://`` scheme, so the function accepts both. A vector source with
-    neither ``url`` nor ``tiles`` reads ``fallback``, the collection's only
-    archive.
-    """
-    sources = style.get("sources")
-    found: dict[str, str] = {}
-    if not isinstance(sources, dict):
-        return found
-    for source_id, source in sources.items():
-        if not isinstance(source, dict) or source.get("type") != "vector":
-            continue
-        url = source.get("url")
-        if url is None and "tiles" not in source:
-            if fallback is not None:
-                found[str(source_id)] = fallback
-            continue
-        if not isinstance(url, str):
-            continue
-        if url.startswith(_PMTILES_SCHEME):
-            url = url[len(_PMTILES_SCHEME) :]
-        elif not urlsplit(url).path.lower().endswith(".pmtiles"):
-            continue
-        found[str(source_id)] = absolute_href(url, style_url)
-    return found
-
-
-def split_style(style: dict[str, Any], style_url: str, fallback: str | None = None) -> Styled:
-    """Split a MapLibre style into one style per PMTiles source.
-
-    QGIS draws one archive per vector tile layer, so each archive gets the
-    style layers that read from it. Background layers go with the first
-    archive. Layers on any other source are dropped with a warning.
-    """
-    sources = pmtiles_sources(style, style_url, fallback)
-    result = Styled()
-    raw_layers = style.get("layers")
-    layers = raw_layers if isinstance(raw_layers, list) else []
-    first = next(iter(sources.values()), None)
-    for layer in layers:
-        if not isinstance(layer, dict):
-            continue
-        source = layer.get("source")
-        if layer.get("type") == "background" and first is not None:
-            url: str | None = first
-        else:
-            url = sources.get(str(source)) if source is not None else None
-        if url is None:
-            result.warnings.append(
-                _(
-                    "Style layer {layer} reads source {source}, "
-                    "which is not a PMTiles archive; skipped."
-                ).format(layer=repr(layer.get("id")), source=repr(source))
-            )
-            continue
-        target = result.by_source.setdefault(url, {**style, "layers": []})
-        target["layers"].append(layer)
-    return result
-
-
 def convert_style(
     style: dict[str, Any],
     sprite: tuple[Any, dict[str, Any]] | None = None,
@@ -358,7 +271,7 @@ class TileStyle:
 
     name: str
     style: dict[str, Any]
-    sprite: tuple[bytes, dict[str, Any]] | None
+    sprite: Sprite | None
 
 
 @dataclass
@@ -402,7 +315,7 @@ def prepare_pmtiles(
     archives = archive_urls(document)
     fallback = archives[0] if len(archives) == 1 else None
     by_archive: dict[str, list[TileStyle]] = {url: [] for url in urls}
-    sprites: dict[str, tuple[bytes, dict[str, Any]] | None] = {}
+    sprites: dict[str, Sprite | None] = {}
     # document.styles puts the default style first, so it becomes current.
     for asset in document.styles:
         try:
@@ -421,7 +334,7 @@ def prepare_pmtiles(
             _("{style}: {warning}").format(style=asset.label, warning=note)
             for note in styled.warnings
         )
-        sprite = _sprite(style, asset.href, fetch_bytes, warnings, sprites)
+        sprite = read_sprite(style, asset.href, fetch_bytes, warnings, sprites)
         for url in used:
             by_archive[url].append(TileStyle(asset.label, styled.by_source[url], sprite))
     titles = {link.href: link.title for link in document.pmtiles}
@@ -485,7 +398,7 @@ def add_styles(
         layer.setLabeling(labeling)
         captured = QgsMapLayerStyle()
         captured.readFromLayer(layer)
-        named[_unique(style.name, named)] = captured
+        named[unique_name(style.name, named)] = captured
     # Put the layer's own style back first. setCurrentStyle saves the layer's
     # state into the current style before it switches.
     original.writeToLayer(layer)
@@ -496,94 +409,6 @@ def add_styles(
     if named:
         manager.setCurrentStyle(next(iter(named)))
     return warnings
-
-
-def _unique(name: str, taken: dict[str, Any]) -> str:
-    candidate, number = name, 2
-    default = _(DEFAULT_STYLE_NAME)
-    while candidate in taken or candidate == default:
-        candidate, number = f"{name} ({number})", number + 1
-    return candidate
-
-
-def _sprite(
-    style: dict[str, Any],
-    style_url: str,
-    fetch_bytes: Callable[[str], bytes],
-    warnings: list[str],
-    cache: dict[str, tuple[bytes, dict[str, Any]] | None],
-) -> tuple[bytes, dict[str, Any]] | None:
-    base = style.get("sprite")
-    if not isinstance(base, str):
-        return None
-    root = absolute_href(base, style_url)
-    if root not in cache:
-        cache[root] = None
-        try:
-            index = json.loads(fetch_bytes(f"{root}.json"))
-            image = fetch_bytes(f"{root}.png")
-        except (OSError, ValueError) as error:
-            warnings.append(
-                _("Could not load the style's sprite at {url}: {error}").format(
-                    url=root, error=error
-                )
-            )
-        else:
-            if isinstance(index, dict):
-                cache[root] = (image, index)
-    return cache[root]
-
-
-def coordinate_columns(header: bytes) -> tuple[str, str] | None:
-    """Find the longitude and latitude columns in the first line of a CSV.
-
-    Columns named x and y count only when every complete row in ``header``
-    holds a longitude and a latitude, because x and y are often projected.
-
-    Args:
-        header: The start of the file. The first line names the columns.
-            The complete rows after it test x and y.
-
-    Returns:
-        The exact names of the longitude and latitude columns, or None when
-        the header does not name both.
-    """
-    text = header.decode("utf-8-sig", errors="replace")
-    lines = text.splitlines()
-    if not lines:
-        return None
-    separator = max(_CSV_SEPARATORS, key=lines[0].count)
-    rows = list(csv.reader(lines, delimiter=separator))
-    names = [name.strip() for name in rows[0]]
-    by_folded: dict[str, str] = {}
-    for name in names:
-        by_folded.setdefault(name.casefold(), name)
-    lon = next((by_folded[n] for n in LONGITUDE_NAMES if n in by_folded), None)
-    lat = next((by_folded[n] for n in LATITUDE_NAMES if n in by_folded), None)
-    if lon is None or lat is None:
-        return None
-    if {lon.casefold(), lat.casefold()} & _PLANAR_NAMES:
-        # The last line can stop in the middle of a row.
-        complete = rows[1:-1] if not text.endswith(("\n", "\r")) else rows[1:]
-        if not _degrees(complete, names.index(lon), names.index(lat)):
-            return None
-    return lon, lat
-
-
-def _degrees(rows: list[list[str]], lon: int, lat: int) -> bool:
-    """Return whether ``rows`` hold at least one point and every point is in degrees."""
-    seen = False
-    for row in rows:
-        if len(row) <= max(lon, lat):
-            continue
-        try:
-            x, y = float(row[lon]), float(row[lat])
-        except ValueError:
-            continue
-        if not (-180 <= x <= 180 and -90 <= y <= 90):
-            return False
-        seen = True
-    return seen
 
 
 def csv_header(url: str) -> bytes:
@@ -676,11 +501,3 @@ def asset_layer(asset: Asset, name: str | None = None) -> QgsMapLayer:
             )
         raise LayerError(open_failure(asset.href, summary, is_flatpak(), _provider_invalid()))
     return layer
-
-
-def parse_style(raw: bytes) -> dict[str, Any]:
-    """Parse a style file, rejecting anything but a MapLibre v8 style object."""
-    style = json.loads(raw)
-    if not isinstance(style, dict) or style.get("version") != 8:
-        raise ValueError(_("Not a MapLibre GL style (version 8)"))
-    return style

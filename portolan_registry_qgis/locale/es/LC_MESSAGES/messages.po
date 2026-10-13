@@ -296,7 +296,7 @@ msgstr "No se pudieron listar los archivos de {title}: {error}"
 msgid "Could not list {title}: {error}"
 msgstr "No se pudo listar {title}: {error}"
 
-#: portolan_registry_qgis/qgis_io/layers.py
+#: portolan_registry_qgis/core/style.py
 #, python-brace-format
 msgid "Could not load the style's sprite at {url}: {error}"
 msgstr "No se pudo cargar el sprite del estilo en {url}: {error}"
@@ -695,7 +695,7 @@ msgstr "Ningún publicador coincide con estos filtros."
 msgid "No style in {title} draws {url}."
 msgstr "Ningún estilo de {title} dibuja {url}."
 
-#: portolan_registry_qgis/qgis_io/layers.py
+#: portolan_registry_qgis/core/style.py
 msgid "Not a MapLibre GL style (version 8)"
 msgstr "No es un estilo MapLibre GL (versión 8)"
 
@@ -833,7 +833,7 @@ msgstr ""
 msgid "QGIS could not open {url}: {error}"
 msgstr "QGIS no pudo abrir {url}: {error}"
 
-#: portolan_registry_qgis/qgis_io/layers.py
+#: portolan_registry_qgis/core/style.py
 msgid "QGIS default style"
 msgstr "Estilo predeterminado de QGIS"
 
@@ -989,7 +989,7 @@ msgstr "Se detuvo el mosaico de {name}."
 msgid "Stopped the search for the files of {title}."
 msgstr "Se detuvo la búsqueda de los archivos de {title}."
 
-#: portolan_registry_qgis/qgis_io/layers.py
+#: portolan_registry_qgis/core/style.py
 #, python-brace-format
 msgid ""
 "Style layer {layer} reads source {source}, which is not a PMTiles archive; "
@@ -1028,7 +1028,7 @@ msgstr "El área no es un polígono."
 msgid "The clip is not WKT"
 msgstr "El recorte no es WKT"
 
-#: portolan_registry_qgis/qgis_io/mosaic.py
+#: portolan_registry_qgis/core/mirror.py
 msgid "The file has no bbox or assets column"
 msgstr "El archivo no tiene columna bbox ni assets"
 

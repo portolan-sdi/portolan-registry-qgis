@@ -172,13 +172,21 @@ def quote(name: str) -> str:
     return '"' + name.replace('"', '""') + '"'
 
 
-def _geo_metadata(raw: str | bytes | None) -> dict[str, object]:
-    if raw is None:
-        return {}
+def parse_json(value: object) -> object:
+    """Parse JSON text, and return any other value as it is.
+
+    Text that is not JSON gives None.
+    """
+    if not isinstance(value, (str, bytes)):
+        return value
     try:
-        value = json.loads(raw)
+        return json.loads(value)
     except ValueError:
-        return {}
+        return None
+
+
+def _geo_metadata(raw: str | bytes | None) -> dict[str, object]:
+    value = parse_json(raw)
     return value if isinstance(value, dict) else {}
 
 
@@ -237,7 +245,7 @@ def _covering(column: dict[str, object]) -> Covering | None:
     return Covering(**parts)
 
 
-def _implicit_covering(schema: list[tuple[str, str]]) -> Covering | None:
+def implicit_covering(schema: list[tuple[str, str]]) -> Covering | None:
     """Find a ``bbox`` struct column that a file carries without covering metadata.
 
     GeoParquet 1.1 names this layout in its covering example, and writers
@@ -333,7 +341,7 @@ def plan_read(schema: list[tuple[str, str]], geo_json: str | bytes | None) -> Re
             raise GeoParquetError(_("The file has no geometry column that its metadata names"))
         return _table_plan(schema)
     geometry, info = picked
-    covering = _covering(info) or _implicit_covering(schema)
+    covering = _covering(info) or implicit_covering(schema)
     skip = {geometry}
     if covering is not None:
         skip.add(covering.xmin[0])
@@ -352,7 +360,8 @@ def plan_read(schema: list[tuple[str, str]], geo_json: str | bytes | None) -> Re
     )
 
 
-def _path(parts: tuple[str, ...]) -> str:
+def column_path(parts: tuple[str, ...]) -> str:
+    """Return the SQL that reads a column, or a field of a struct column."""
     return ".".join(quote(part) for part in parts)
 
 
@@ -396,8 +405,8 @@ def _where(plan: ReadPlan, clip: Clip, *, exact: bool = True) -> tuple[str, list
         if plan.covering is not None:
             c = plan.covering
             where.append(
-                f"{_path(c.xmin)} <= ? AND {_path(c.xmax)} >= ? "
-                f"AND {_path(c.ymin)} <= ? AND {_path(c.ymax)} >= ?"
+                f"{column_path(c.xmin)} <= ? AND {column_path(c.xmax)} >= ? "
+                f"AND {column_path(c.ymin)} <= ? AND {column_path(c.ymax)} >= ?"
             )
             params += [east, west, north, south]
         if exact and clip.area is not None:

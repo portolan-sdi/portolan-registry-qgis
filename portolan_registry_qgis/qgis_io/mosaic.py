@@ -19,18 +19,15 @@ import json
 import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urlsplit
 
 from osgeo import gdal, ogr
 from qgis.core import Qgis, QgsMessageLog, QgsProviderRegistry, QgsRasterLayer
 
+from portolan_registry_qgis.core import mirror as mirrors
 from portolan_registry_qgis.core import parquet_query
 from portolan_registry_qgis.core import scope as scopes
 from portolan_registry_qgis.core.download import Walk, walk
-from portolan_registry_qgis.core.geoparquet import quote
-from portolan_registry_qgis.core.hrefs import asset_href
 from portolan_registry_qgis.core.i18n import _, ngettext, number
-from portolan_registry_qgis.core.stac import asset_format
 from portolan_registry_qgis.qgis_io import parquet_layer
 from portolan_registry_qgis.qgis_io.layers import (
     LayerError,
@@ -47,7 +44,7 @@ if TYPE_CHECKING:
 
     from portolan_registry_qgis.core.download import FetchJson
     from portolan_registry_qgis.core.scope import Scope
-    from portolan_registry_qgis.core.stac import Bbox, Document
+    from portolan_registry_qgis.core.stac import Document
 
 # The layer keeps the COG URLs here, one per line, so a saved project can
 # build the VRT again.
@@ -55,24 +52,12 @@ SOURCES_PROPERTY = "portolan/mosaic_sources"
 # The polygon that clips a mosaic, as WKT in EPSG:4326, so a saved project
 # clips it again.
 CLIP_PROPERTY = "portolan/mosaic_clip"
-# The role of a collection asset that holds every item as stac-geoparquet.
-MIRROR_ROLE = "collection-mirror"
 # The walk stops after this many documents.
 MAX_DOCUMENTS = 20000
-# Asset roles that do not hold the data, as in ``Document.data_assets``.
-_NOT_DATA = frozenset({"thumbnail", "overview", "metadata"})
 
 
 class MosaicCancelledError(LayerError):
     """The user cancelled the VRT while GDAL read the files."""
-
-
-def mirror_href(collection: Document) -> str | None:
-    """Return the href of the collection's stac-geoparquet mirror, if it has one."""
-    return next(
-        (asset.href for asset in collection.assets if MIRROR_ROLE in asset.roles),
-        None,
-    )
 
 
 def item_hrefs_in(
@@ -92,12 +77,14 @@ def item_hrefs_in(
     Each item gives its first COG data asset. An item with no COG adds
     nothing.
     """
-    mirror = mirror_href(collection)
+    mirror = mirrors.mirror_href(collection)
     if mirror is not None and parquet_query.duckdb_status()[0]:
         import duckdb
 
         try:
-            return mirror_hrefs(mirror, scope, cancelled, item_documents(collection))
+            con = parquet_query.connection(parquet_layer.extension_directory())
+            items = mirrors.item_documents(collection)
+            return mirrors.mirror_hrefs(con, mirror, scope, cancelled, items)
         except (duckdb.Error, OSError, ValueError) as error:
             if cancelled is not None and cancelled():
                 return []
@@ -107,22 +94,6 @@ def item_hrefs_in(
                 )
             )
     return walked_hrefs(collection.href, scope, fetch_json, executor, cancelled)
-
-
-def item_documents(collection: Document) -> dict[str, str]:
-    """Map each item ID to the URL of its document, from the collection's item links.
-
-    A link names no ID, so the ID is the file name of the item document
-    without ``.json``. This fits the usual layouts ``<id>/<id>.json`` and
-    ``<id>.json``.
-    """
-    found: dict[str, str] = {}
-    for node in collection.children:
-        if node.kind != "item":
-            continue
-        name = urlsplit(node.href).path.rsplit("/", 1)[-1]
-        found.setdefault(name.removesuffix(".json"), node.href)
-    return found
 
 
 def walked_hrefs(
@@ -138,14 +109,7 @@ def walked_hrefs(
     for document in walk(fetch_json, start, failures, Walk(MAX_DOCUMENTS, cancelled, executor)):
         if document.kind != "item" or not scopes.intersects(document.bbox, scope):
             continue
-        href = next(
-            (
-                asset.href
-                for asset in document.data_assets
-                if asset.format == "cog" and not _NOT_DATA.intersection(asset.roles)
-            ),
-            None,
-        )
+        href = mirrors.cog_href(document.assets)
         if href is not None:
             hrefs.append(href)
     if failures:
@@ -157,157 +121,6 @@ def walked_hrefs(
             ).format(n=number(len(failures)), start=start, first=failures[0][0])
         )
     return list(dict.fromkeys(hrefs))
-
-
-def _bbox_columns(kind: str) -> tuple[str, str, str, str]:
-    """Return the SQL that reads xmin, ymin, xmax, and ymax from the bbox column.
-
-    stac-geoparquet 1.0 stores a struct with named fields, as GeoParquet 1.1
-    defines. Earlier files store a list of four or six numbers.
-    """
-    if kind.upper().startswith("STRUCT"):
-        return ("bbox.xmin", "bbox.ymin", "bbox.xmax", "bbox.ymax")  # i18n: skip - SQL
-    half = "len(bbox) // 2"
-    return ("bbox[1]", "bbox[2]", f"bbox[{half} + 1]", f"bbox[{half} + 2]")
-
-
-def mirror_query(columns: dict[str, str], scope: Scope) -> tuple[str, list[Any]]:
-    """Build the DuckDB query that reads the items of a stac-geoparquet file.
-
-    The query keeps the rows whose bbox can intersect the scope's envelope.
-    A row whose bbox crosses the antimeridian stays, and the caller tests
-    it. An ``Area`` scope also tests the item geometry against the polygon.
-
-    Args:
-        columns: The file's column names and DuckDB types.
-        scope: The part of the collection to keep.
-
-    Returns:
-        The SQL, with ``?`` for the file URL first, and the other parameters.
-
-    Raises:
-        ValueError: The file has no ``bbox`` or ``assets`` column.
-    """
-    if "bbox" not in columns or "assets" not in columns:
-        raise ValueError(_("The file has no bbox or assets column"))
-    xmin, ymin, xmax, ymax = _bbox_columns(columns["bbox"])
-    links = "to_json(links)" if "links" in columns else "NULL"
-    ids = quote("id") if "id" in columns else "NULL"
-    sql = (
-        f"SELECT {xmin}, {ymin}, {xmax}, {ymax}, to_json(assets), {links}, {ids} "  # noqa: S608  # nosec B608 - the SQL holds column names only
-        "FROM read_parquet(?)"
-    )
-    params: list[Any] = []
-    box = scopes.bbox_of(scope)
-    if box is None or box[0] > box[2]:
-        return sql, params
-    west, south, east, north = box
-    where = [
-        f"({xmin} > {xmax} OR ({xmax} >= ? AND {xmin} <= ?))",
-        f"{ymax} >= ?",
-        f"{ymin} <= ?",
-    ]
-    params += [west, east, south, north]
-    geometry = columns.get("geometry", "").upper()
-    if isinstance(scope, scopes.Area) and geometry.startswith(("GEOMETRY", "BLOB")):
-        column = quote("geometry")
-        shape = column if geometry.startswith("GEOMETRY") else f"ST_GeomFromWKB({column})"
-        where.append(f"({xmin} > {xmax} OR ST_Intersects({shape}, ST_GeomFromText(?)))")
-        params.append(scope.wkt)
-    return f"{sql} WHERE {' AND '.join(where)}", params
-
-
-def mirror_hrefs(
-    url: str,
-    scope: Scope,
-    cancelled: Callable[[], bool] | None = None,
-    items: dict[str, str] | None = None,
-) -> list[str]:
-    """Return the COG hrefs of the items of a stac-geoparquet file that intersect ``scope``.
-
-    A relative asset href is relative to its item document. The function
-    finds that document from the item's ``self`` link, else from ``items``
-    by the item ID, else it uses the file. A stac-geoparquet file often
-    leaves out the ``self`` link, as the GHSL mirror does.
-
-    Args:
-        url: The stac-geoparquet file.
-        scope: The part of the collection to keep.
-        cancelled: Polled while the query runs.
-        items: The URL of each item document by item ID, from
-            ``item_documents``.
-
-    Raises:
-        parquet_query.DuckDBMissingError: DuckDB is absent or too old.
-        duckdb.Error: DuckDB cannot read the file.
-        ValueError: The file is not stac-geoparquet.
-    """
-    con = parquet_query.connection(parquet_layer.extension_directory())
-    # The cursor stops the running query when ``cancelled`` returns True.
-    with parquet_query.cursor(con, cancelled) as cursor:
-        described = cursor.execute("DESCRIBE SELECT * FROM read_parquet(?)", [url]).fetchall()
-        columns = {str(row[0]): str(row[1]) for row in described}
-        sql, params = mirror_query(columns, scope)
-        rows = cursor.execute(sql, [url, *params]).fetchall()
-    hrefs = []
-    for xmin, ymin, xmax, ymax, assets, links, item_id in rows:
-        corners = (xmin, ymin, xmax, ymax)
-        box: Bbox | None = None
-        if all(isinstance(value, (int, float)) for value in corners):
-            box = (float(xmin), float(ymin), float(xmax), float(ymax))
-        if not scopes.intersects(box, scope):
-            continue
-        base = _self_href(_json(links), url)
-        if base is None:
-            base = (items or {}).get(str(item_id), url) if item_id is not None else url
-        href = _first_cog(_json(assets), base)
-        if href is not None:
-            hrefs.append(href)
-    return list(dict.fromkeys(hrefs))
-
-
-def _json(value: object) -> object:
-    if isinstance(value, str):
-        try:
-            return json.loads(value)
-        except ValueError:
-            return None
-    return value
-
-
-def _self_href(links: object, base: str) -> str | None:
-    """Return the item's ``self`` link resolved against ``base``, or None without one."""
-    if isinstance(links, list):
-        for link in links:
-            if isinstance(link, dict) and link.get("rel") == "self":
-                href = link.get("href")
-                if isinstance(href, str) and href:
-                    try:
-                        return asset_href(href, base)
-                    except ValueError:
-                        return None
-    return None
-
-
-def _first_cog(assets: object, base: str) -> str | None:
-    if not isinstance(assets, dict):
-        return None
-    for asset in assets.values():
-        if not isinstance(asset, dict) or not isinstance(asset.get("href"), str):
-            continue
-        roles = asset.get("roles")
-        if isinstance(roles, list) and _NOT_DATA.intersection(
-            r for r in roles if isinstance(r, str)
-        ):
-            continue
-        try:
-            href = asset_href(asset["href"], base)
-        except ValueError:
-            continue
-        media = asset.get("type")
-        if asset_format(href, media if isinstance(media, str) else None) == "cog":
-            return href
-    return None
 
 
 def write_vrt(

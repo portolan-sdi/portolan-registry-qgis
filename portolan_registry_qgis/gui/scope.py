@@ -24,6 +24,7 @@ from qgis.PyQt.QtCore import Qt, pyqtSignal
 from qgis.PyQt.QtGui import QColor
 from qgis.PyQt.QtWidgets import QCheckBox, QComboBox, QHBoxLayout, QToolButton, QVBoxLayout, QWidget
 
+from portolan_registry_qgis.core import scope as scopes
 from portolan_registry_qgis.core.i18n import N_, _
 from portolan_registry_qgis.core.scope import Area, Everything, MapView, Scope
 
@@ -159,46 +160,32 @@ def _to_wgs84(geometry: QgsGeometry, crs: QgsCoordinateReferenceSystem) -> QgsGe
 def _split_at_antimeridian(shape: QgsGeometry, projected: bool) -> Area | None:
     """Return the area cut in two at 180°, or None when it does not cross it.
 
-    A polygon crosses the antimeridian in two cases:
-    - It has longitudes beyond ±180°, as on a canvas in degrees that the user
-      panned past 180°.
-    - It came from a projected CRS, and one of its edges jumps more than 180°
-      of longitude after the transform. The caller densifies the edges
-      of a polygon wider than 180° before the transform, so each edge is
-      short.
-    A polygon drawn in degrees with longitudes in -180..180 is what the user
-    drew, even when it is wide. The area becomes a MultiPolygon of the two
-    sides, and its box has west > east, as STAC writes a box that crosses
-    the antimeridian.
+    ``core.scope.crosses_antimeridian`` names the cases. The area becomes a
+    MultiPolygon of the two sides, and its box has west > east, as STAC
+    writes a box that crosses the antimeridian.
     """
-    rect = shape.boundingBox()
-    beyond = rect.xMinimum() < -180 or rect.xMaximum() > 180
-    if not beyond and not (projected and _jumps(shape)):
+    longitudes = [vertex.x() for vertex in shape.vertices()]
+    if not scopes.crosses_antimeridian(longitudes, projected=projected):
         return None
     moved = QgsGeometry(shape)
     for index, vertex in enumerate(shape.vertices()):
         if vertex.x() < 0:
-            moved.moveVertex(vertex.x() + 360, vertex.y(), index)
+            moved.moveVertex(scopes.eastward(vertex.x()), vertex.y(), index)
     wide = moved.boundingBox()
-    if wide.xMaximum() <= 180:
+    box = scopes.split_bbox((wide.xMinimum(), wide.yMinimum(), wide.xMaximum(), wide.yMaximum()))
+    if box is None:
         return None
-    west = moved.intersection(QgsGeometry.fromRect(QgsRectangle(-180, -90, 180, 90)))
-    east = moved.intersection(QgsGeometry.fromRect(QgsRectangle(180, -90, 540, 90)))
-    east.translate(-360, 0)
-    parts = [part for part in (west, east) if not part.isNull() and not part.isEmpty()]
-    joined = QgsGeometry.collectGeometry(parts)
-    box = (max(wide.xMinimum(), -180), wide.yMinimum(), wide.xMaximum() - 360, wide.yMaximum())
-    return Area(joined.asWkt(_PRECISION), box)
+    sides = [_side(moved, side, shift) for side, shift in scopes.ANTIMERIDIAN_SIDES]
+    parts = [part for part in sides if not part.isNull() and not part.isEmpty()]
+    return Area(QgsGeometry.collectGeometry(parts).asWkt(_PRECISION), box)
 
 
-def _jumps(shape: QgsGeometry) -> bool:
-    """Return whether two neighbouring vertices of a ring differ by more than 180° of longitude."""
-    previous = None
-    for vertex in shape.vertices():
-        if previous is not None and abs(vertex.x() - previous.x()) > 180:
-            return True
-        previous = vertex
-    return False
+def _side(shape: QgsGeometry, box: tuple[float, float, float, float], shift: float) -> QgsGeometry:
+    """Return the part of ``shape`` inside ``box``, moved ``shift`` degrees east."""
+    part = shape.intersection(QgsGeometry.fromRect(QgsRectangle(*box)))
+    if shift:
+        part.translate(shift, 0)
+    return part
 
 
 def layer_area(layer: QgsVectorLayer, selected_only: bool) -> Area:

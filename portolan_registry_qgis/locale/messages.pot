@@ -290,7 +290,7 @@ msgstr ""
 msgid "Could not list {title}: {error}"
 msgstr ""
 
-#: portolan_registry_qgis/qgis_io/layers.py
+#: portolan_registry_qgis/core/style.py
 #, python-brace-format
 msgid "Could not load the style's sprite at {url}: {error}"
 msgstr ""
@@ -671,7 +671,7 @@ msgstr ""
 msgid "No style in {title} draws {url}."
 msgstr ""
 
-#: portolan_registry_qgis/qgis_io/layers.py
+#: portolan_registry_qgis/core/style.py
 msgid "Not a MapLibre GL style (version 8)"
 msgstr ""
 
@@ -799,7 +799,7 @@ msgstr ""
 msgid "QGIS could not open {url}: {error}"
 msgstr ""
 
-#: portolan_registry_qgis/qgis_io/layers.py
+#: portolan_registry_qgis/core/style.py
 msgid "QGIS default style"
 msgstr ""
 
@@ -950,7 +950,7 @@ msgstr ""
 msgid "Stopped the search for the files of {title}."
 msgstr ""
 
-#: portolan_registry_qgis/qgis_io/layers.py
+#: portolan_registry_qgis/core/style.py
 #, python-brace-format
 msgid ""
 "Style layer {layer} reads source {source}, which is not a PMTiles archive; "
@@ -985,7 +985,7 @@ msgstr ""
 msgid "The clip is not WKT"
 msgstr ""
 
-#: portolan_registry_qgis/qgis_io/mosaic.py
+#: portolan_registry_qgis/core/mirror.py
 msgid "The file has no bbox or assets column"
 msgstr ""
 

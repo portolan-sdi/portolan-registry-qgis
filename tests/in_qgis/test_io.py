@@ -40,8 +40,10 @@ from portolan_registry_qgis.core.download import (
     plan,
 )
 from portolan_registry_qgis.core.geoparquet import LAYER
-from portolan_registry_qgis.core.scope import Area, Everything, MapView
+from portolan_registry_qgis.core.mirror import mirror_href
+from portolan_registry_qgis.core.scope import Everything
 from portolan_registry_qgis.core.stac import Asset, read_document
+from portolan_registry_qgis.core.style import DEFAULT_STYLE_NAME, archive_urls
 from portolan_registry_qgis.qgis_io import downloader, layers, mosaic, network, parquet_layer
 from portolan_registry_qgis.qgis_io.downloader import DownloadJob, target_path
 from portolan_registry_qgis.qgis_io.network import (
@@ -60,6 +62,7 @@ from portolan_registry_qgis.qgis_io.tileserver import (
     open_archive,
     read_tile,
 )
+from tests.tiles import EAST_AREA, TRIANGLE, WEST_VIEW
 
 from .conftest import wait_for
 
@@ -180,81 +183,9 @@ def test_tile_server_answers(catalog, server):
     assert not server.serves(template)
 
 
-def test_style_split_and_sources():
-    style = {
-        "version": 8,
-        "sources": {
-            "a": {"type": "vector", "url": "pmtiles://../a.pmtiles"},
-            "b": {"type": "vector", "url": "pmtiles://https://x.test/b.pmtiles"},
-            "bare": {"type": "vector", "url": "../d.pmtiles?v=2"},
-            "tilejson": {"type": "vector", "url": "https://tiles.test/v.json"},
-            "xyz": {"type": "vector", "tiles": ["https://tiles.test/{z}/{x}/{y}.pbf"]},
-            "base": {"type": "raster", "tiles": ["https://tiles.test/{z}/{x}/{y}.png"]},
-        },
-        "layers": [
-            {"id": "bg", "type": "background"},
-            {"id": "la", "type": "fill", "source": "a", "source-layer": "l"},
-            {"id": "lb", "type": "line", "source": "b", "source-layer": "l"},
-            {"id": "sat", "type": "raster", "source": "base"},
-        ],
-    }
-    url = "https://x.test/c/styles/s.json"
-    assert layers.pmtiles_sources(style, url) == {
-        "a": "https://x.test/c/a.pmtiles",
-        "b": "https://x.test/b.pmtiles",
-        "bare": "https://x.test/c/d.pmtiles?v=2",
-    }
-    split = layers.split_style(style, url)
-    assert {k: [layer["id"] for layer in v["layers"]] for k, v in split.by_source.items()} == {
-        "https://x.test/c/a.pmtiles": ["bg", "la"],
-        "https://x.test/b.pmtiles": ["lb"],
-    }
-    assert len(split.warnings) == 1
-    assert "sat" in split.warnings[0]
-
-
-def test_source_without_url_reads_the_only_archive():
-    style = {"version": 8, "sources": {"data": {"type": "vector"}}, "layers": []}
-    url = "https://x.test/c/styles/s.json"
-    assert layers.pmtiles_sources(style, url) == {}
-    assert layers.pmtiles_sources(style, url, "https://x.test/c/a.pmtiles") == {
-        "data": "https://x.test/c/a.pmtiles"
-    }
-
-
-_S3_WEBSITE = "http://bucket.s3-website-us-east-1.amazonaws.com"
-_S3_REST = "https://bucket.s3.us-east-1.amazonaws.com"
-
-
-def test_style_urls_upgrade_s3_website_endpoints():
-    style = {
-        "version": 8,
-        "sprite": f"{_S3_WEBSITE}/c/sprites/s",
-        "sources": {"a": {"type": "vector", "url": f"pmtiles://{_S3_WEBSITE}/c/a.pmtiles"}},
-        "layers": [],
-    }
-    url = f"{_S3_REST}/c/styles/s.json"
-    assert layers.pmtiles_sources(style, url) == {"a": f"{_S3_REST}/c/a.pmtiles"}
-    fetched: list[str] = []
-
-    def fetch(target: str) -> bytes:
-        fetched.append(target)
-        raise OSError("offline")
-
-    assert layers._sprite(style, url, fetch, [], {}) is None
-    assert fetched == [f"{_S3_REST}/c/sprites/s.json"]
-
-
 def test_range_fetcher_reads_any_http_scheme(catalog):
     url = f"{catalog['base']}/catalog.json".replace("http://", "HTTP://", 1)
     assert isinstance(range_fetcher(url), RemoteRange)
-
-
-def test_parse_style_rejects_non_styles():
-    assert layers.parse_style(b'{"version": 8, "layers": []}')["version"] == 8
-    for raw in (b"[]", b'{"version": 7}'):
-        with pytest.raises(ValueError, match="MapLibre"):
-            layers.parse_style(raw)
 
 
 def _render(layer, extent):
@@ -304,7 +235,7 @@ def _style_colors(layer) -> set[str]:
 
 
 def test_tiles_carry_every_style_as_a_named_style(catalog, collection, server):
-    urls = layers.archive_urls(collection)
+    urls = archive_urls(collection)
     assert urls == [f"{catalog['base']}/points.pmtiles"]
     prepared = layers.prepare_pmtiles(collection, urls, fetch_bytes)
     assert prepared.warnings == []
@@ -314,9 +245,7 @@ def test_tiles_carry_every_style_as_a_named_style(catalog, collection, server):
     assert layer.name() == "Point tiles"
     assert layer.customProperty(layers.PMTILES_PROPERTY).endswith("/points.pmtiles")
     manager = layer.styleManager()
-    assert sorted(manager.styles()) == sorted(
-        [layers.DEFAULT_STYLE_NAME, "style-red", "style-blue"]
-    )
+    assert sorted(manager.styles()) == sorted([DEFAULT_STYLE_NAME, "style-red", "style-blue"])
     # The default style is current, and each named style draws its own color.
     assert manager.currentStyle() == "style-red"
     image = _render(layer, BOLOGNA)
@@ -334,7 +263,7 @@ def test_tiles_carry_every_style_as_a_named_style(catalog, collection, server):
         manager.setCurrentStyle(name)
         catalog_colors |= _style_colors(layer)
     assert {"#ffff0000", "#ff0000ff"} <= catalog_colors
-    manager.setCurrentStyle(layers.DEFAULT_STYLE_NAME)
+    manager.setCurrentStyle(DEFAULT_STYLE_NAME)
     default_colors = _style_colors(layer)
     assert default_colors
     assert default_colors.isdisjoint(catalog_colors)
@@ -344,12 +273,12 @@ def test_tiles_carry_every_style_as_a_named_style(catalog, collection, server):
 
 def test_tiles_without_styles_use_the_qgis_style(catalog, collection, server):
     bare = replace(collection, assets=collection.data_assets)
-    urls = layers.archive_urls(bare)
+    urls = archive_urls(bare)
     prepared = layers.prepare_pmtiles(bare, urls, fetch_bytes)
     assert prepared.warnings == []
     built, _ = layers.build_pmtiles(server, prepared, QImage.fromData)
     (layer,) = built
-    assert layer.styleManager().styles() == [layers.DEFAULT_STYLE_NAME]
+    assert layer.styleManager().styles() == [DEFAULT_STYLE_NAME]
 
 
 def test_tiles_report_the_archive_extent(catalog, server):
@@ -386,7 +315,7 @@ def test_unreadable_style_is_skipped_with_a_warning(collection, server):
     broken = replace(red, href=red.href.replace("red", "gone"))
     others = [a for a in collection.assets if a.key != red.key]
     document = replace(collection, assets=(broken, *others))
-    urls = layers.archive_urls(document)
+    urls = archive_urls(document)
     prepared = layers.prepare_pmtiles(document, urls, fetch_bytes)
     assert "Could not read the style" in prepared.warnings[0]
     built, _ = layers.build_pmtiles(server, prepared, QImage.fromData)
@@ -942,29 +871,6 @@ def _csv_asset(catalog, name):
     return Asset(name, href, None, "text/csv", ("data",), None, None, "csv")
 
 
-@pytest.mark.parametrize(
-    ("header", "expected"),
-    [
-        (b"id,lon,lat\n1,2,3\n", ("lon", "lat")),
-        (b"\xef\xbb\xbfID;Longitude;Latitude\n", ("Longitude", "Latitude")),
-        (b"name\tX\tY\na\t11.2\t44.5\n", ("X", "Y")),
-        # x and y in RD New are not degrees, so the CSV opens as a table.
-        (b"id,x,y\n1,155000,463000\n", None),
-        # x and y with no complete row cannot be told apart.
-        (b"name\tX\tY\n", None),
-        (b"id,x,y\n1,11.2,44.5\n2,155000,4630", ("x", "y")),
-        (b'"lng","LAT"\n', ("lng", "LAT")),
-        # "lon" comes before "x" in the order of preference.
-        (b"x,y,lon,lat\n", ("lon", "lat")),
-        (b"id,lon,name\n", None),
-        (b"id,name\n", None),
-        (b"", None),
-    ],
-)
-def test_coordinate_columns(header, expected):
-    assert layers.coordinate_columns(header) == expected
-
-
 def test_csv_with_coordinates_opens_as_points(catalog):
     gdal.VSICurlClearCache()
     layer = layers.asset_layer(_csv_asset(catalog, "points.csv"))
@@ -1150,26 +1056,12 @@ def _tile(catalog, key):
     return f"{catalog['base']}/tiles/{key}/{key}.tif"
 
 
-# Scopes in EPSG:4326 around the two items of the tiles collection.
-WEST_VIEW = MapView((10.9, 43.9, 11.5, 44.7))
-EAST_AREA = Area(
-    "POLYGON((12.1 44.1, 12.3 44.1, 12.3 44.3, 12.1 44.1))",
-    (12.1, 44.1, 12.3, 44.3),
-)
-# The envelope touches both items. East of 12.0 the triangle stays north of
-# item b, so it touches only item a.
-TRIANGLE = Area(
-    "POLYGON((11.5 44.3, 12.3 44.9, 11.5 44.9, 11.5 44.3))",
-    (11.5, 44.3, 12.3, 44.9),
-)
-
-
 def test_item_hrefs_from_the_mirror(catalog, tiles, monkeypatch):
     def no_walk(*_args, **_kwargs):
         raise AssertionError("The mirror must answer without a walk")
 
     monkeypatch.setattr(mosaic, "walk", no_walk)
-    assert mosaic.mirror_href(tiles) == f"{catalog['base']}/tiles/items.parquet"
+    assert mirror_href(tiles) == f"{catalog['base']}/tiles/items.parquet"
     both = [_tile(catalog, "a"), _tile(catalog, "b")]
     assert mosaic.item_hrefs_in(tiles, Everything(), fetch_json) == both
     assert mosaic.item_hrefs_in(tiles, WEST_VIEW, fetch_json) == both[:1]
@@ -1195,40 +1087,6 @@ def test_item_hrefs_fall_back_to_the_walk(catalog, tiles):
     (mirror,) = tiles.assets
     broken = replace(tiles, assets=(replace(mirror, href=f"{catalog['base']}/tiles/gone.parquet"),))
     assert mosaic.item_hrefs_in(broken, WEST_VIEW, fetch_json) == [_tile(catalog, "a")]
-
-
-def test_item_documents_come_from_the_item_links(tiles):
-    base = tiles.href.rsplit("/", 1)[0]
-    assert mosaic.item_documents(tiles) == {
-        "a": f"{base}/a/a.json",
-        "b": f"{base}/b/b.json",
-    }
-
-
-def test_a_mirror_without_self_links_resolves_against_the_items(catalog, tiles):
-    # The GHSL mirror stores "./<file>.tif" relative to each item and no self
-    # link. Resolved against the mirror file, the href gave HTTP 404.
-    mirror = mosaic.mirror_href(tiles)
-    both = [_tile(catalog, "a"), _tile(catalog, "b")]
-    assert mosaic.mirror_hrefs(mirror, Everything(), items=mosaic.item_documents(tiles)) == both
-    # Without the item links, item a resolves against the file, and is wrong.
-    wrong = mosaic.mirror_hrefs(mirror, Everything())
-    assert wrong[0] == f"{catalog['base']}/tiles/a.tif"
-    assert wrong[1] == both[1]
-
-
-def test_mirror_query_reads_a_list_bbox():
-    sql, params = mosaic.mirror_query(
-        {"bbox": "DOUBLE[]", "assets": "STRUCT(a STRUCT(href VARCHAR))"}, WEST_VIEW
-    )
-    assert "bbox[1]" in sql
-    assert "links" not in sql
-    assert params == [10.9, 11.5, 43.9, 44.7]
-    sql, params = mosaic.mirror_query({"bbox": "STRUCT(xmin DOUBLE)", "assets": "x"}, Everything())
-    assert "WHERE" not in sql
-    assert params == []
-    with pytest.raises(ValueError, match="no bbox or assets"):
-        mosaic.mirror_query({"id": "VARCHAR"}, Everything())
 
 
 def _sample(layer, x, y):

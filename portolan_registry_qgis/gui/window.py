@@ -80,6 +80,7 @@ from portolan_registry_qgis.core.hrefs import (
 from portolan_registry_qgis.core.i18n import N_, _, count, ngettext, number
 from portolan_registry_qgis.core.scope import Area, Everything, MapView, Scope
 from portolan_registry_qgis.core.stac import Asset, Document, Loadable, Node, read_document
+from portolan_registry_qgis.core.style import archive_urls
 from portolan_registry_qgis.gui.pictures import (
     ACCENT,
     ImageCache,
@@ -1139,7 +1140,7 @@ class RegistryWindow(QDialog):
             )
         )
         self.tile_styles.setStyleSheet(f"color: {muted(self.palette()).name()};")
-        self.tile_styles.setVisible(bool(styles and layer_io.archive_urls(document)))
+        self.tile_styles.setVisible(bool(styles and archive_urls(document)))
         # The scope limits GeoParquet reads, mosaics, and the walk of a download.
         has_parquet = any(item.format == "parquet" and not _is_table(item) for item in loadable)
         self.scope_row.setVisible(has_parquet or bool(document.children))
@@ -1448,7 +1449,7 @@ class RegistryWindow(QDialog):
         name = _parquet_name(asset)
         in_scope = not isinstance(scope, Everything)
         document = self._document
-        has_tiles = document is not None and bool(layer_io.archive_urls(document))
+        has_tiles = document is not None and bool(archive_urls(document))
 
         def read(task: Any) -> parquet_layer.Planned:
             return parquet_layer.plan(

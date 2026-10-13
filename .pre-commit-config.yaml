@@ -58,6 +58,20 @@ repos:
       - id: zizmor
         args: [--no-online-audits]
 
+  # Copy/paste detector. The hook installs the jscpd wheel from PyPI,
+  # so it needs no Node.js. .jscpd.json sets the paths and the size of
+  # a clone. Any clone fails the check. Shared code goes in a helper,
+  # and a justified copy goes between jscpd:ignore-start and
+  # jscpd:ignore-end comments.
+  - repo: https://github.com/kucherenko/jscpd
+    rev: v5.3.3
+    hooks:
+      - id: jscpd
+        # Scan the whole tree in one pass. A clone has two ends, and the
+        # staged files alone can miss the other end.
+        pass_filenames: false
+        files: \.py$|^\.jscpd\.json$
+
   # Pre-push stage: the slower quality gates. CI runs these too
   # (reusable-python-ci.yml, "pre-push stage" step).
   # Relative links and anchors, with the org rules. No network access.

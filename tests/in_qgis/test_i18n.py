@@ -14,7 +14,7 @@ import re
 
 import pytest
 from babel.messages.pofile import read_po
-from qgis.core import QgsApplication, QgsProject, QgsSettings
+from qgis.core import QgsSettings
 from qgis.PyQt.QtWidgets import (
     QAbstractButton,
     QComboBox,
@@ -30,7 +30,7 @@ import portolan_registry_qgis
 from portolan_registry_qgis.core import i18n
 from portolan_registry_qgis.qgis_io.tileserver import TileServer
 
-from .test_gui import FakeIface, open_collection, open_window
+from .test_gui import open_collection, open_window
 
 OPEN, CLOSE = "⟦", "⟧"
 _FIELD = re.compile(r"\{[^{}]*\}")
@@ -103,16 +103,6 @@ def untranslated(root: QWidget, phrases: set[str]) -> list[str]:
         rest = _BRACKETED.sub("", _TAG.sub(" ", text))
         raw.extend(f"{phrase!r} in {text!r}" for phrase in phrases if phrase in rest)
     return raw
-
-
-@pytest.fixture
-def iface():
-    fake = FakeIface()
-    yield fake
-    QgsProject.instance().clear()
-    for widget in (fake.canvas, fake.bar, fake.window):
-        widget.deleteLater()
-    QgsApplication.processEvents()
 
 
 @pytest.fixture

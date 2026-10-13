@@ -27,7 +27,11 @@ import pytest
 pytest.importorskip("qgis.core")
 
 from osgeo import gdal, ogr, osr  # noqa: E402
-from qgis.core import QgsApplication, QgsProject  # noqa: E402
+from qgis.core import QgsApplication, QgsCoordinateReferenceSystem, QgsProject  # noqa: E402
+from qgis.gui import QgsMapCanvas, QgsMessageBar  # noqa: E402
+from qgis.PyQt.QtWidgets import QMainWindow  # noqa: E402
+
+from tests.points import write_points  # noqa: E402
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 gdal.UseExceptions()
@@ -108,6 +112,50 @@ def wait_for(predicate, timeout=30.0):
             raise TimeoutError("Condition not met in time")
         QgsApplication.processEvents()
         time.sleep(0.01)
+
+
+class FakeIface:
+    """The parts of QgisInterface the plugin calls."""
+
+    def __init__(self):
+        self.window = QMainWindow()
+        self.canvas = QgsMapCanvas()
+        self.canvas.setDestinationCrs(QgsCoordinateReferenceSystem("EPSG:4326"))
+        self.canvas.resize(400, 400)
+        self.bar = QgsMessageBar()
+        self.menu = []
+        self.toolbar = []
+
+    def mainWindow(self):
+        return self.window
+
+    def mapCanvas(self):
+        return self.canvas
+
+    def messageBar(self):
+        return self.bar
+
+    def addPluginToWebMenu(self, _menu, action):
+        self.menu.append(action)
+
+    def removePluginWebMenu(self, _menu, action):
+        self.menu.remove(action)
+
+    def addWebToolBarIcon(self, action):
+        self.toolbar.append(action)
+
+    def removeWebToolBarIcon(self, action):
+        self.toolbar.remove(action)
+
+
+@pytest.fixture
+def iface():
+    fake = FakeIface()
+    yield fake
+    QgsProject.instance().clear()
+    for widget in (fake.canvas, fake.bar, fake.window):
+        widget.deleteLater()
+    QgsApplication.processEvents()
 
 
 def _points(path: Path) -> None:
@@ -261,15 +309,11 @@ def _parquet(path: Path) -> None:
 
     con = duckdb.connect()
     con.execute("INSTALL spatial; LOAD spatial;")
-    con.execute(
-        f"""COPY (SELECT i AS id, 'p' || i AS name, i * 0.5 AS score,
-            DATE '2026-01-01' + i::INT AS day,
-            TIMESTAMP '2026-01-01 03:00:00' + to_hours(i::BIGINT) AS seen,
-            ST_Point(11 + i * 0.01, 44 + i * 0.005) AS geometry,
-            {{'xmin': 11 + i * 0.01, 'ymin': 44 + i * 0.005,
-              'xmax': 11 + i * 0.01, 'ymax': 44 + i * 0.005}} AS bbox
-            FROM range(200) t(i))
-        TO '{path}' (FORMAT parquet, ROW_GROUP_SIZE 20)"""
+    write_points(
+        con,
+        path,
+        "'p' || i AS name, i * 0.5 AS score, DATE '2026-01-01' + i::INT AS day, "
+        "TIMESTAMP '2026-01-01 03:00:00' + to_hours(i::BIGINT) AS seen",
     )
     con.close()
 

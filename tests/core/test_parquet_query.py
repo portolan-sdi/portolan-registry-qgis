@@ -9,6 +9,7 @@ import pytest
 
 from portolan_registry_qgis.core import parquet_query
 from portolan_registry_qgis.core.geoparquet import plan_read
+from tests.points import write_points
 
 pytest.importorskip("duckdb")
 
@@ -23,15 +24,7 @@ def con():
 @pytest.fixture(scope="module")
 def points(tmp_path_factory, con):
     path = tmp_path_factory.mktemp("parquet") / "points.parquet"
-    con.execute(
-        f"""COPY (SELECT i AS id, 'n' || i AS name, i * 1.5 AS val,
-            DATE '2026-01-01' + i::INT AS day,
-            ST_Point(11 + i * 0.01, 44 + i * 0.005) AS geometry,
-            {{'xmin': 11 + i * 0.01, 'ymin': 44 + i * 0.005,
-              'xmax': 11 + i * 0.01, 'ymax': 44 + i * 0.005}} AS bbox
-            FROM range(200) t(i))
-        TO '{path}' (FORMAT parquet, ROW_GROUP_SIZE 20)"""
-    )
+    write_points(con, path, "'n' || i AS name, i * 1.5 AS val, DATE '2026-01-01' + i::INT AS day")
     return str(path)
 
 

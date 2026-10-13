@@ -18,10 +18,10 @@ from qgis.core import (
     QgsVectorLayer,
     QgsVectorTileLayer,
 )
-from qgis.gui import QgsCollapsibleGroupBox, QgsMapCanvas, QgsMessageBar
+from qgis.gui import QgsCollapsibleGroupBox
 from qgis.PyQt.QtCore import QSize
 from qgis.PyQt.QtGui import QColor, QPalette
-from qgis.PyQt.QtWidgets import QComboBox, QMainWindow, QMessageBox
+from qgis.PyQt.QtWidgets import QComboBox, QMessageBox
 
 import portolan_registry_qgis
 from portolan_registry_qgis import plugin as plugin_module
@@ -36,51 +36,6 @@ from portolan_registry_qgis.qgis_io.layers import PMTILES_PROPERTY
 from portolan_registry_qgis.qgis_io.tileserver import TileServer
 
 from .conftest import wait_for
-
-
-class FakeIface:
-    """The parts of QgisInterface the plugin calls."""
-
-    def __init__(self):
-        self.window = QMainWindow()
-        self.canvas = QgsMapCanvas()
-        self.canvas.setDestinationCrs(QgsCoordinateReferenceSystem("EPSG:4326"))
-        self.canvas.resize(400, 400)
-        self.bar = QgsMessageBar()
-        self.menu = []
-        self.toolbar = []
-
-    def mainWindow(self):
-        return self.window
-
-    def mapCanvas(self):
-        return self.canvas
-
-    def messageBar(self):
-        return self.bar
-
-    def addPluginToWebMenu(self, _menu, action):
-        self.menu.append(action)
-
-    def removePluginWebMenu(self, _menu, action):
-        self.menu.remove(action)
-
-    def addWebToolBarIcon(self, action):
-        self.toolbar.append(action)
-
-    def removeWebToolBarIcon(self, action):
-        self.toolbar.remove(action)
-
-
-@pytest.fixture
-def iface():
-    fake = FakeIface()
-    yield fake
-    QgsProject.instance().clear()
-    for widget in (fake.canvas, fake.bar, fake.window):
-        widget.deleteLater()
-    QgsApplication.processEvents()
-
 
 _SECTIONS_GROUP = f"QgsCollapsibleGroupBox/{window_module.SETTINGS_GROUP}"
 
@@ -98,6 +53,23 @@ def fresh_layout():
     _forget_layout()
     yield
     _forget_layout()
+
+
+@pytest.fixture
+def asked(tmp_path, monkeypatch):
+    """Download into ``tmp_path`` and answer Yes to each question.
+
+    The list collects the text of each question the window asks.
+    """
+    monkeypatch.setattr(window_module.QFileDialog, "getExistingDirectory", lambda *a: str(tmp_path))
+    texts = []
+
+    def answer(*args):
+        texts.append(args[2])
+        return QMessageBox.StandardButton.Yes
+
+    monkeypatch.setattr(window_module.QMessageBox, "question", answer)
+    return texts
 
 
 @pytest.fixture
@@ -425,15 +397,7 @@ def test_missing_duckdb_shows_install_help(iface, server, catalog, monkeypatch):
     window.disconnect_canvas()
 
 
-def test_download_all(iface, server, catalog, tmp_path, monkeypatch):
-    monkeypatch.setattr(window_module.QFileDialog, "getExistingDirectory", lambda *a: str(tmp_path))
-    asked = []
-
-    def answer(*args):
-        asked.append(args[2])
-        return QMessageBox.StandardButton.Yes
-
-    monkeypatch.setattr(window_module.QMessageBox, "question", answer)
+def test_download_all(iface, server, catalog, tmp_path, asked):
     window = open_window(iface, server, catalog)
     open_collection(window)
     window.header.clicked.emit()
@@ -1055,15 +1019,7 @@ def test_saved_project_rebuilds_the_mosaic(iface, catalog, tmp_path, monkeypatch
 # ---------- scoped downloads ----------
 
 
-def test_download_keeps_the_items_in_the_scope(iface, server, catalog, tmp_path, monkeypatch):
-    monkeypatch.setattr(window_module.QFileDialog, "getExistingDirectory", lambda *a: str(tmp_path))
-    asked = []
-
-    def answer(*args):
-        asked.append(args[2])
-        return QMessageBox.StandardButton.Yes
-
-    monkeypatch.setattr(window_module.QMessageBox, "question", answer)
+def test_download_keeps_the_items_in_the_scope(iface, server, catalog, tmp_path, asked):
     window, collection = open_tiles(iface, server, catalog)
     window.tree.setCurrentItem(collection)
     wait_for(lambda: window._document is not None)
@@ -1078,15 +1034,7 @@ def test_download_keeps_the_items_in_the_scope(iface, server, catalog, tmp_path,
     window.disconnect_canvas()
 
 
-def test_download_clips_the_parquet_to_the_scope(iface, server, catalog, tmp_path, monkeypatch):
-    monkeypatch.setattr(window_module.QFileDialog, "getExistingDirectory", lambda *a: str(tmp_path))
-    asked = []
-
-    def answer(*args):
-        asked.append(args[2])
-        return QMessageBox.StandardButton.Yes
-
-    monkeypatch.setattr(window_module.QMessageBox, "question", answer)
+def test_download_clips_the_parquet_to_the_scope(iface, server, catalog, tmp_path, asked):
     window = open_window(iface, server, catalog)
     open_collection(window)
     area = _polygon_layer(L_SHAPE)

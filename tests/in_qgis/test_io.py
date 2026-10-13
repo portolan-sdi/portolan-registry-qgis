@@ -240,28 +240,20 @@ def _render(layer, extent):
     return job.renderedImage()
 
 
-def _red_pixels(image: QImage) -> int:
+def _pixels(image: QImage, channel: str) -> int:
+    """Count the sampled pixels that show pure ``channel``: red, green, or blue."""
     count = 0
     for x in range(0, image.width(), 2):
         for y in range(0, image.height(), 2):
             color = image.pixelColor(x, y)
-            if color.red() > 200 and color.green() < 80 and color.blue() < 80:
+            levels = {"red": color.red(), "green": color.green(), "blue": color.blue()}
+            if levels.pop(channel) > 200 and max(levels.values()) < 80:
                 count += 1
     return count
 
 
 # Web Mercator extent around the points near Bologna.
 BOLOGNA = QgsRectangle(1_200_000, 5_440_000, 1_500_000, 5_640_000)
-
-
-def _blue_pixels(image: QImage) -> int:
-    count = 0
-    for x in range(0, image.width(), 2):
-        for y in range(0, image.height(), 2):
-            color = image.pixelColor(x, y)
-            if color.blue() > 200 and color.red() < 80 and color.green() < 80:
-                count += 1
-    return count
 
 
 def _style_colors(layer) -> set[str]:
@@ -298,12 +290,12 @@ def test_tiles_carry_every_style_as_a_named_style(catalog, collection, server):
     # The default style is current, and each named style draws its own color.
     assert manager.currentStyle() == "style-red"
     image = _render(layer, BOLOGNA)
-    assert _red_pixels(image) > 0
-    assert _blue_pixels(image) == 0
+    assert _pixels(image, "red") > 0
+    assert _pixels(image, "blue") == 0
     manager.setCurrentStyle("style-blue")
     image = _render(layer, BOLOGNA)
-    assert _blue_pixels(image) > 0
-    assert _red_pixels(image) == 0
+    assert _pixels(image, "blue") > 0
+    assert _pixels(image, "red") == 0
     # QGIS colors a new vector tile layer from a random palette, which can
     # land on a red. So the default style must share no color with any
     # catalog style, alpha included, rather than draw no red pixels.
@@ -317,7 +309,7 @@ def test_tiles_carry_every_style_as_a_named_style(catalog, collection, server):
     assert default_colors
     assert default_colors.isdisjoint(catalog_colors)
     manager.setCurrentStyle("style-red")
-    assert _red_pixels(_render(layer, BOLOGNA)) > 0
+    assert _pixels(_render(layer, BOLOGNA), "red") > 0
 
 
 def test_tiles_without_styles_use_the_qgis_style(catalog, collection, server):

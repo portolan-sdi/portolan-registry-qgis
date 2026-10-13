@@ -19,10 +19,12 @@ from portolan_registry_qgis.core.stac import (
     asset_format,
     collection_bbox,
     horizontal_bbox,
+    int_or_none,
     is_image,
     is_tabular,
     links_of,
     read_document,
+    str_or_none,
 )
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "anncsu"
@@ -480,3 +482,15 @@ def test_loadable_keeps_only_files_the_plugin_adds():
     assert loadable[1].asset.key == "table"
     assert document.pmtiles_duplicates == frozenset()
     assert _with_assets({}).loadable() == ()
+
+
+def test_json_value_helpers():
+    assert int_or_none(3) == 3
+    assert int_or_none(True) is None
+    assert int_or_none(3.0) is None
+    assert int_or_none("3") is None
+    assert str_or_none("a") == "a"
+    assert str_or_none("") == ""
+    assert str_or_none("", empty_ok=False) is None
+    assert str_or_none("a", empty_ok=False) == "a"
+    assert str_or_none(1) is None

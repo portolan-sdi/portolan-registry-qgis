@@ -16,9 +16,12 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from portolan_registry_qgis.core.i18n import _
+
+if TYPE_CHECKING:
+    from portolan_registry_qgis.core.stac import Bbox
 
 FieldKind = Literal["bool", "int", "double", "string", "date", "datetime"]
 
@@ -96,6 +99,56 @@ class ReadPlan:
 
 class GeoParquetError(ValueError):
     """The file is neither GeoParquet nor a table the plugin can read."""
+
+
+@dataclass(frozen=True)
+class Clip:
+    """The part of a file that a copy keeps, in the file's CRS.
+
+    A clip with no ``bbox`` keeps the whole file. A clip with only a
+    ``bbox`` keeps the features that intersect the box. A clip with an
+    ``area`` keeps the features that intersect that Polygon or MultiPolygon
+    WKT. Its ``bbox`` must then be the envelope of the area, so the covering
+    column skips row groups first. A table ignores the clip.
+
+    Raises:
+        ValueError: ``area`` is given without ``bbox``.
+    """
+
+    bbox: Bbox | None = None
+    area: str | None = None
+
+    def __post_init__(self) -> None:
+        """Check that an area comes with its envelope."""
+        if self.area is not None and self.bbox is None:
+            raise ValueError("An area needs its envelope as the bbox")  # i18n: skip - a caller bug
+
+    def to_text(self) -> tuple[str, str]:
+        """Return the box and the area as the text that a QGIS project saves.
+
+        The box is ``west,south,east,north``. A part the clip does not have
+        is an empty string.
+        """
+        bbox = ",".join(repr(value) for value in self.bbox) if self.bbox else ""
+        return bbox, self.area or ""
+
+    @classmethod
+    def from_text(cls, bbox: str, area: str = "") -> Clip:
+        """Read a clip from the text of ``to_text``.
+
+        A box without four numbers gives no box.
+
+        Raises:
+            ValueError: A part of the box is not a number, or the area has
+                no box.
+        """
+        parts = [float(part) for part in bbox.split(",")] if bbox else []
+        box = (parts[0], parts[1], parts[2], parts[3]) if len(parts) == 4 else None
+        return cls(box, area or None)
+
+
+# The clip of a copy that keeps the whole file.
+WHOLE_FILE = Clip()
 
 
 def field_kind(duckdb_type: str) -> FieldKind:
@@ -201,25 +254,32 @@ def _implicit_covering(schema: list[tuple[str, str]]) -> Covering | None:
     return None
 
 
+def _geometry_name(schema: list[tuple[str, str]], primary: object) -> str | None:
+    """Return the name of the geometry column, or None when the file has none.
+
+    The ``primary_column`` of the ``geo`` metadata wins. A GEOMETRY column
+    comes next, then a BLOB column with a common geometry name.
+    """
+    if isinstance(primary, str) and any(name == primary for name, _ in schema):
+        return primary
+    for name, duckdb_type in schema:
+        if duckdb_type.upper().startswith("GEOMETRY"):
+            return name
+    for name, duckdb_type in schema:
+        if name.lower() in GEOMETRY_NAMES and duckdb_type.upper() == "BLOB":
+            return name
+    return None
+
+
 def _pick_geometry(
     schema: list[tuple[str, str]], geo: dict[str, object]
 ) -> tuple[str, dict[str, object]] | None:
+    name = _geometry_name(schema, geo.get("primary_column"))
+    if name is None:
+        return None
     columns = geo.get("columns")
-    columns = columns if isinstance(columns, dict) else {}
-    primary = geo.get("primary_column")
-    names = [name for name, _ in schema]
-    if isinstance(primary, str) and primary in names:
-        info = columns.get(primary)
-        return primary, info if isinstance(info, dict) else {}
-    for name, duckdb_type in schema:
-        if duckdb_type.upper().startswith("GEOMETRY"):
-            info = columns.get(name)
-            return name, info if isinstance(info, dict) else {}
-    for name, duckdb_type in schema:
-        if name.lower() in GEOMETRY_NAMES and duckdb_type.upper() == "BLOB":
-            info = columns.get(name)
-            return name, info if isinstance(info, dict) else {}
-    return None
+    info = columns.get(name) if isinstance(columns, dict) else None
+    return name, info if isinstance(info, dict) else {}
 
 
 def _declares_geometry(geo: dict[str, object]) -> bool:
@@ -228,6 +288,12 @@ def _declares_geometry(geo: dict[str, object]) -> bool:
     return isinstance(geo.get("primary_column"), str) or (
         isinstance(columns, dict) and bool(columns)
     )
+
+
+def _declared_types(info: dict[str, object]) -> list[str]:
+    """Return the ``geometry_types`` that a geometry column's metadata lists."""
+    types = info.get("geometry_types")
+    return [t for t in types if isinstance(t, str)] if isinstance(types, list) else []
 
 
 def _table_plan(schema: list[tuple[str, str]]) -> ReadPlan:
@@ -267,7 +333,6 @@ def plan_read(schema: list[tuple[str, str]], geo_json: str | bytes | None) -> Re
             raise GeoParquetError(_("The file has no geometry column that its metadata names"))
         return _table_plan(schema)
     geometry, info = picked
-    types = info.get("geometry_types")
     covering = _covering(info) or _implicit_covering(schema)
     skip = {geometry}
     if covering is not None:
@@ -277,14 +342,11 @@ def plan_read(schema: list[tuple[str, str]], geo_json: str | bytes | None) -> Re
         for name, duckdb_type in schema
         if name not in skip
     )
-    geometry_type = dict(schema)[geometry]
     return ReadPlan(
         geometry=geometry,
-        geometry_is_wkb_blob=geometry_type.upper() == "BLOB",
+        geometry_is_wkb_blob=dict(schema)[geometry].upper() == "BLOB",
         crs=_crs_input(info),
-        geometry_type=layer_geometry_type(
-            [t for t in types if isinstance(t, str)] if isinstance(types, list) else []
-        ),
+        geometry_type=layer_geometry_type(_declared_types(info)),
         columns=columns,
         covering=covering,
     )
@@ -316,35 +378,21 @@ def shape(plan: ReadPlan) -> str:
     return f"ST_GeomFromWKB({geometry})" if plan.geometry_is_wkb_blob else geometry
 
 
-def _check_area(bbox: tuple[float, float, float, float] | None, area: str | None) -> None:
-    if area is not None and bbox is None:
-        raise ValueError("An area needs its envelope as the bbox")  # i18n: skip - a caller bug
-
-
-def _where(
-    plan: ReadPlan,
-    bbox: tuple[float, float, float, float] | None,
-    *,
-    exact: bool = True,
-    area: str | None = None,
-) -> tuple[str, list[object]]:
+def _where(plan: ReadPlan, clip: Clip, *, exact: bool = True) -> tuple[str, list[object]]:
     """Return the WHERE clause and its parameters.
 
     Args:
         plan: The read plan.
-        bbox: Keep only features that intersect this box, in the file's CRS.
-        exact: Test each geometry against ``area``, else against ``bbox``.
+        clip: Keep only the features in this clip. The area WKT goes to
+            DuckDB as a parameter.
+        exact: Test each geometry against the area, else against the box.
             Without it, only the covering column filters, which reads far
             less of the file.
-        area: Keep only features that intersect this Polygon or
-            MultiPolygon WKT. ``bbox`` must be its envelope. The WKT goes
-            to DuckDB as a parameter.
     """
-    _check_area(bbox, area)
     where = [f"{quote(_geometry(plan))} IS NOT NULL"]
     params: list[object] = []
-    if bbox is not None:
-        west, south, east, north = bbox
+    if clip.bbox is not None:
+        west, south, east, north = clip.bbox
         if plan.covering is not None:
             c = plan.covering
             where.append(
@@ -352,68 +400,52 @@ def _where(
                 f"AND {_path(c.ymin)} <= ? AND {_path(c.ymax)} >= ?"
             )
             params += [east, west, north, south]
-        if exact and area is not None:
+        if exact and clip.area is not None:
             where.append(f"ST_Intersects({shape(plan)}, ST_GeomFromText(?))")
-            params.append(area)
+            params.append(clip.area)
         elif exact:
             where.append(f"ST_Intersects({shape(plan)}, ST_MakeEnvelope(?, ?, ?, ?))")
             params += [west, south, east, north]
     return " AND ".join(where), params
 
 
-def build_estimate(
-    plan: ReadPlan,
-    bbox: tuple[float, float, float, float] | None = None,
-    area: str | None = None,
-) -> tuple[str, list[object]] | None:
+def build_estimate(plan: ReadPlan, clip: Clip = WHOLE_FILE) -> tuple[str, list[object]] | None:
     """Build a query that estimates the number of features, with the URL first.
 
     Without a box, DuckDB answers from the Parquet footer. With a box, the
     query reads only the covering column, so the estimate counts the rows
     whose bbox overlaps the box. That is an upper bound of the features the
-    copy keeps. With an area, the query still counts by its envelope
-    ``bbox`` only, so the estimate stays an upper bound. A table has no
-    geometry, so neither a box nor an area filters it, and the count is
-    exact.
+    copy keeps. With an area, the query still counts by its envelope only,
+    so the estimate stays an upper bound. A table has no geometry, so no
+    clip filters it, and the count is exact.
 
     Args:
         plan: The read plan.
-        bbox: The box of the copy, in the file's CRS.
-        area: The Polygon or MultiPolygon WKT of the copy. ``bbox`` must be
-            its envelope.
+        clip: The clip of the copy.
 
     Returns:
-        The SQL and its parameters after the URL, or None when a box is
-        given and the file has no covering column. The estimate would then
+        The SQL and its parameters after the URL, or None when the clip has
+        a box and the file has no covering column. The estimate would then
         cost as much as the copy itself.
-
-    Raises:
-        ValueError: ``area`` is given without ``bbox``.
     """
-    _check_area(bbox, area)
-    if bbox is None or not plan.has_geometry:
+    if clip.bbox is None or not plan.has_geometry:
         return "SELECT count(*) FROM read_parquet(?)", []
     if plan.covering is None:
         return None
-    where, params = _where(plan, bbox, exact=False)
+    where, params = _where(plan, clip, exact=False)
     return f"SELECT count(*) FROM read_parquet(?) WHERE {where}", params  # noqa: S608  # nosec B608 - identifiers are quoted, values are parameters
 
 
-def build_first_type(
-    plan: ReadPlan,
-    bbox: tuple[float, float, float, float] | None = None,
-    area: str | None = None,
-) -> tuple[str, list[object]]:
+def build_first_type(plan: ReadPlan, clip: Clip = WHOLE_FILE) -> tuple[str, list[object]]:
     """Build a query for the type of the first geometry, with the URL first.
 
     The query returns the DuckDB type name, such as ``POLYGON``, and whether
-    the geometry has Z. ``bbox`` and ``area`` filter as for ``build_copy``.
+    the geometry has Z. ``clip`` filters as for ``build_copy``.
 
     Raises:
         GeoParquetError: The plan is for a table.
-        ValueError: ``area`` is given without ``bbox``.
     """
-    where, params = _where(plan, bbox, area=area)
+    where, params = _where(plan, clip)
     geometry = shape(plan)
     sql = (
         f"SELECT ST_GeometryType({geometry})::VARCHAR, ST_HasZ({geometry}) "  # noqa: S608  # nosec B608 - identifiers are quoted, values are parameters
@@ -511,9 +543,8 @@ def build_copy(
     plan: ReadPlan,
     path: str,
     layer_type: str,
-    bbox: tuple[float, float, float, float] | None = None,
+    clip: Clip = WHOLE_FILE,
     srs: str | None = None,
-    area: str | None = None,
 ) -> tuple[str, list[object]]:
     """Build the ``COPY`` of the features into a GeoPackage, with the URL first.
 
@@ -528,22 +559,13 @@ def build_copy(
         layer_type: The layer geometry type, from the plan or from
             ``type_from_first``. A feature of another type keeps its
             attributes and gets a NULL geometry. A table ignores it.
-        bbox: Keep only features that intersect this box, in the file's CRS.
-            A table ignores it.
+        clip: Keep only the features in this clip. A table ignores it.
         srs: The CRS to record in the GeoPackage, in any form GDAL reads.
             A table ignores it.
-        area: Keep only features that intersect this Polygon or
-            MultiPolygon WKT, in the file's CRS. ``bbox`` must be its
-            envelope, so the covering column skips row groups first. A table
-            ignores it.
 
     Returns:
         The SQL and its parameters after the URL.
-
-    Raises:
-        ValueError: ``area`` is given without ``bbox``.
     """
-    _check_area(bbox, area)
     selected = [f"{_value(column)} AS {quote(output_name(column.name))}" for column in plan.columns]
     creation = [f"FID={fid_name(plan)}", f"GEOMETRY_NAME={geometry_name(plan)}"]
     if plan.geometry is None:
@@ -555,7 +577,7 @@ def build_copy(
     fits, promote = _type_condition(plan, layer_type)
     geometry = f"ST_Multi({shape(plan)})" if promote else shape(plan)
     selected.insert(0, f"CASE WHEN {fits} THEN {geometry} END AS {quote(plan.geometry)}")
-    where, params = _where(plan, bbox, area=area)
+    where, params = _where(plan, clip)
     options = _gdal_options(creation)
     if not layer_type.endswith("Z"):
         # GDAL takes no Z types here. Without the option it reads the type

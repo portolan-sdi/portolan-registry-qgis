@@ -54,7 +54,7 @@ from qgis.core import (
 )
 
 from portolan_registry_qgis.core import parquet_query
-from portolan_registry_qgis.core.geoparquet import LAYER
+from portolan_registry_qgis.core.geoparquet import LAYER, WHOLE_FILE, Clip
 from portolan_registry_qgis.core.i18n import _
 
 if TYPE_CHECKING:
@@ -63,6 +63,7 @@ if TYPE_CHECKING:
     from qgis.core import QgsCoordinateTransformContext
 
     from portolan_registry_qgis.core.geoparquet import ReadPlan
+    from portolan_registry_qgis.core.stac import Bbox
 
 SOURCE_PROPERTY = "portolan/parquet_url"
 # The box of the copy in the file's CRS, as "west,south,east,north", or
@@ -106,11 +107,9 @@ class Planned:
     url: str
     plan: ReadPlan
     crs: QgsCoordinateReferenceSystem
-    bbox: tuple[float, float, float, float] | None
+    # The part of the file the copy keeps, in the file's CRS.
+    clip: Clip
     estimate: int | None
-    # A Polygon or MultiPolygon WKT in the file's CRS. ``bbox`` is then its
-    # envelope.
-    area: str | None = None
 
 
 @dataclass(frozen=True)
@@ -120,8 +119,7 @@ class Prepared:
     url: str
     path: Path
     written: parquet_query.Written
-    bbox: tuple[float, float, float, float] | None = None
-    area: str | None = None
+    clip: Clip = WHOLE_FILE
 
 
 def crs_for(plan: ReadPlan) -> QgsCoordinateReferenceSystem:
@@ -158,7 +156,7 @@ def file_bbox(
     extent_crs: QgsCoordinateReferenceSystem | None,
     file_crs: QgsCoordinateReferenceSystem,
     context: QgsCoordinateTransformContext,
-) -> tuple[float, float, float, float] | None:
+) -> Bbox | None:
     """Transform the map extent into the file's CRS."""
     if extent is None or extent_crs is None:
         return None
@@ -170,11 +168,11 @@ def file_area(
     area: str,
     file_crs: QgsCoordinateReferenceSystem,
     context: QgsCoordinateTransformContext,
-) -> tuple[str, tuple[float, float, float, float]]:
+) -> Clip:
     """Transform a polygon in EPSG:4326 into the file's CRS.
 
     Returns:
-        The polygon as WKT in the file's CRS, and its envelope.
+        The polygon as WKT in the file's CRS, with its envelope as the box.
 
     Raises:
         ValueError: ``area`` is not a Polygon or MultiPolygon WKT, or the
@@ -190,7 +188,8 @@ def file_area(
             raise ValueError(_("Cannot transform the area into {crs}").format(crs=crs))
         raise ValueError(_("Cannot transform the area into the file CRS"))
     rect = geometry.boundingBox()
-    return geometry.asWkt(), (rect.xMinimum(), rect.yMinimum(), rect.xMaximum(), rect.yMaximum())
+    envelope = (rect.xMinimum(), rect.yMinimum(), rect.xMaximum(), rect.yMaximum())
+    return Clip(envelope, geometry.asWkt())
 
 
 def plan(
@@ -225,12 +224,11 @@ def plan(
     read = parquet_query.read_plan(con, url, cancelled)
     crs = crs_for(read)
     if area is None:
-        bbox = file_bbox(extent, extent_crs, crs, context)
-        count = parquet_query.estimate(con, url, read, bbox, cancelled)
-        return Planned(url, read, crs, bbox, count)
-    wkt, bbox = file_area(area, crs, context)
-    count = parquet_query.estimate(con, url, read, bbox, cancelled, area=wkt)
-    return Planned(url, read, crs, bbox, count, wkt)
+        clip = Clip(file_bbox(extent, extent_crs, crs, context))
+    else:
+        clip = file_area(area, crs, context)
+    count = parquet_query.estimate(con, url, read, clip, cancelled)
+    return Planned(url, read, crs, clip, count)
 
 
 def prepare(
@@ -250,20 +248,12 @@ def prepare(
     path = new_path(".gpkg")
     srs = planned.crs.authid() or planned.plan.crs or None
     try:
-        written = parquet_query.write_gpkg(
-            con,
-            planned.url,
-            planned.plan,
-            str(path),
-            planned.bbox,
-            srs,
-            cancelled,
-            area=planned.area,
-        )
+        target = parquet_query.Target(str(path), planned.clip, srs)
+        written = parquet_query.write_gpkg(con, planned.url, planned.plan, target, cancelled)
     except BaseException:
         discard_path(path)
         raise
-    return Prepared(planned.url, path, written, planned.bbox, planned.area)
+    return Prepared(planned.url, path, written, planned.clip)
 
 
 def build(prepared: Prepared, name: str) -> tuple[QgsVectorLayer, int]:
@@ -291,9 +281,9 @@ def build(prepared: Prepared, name: str) -> tuple[QgsVectorLayer, int]:
         )
     release_path(prepared.path)
     layer.setCustomProperty(SOURCE_PROPERTY, prepared.url)
-    bbox = prepared.bbox
-    layer.setCustomProperty(BBOX_PROPERTY, ",".join(repr(v) for v in bbox) if bbox else "")
-    layer.setCustomProperty(AREA_PROPERTY, prepared.area or "")
+    bbox, area = prepared.clip.to_text()
+    layer.setCustomProperty(BBOX_PROPERTY, bbox)
+    layer.setCustomProperty(AREA_PROPERTY, area)
     return layer, prepared.written.refused
 
 
@@ -403,9 +393,8 @@ def restore(
     """
     con = parquet_query.connection(extension_dir)
     read = parquet_query.read_plan(con, layer_url, cancelled)
-    parts = [float(part) for part in bbox_text.split(",")] if bbox_text else []
-    bbox = (parts[0], parts[1], parts[2], parts[3]) if len(parts) == 4 else None
-    planned = Planned(layer_url, read, crs_for(read), bbox, None, area_text or None)
+    clip = Clip.from_text(bbox_text, area_text)
+    planned = Planned(layer_url, read, crs_for(read), clip, None)
     return prepare(planned, extension_dir, cancelled)
 
 

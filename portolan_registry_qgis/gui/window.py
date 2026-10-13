@@ -1939,8 +1939,7 @@ class RegistryWindow(QDialog):
                     fetch_json,
                     document.href,
                     root,
-                    cancelled=task.isCanceled,
-                    executor=executor,
+                    download.Walk(cancelled=task.isCanceled, executor=executor),
                     scope=scope,
                 )
             finally:

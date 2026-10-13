@@ -20,6 +20,8 @@ from typing import TYPE_CHECKING, Any
 
 from portolan_registry_qgis.core.geoparquet import (
     NO_GEOMETRY,
+    WHOLE_FILE,
+    Clip,
     ReadPlan,
     build_copy,
     build_estimate,
@@ -32,8 +34,6 @@ from portolan_registry_qgis.core.i18n import _
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
-
-Bbox = tuple[float, float, float, float]
 
 MINIMUM_DUCKDB = (1, 5, 0)
 MEMORY_LIMIT = "4GB"
@@ -135,32 +135,30 @@ def _interrupt_when(cancelled: Callable[[], bool], cursor: Any, stop: threading.
 
 
 @contextlib.contextmanager
-def _cursor(con: Any, cancelled: Callable[[], bool] | None = None) -> Iterator[Any]:
+def cursor(con: Any, cancelled: Callable[[], bool] | None = None) -> Iterator[Any]:
     """Yield a cursor that a watcher thread interrupts when ``cancelled`` returns True.
 
     The running query then raises ``duckdb.InterruptException``.
     """
-    cursor = con.cursor()
+    cur = con.cursor()
     stop = threading.Event()
     if cancelled is not None:
-        threading.Thread(
-            target=_interrupt_when, args=(cancelled, cursor, stop), daemon=True
-        ).start()
+        threading.Thread(target=_interrupt_when, args=(cancelled, cur, stop), daemon=True).start()
     try:
-        yield cursor
+        yield cur
     finally:
         stop.set()
-        cursor.close()
+        cur.close()
 
 
 def read_plan(con: Any, url: str, cancelled: Callable[[], bool] | None = None) -> ReadPlan:
     """Read a file's schema and GeoParquet metadata and plan the query."""
-    with _cursor(con, cancelled) as cursor:
+    with cursor(con, cancelled) as cur:
         schema = [
             (str(row[0]), str(row[1]))
-            for row in cursor.execute("DESCRIBE SELECT * FROM read_parquet(?)", [url]).fetchall()
+            for row in cur.execute("DESCRIBE SELECT * FROM read_parquet(?)", [url]).fetchall()
         ]
-        geo = cursor.execute(
+        geo = cur.execute(
             "SELECT value FROM parquet_kv_metadata(?) WHERE key = 'geo' LIMIT 1", [url]
         ).fetchall()
     return plan_read(schema, geo[0][0] if geo else None)
@@ -170,36 +168,33 @@ def estimate(
     con: Any,
     url: str,
     plan: ReadPlan,
-    bbox: Bbox | None = None,
+    clip: Clip = WHOLE_FILE,
     cancelled: Callable[[], bool] | None = None,
-    area: str | None = None,
 ) -> int | None:
-    """Return about how many features a copy of ``url`` in ``bbox`` holds.
+    """Return about how many features a copy of ``url`` in ``clip`` holds.
 
     The count is exact without a box. With a box it counts the rows whose
     bbox overlaps it, an upper bound. With an area it still counts by the
-    area's envelope ``bbox``, so it stays an upper bound. A table has no
-    geometry, so its count is exact.
+    area's envelope, so it stays an upper bound. A table has no geometry,
+    so its count is exact.
 
     Args:
         con: The DuckDB connection.
         url: The Parquet file.
         plan: The file's read plan.
-        bbox: The box of the copy, in the file's CRS.
+        clip: The clip of the copy, in the file's CRS.
         cancelled: Polled while the query runs.
-        area: The Polygon or MultiPolygon WKT of the copy, in the file's
-            CRS. ``bbox`` must be its envelope.
 
     Returns:
         The estimate, or None when the file has no covering column to count
         a box with cheaply.
     """
-    query = build_estimate(plan, bbox, area)
+    query = build_estimate(plan, clip)
     if query is None:
         return None
     sql, params = query
-    with _cursor(con, cancelled) as cursor:
-        return int(cursor.execute(sql, [url, *params]).fetchone()[0])
+    with cursor(con, cancelled) as cur:
+        return int(cur.execute(sql, [url, *params]).fetchone()[0])
 
 
 @dataclass(frozen=True)
@@ -213,6 +208,26 @@ class Written:
     refused: int
 
 
+@dataclass(frozen=True)
+class Target:
+    """The GeoPackage that ``write_gpkg`` writes, and what it keeps."""
+
+    # The GeoPackage to write. It must not exist.
+    path: str
+    # Keep only the features in this clip, in the file's CRS.
+    clip: Clip = WHOLE_FILE
+    # The CRS to record in the GeoPackage.
+    srs: str | None = None
+
+
+def _geometry_column(gpkg: sqlite3.Connection) -> tuple[str, str] | None:
+    """Return the table and the geometry column of a GeoPackage's one layer."""
+    row = gpkg.execute(
+        "SELECT table_name, column_name FROM gpkg_geometry_columns"  # i18n: skip - SQL
+    ).fetchone()
+    return (str(row[0]), str(row[1])) if row is not None else None
+
+
 def _null_geometries(path: str) -> int:
     """Count the features with a NULL geometry in a GeoPackage.
 
@@ -220,13 +235,11 @@ def _null_geometries(path: str) -> int:
     stays fast on a large local file.
     """
     with contextlib.closing(sqlite3.connect(path)) as gpkg:
-        row = gpkg.execute(
-            "SELECT table_name, column_name FROM gpkg_geometry_columns"  # i18n: skip - SQL
-        ).fetchone()
-        if row is None:
+        found = _geometry_column(gpkg)
+        if found is None:
             return 0
-        table, column = (str(part).replace('"', '""') for part in row)
-        sql = f'SELECT count(*) FROM "{table}" WHERE "{column}" IS NULL'  # noqa: S608  # nosec B608 - names come from the GeoPackage and are quoted
+        table, column = (quote(part) for part in found)
+        sql = f"SELECT count(*) FROM {table} WHERE {column} IS NULL"  # noqa: S608  # nosec B608 - names come from the GeoPackage and are quoted
         return int(gpkg.execute(sql).fetchone()[0])
 
 
@@ -234,13 +247,10 @@ def write_gpkg(
     con: Any,
     url: str,
     plan: ReadPlan,
-    path: str,
-    bbox: Bbox | None = None,
-    srs: str | None = None,
+    target: Target,
     cancelled: Callable[[], bool] | None = None,
-    area: str | None = None,
 ) -> Written:
-    """Copy the features of ``url`` into a new GeoPackage at ``path``.
+    """Copy the features of ``url`` into a new GeoPackage at ``target.path``.
 
     A layer holds one geometry type. When the file declares none, the first
     geometry picks it. A feature of another type keeps its attributes, gets
@@ -250,34 +260,26 @@ def write_gpkg(
         con: The DuckDB connection.
         url: The GeoParquet file.
         plan: The file's read plan.
-        path: The GeoPackage to write. It must not exist.
-        bbox: Keep only features that intersect this box, in the file's CRS.
-        srs: The CRS to record in the GeoPackage.
+        target: The GeoPackage to write, its clip, and its CRS.
         cancelled: Polled while the queries run. When it returns True, the
             running query stops and raises ``duckdb.InterruptException``.
-        area: Keep only features that intersect this Polygon or
-            MultiPolygon WKT, in the file's CRS. ``bbox`` must be its
-            envelope, so the covering column skips row groups first.
 
     A table, a file with no geometry column, becomes an attribute table with
-    every row. ``bbox``, ``srs``, and ``area`` do not apply to it, and its
+    every row. The clip and the CRS do not apply to it, and its
     ``Written.geometry_type`` is ``NO_GEOMETRY``.
-
-    Raises:
-        ValueError: ``area`` is given without ``bbox``.
     """
-    with _cursor(con, cancelled) as cursor:
+    with cursor(con, cancelled) as cur:
         layer_type = plan.geometry_type
         if layer_type == "Unknown":
-            sql, params = build_first_type(plan, bbox, area)
-            layer_type = type_from_first(cursor.execute(sql, [url, *params]).fetchone())
-        sql, params = build_copy(plan, path, layer_type, bbox, srs, area)
-        written = cursor.execute(sql, [url, *params]).fetchone()
+            sql, params = build_first_type(plan, target.clip)
+            layer_type = type_from_first(cur.execute(sql, [url, *params]).fetchone())
+        sql, params = build_copy(plan, target.path, layer_type, target.clip, target.srs)
+        written = cur.execute(sql, [url, *params]).fetchone()
     features = int(written[0]) if written else 0
     if not plan.has_geometry:
-        _drop_geometry(path)
+        _drop_geometry(target.path)
         return Written(features, NO_GEOMETRY, 0)
-    return Written(features, layer_type, _null_geometries(path) if features else 0)
+    return Written(features, layer_type, _null_geometries(target.path) if features else 0)
 
 
 def _drop_geometry(path: str) -> None:
@@ -288,12 +290,10 @@ def _drop_geometry(path: str) -> None:
     and QGIS then open the layer as a table with no geometry.
     """
     with contextlib.closing(sqlite3.connect(path)) as gpkg:
-        row = gpkg.execute(
-            "SELECT table_name, column_name FROM gpkg_geometry_columns"  # i18n: skip - SQL
-        ).fetchone()
-        if row is None:
+        found = _geometry_column(gpkg)
+        if found is None:
             return
-        table, column = (str(part) for part in row)
+        table, column = found
         with gpkg:
             gpkg.execute("DELETE FROM gpkg_geometry_columns WHERE table_name = ?", [table])
             gpkg.execute(

@@ -35,6 +35,7 @@ from portolan_registry_qgis.core.download import (
     WALK_WORKERS,
     Plan,
     PlannedFile,
+    Walk,
     local_path,
     plan,
 )
@@ -825,8 +826,7 @@ def test_plan_reads_the_catalog_from_a_task(catalog):
             lambda task: plan(
                 fetch_json,
                 catalog["url"],
-                cancelled=task.isCanceled,
-                executor=QtExecutor(WALK_WORKERS),
+                how=Walk(cancelled=task.isCanceled, executor=QtExecutor(WALK_WORKERS)),
             ),
             lambda result, error: results.append((result, error)),
         )
@@ -1013,15 +1013,15 @@ STRIP = "POLYGON((11.095 44.0, 11.305 44.0, 11.305 45.0, 11.095 45.0, 11.095 44.
 
 @pytest.fixture
 def area_calls(monkeypatch):
-    """Record the box and the area that reach parquet_query."""
+    """Record the clip that reaches parquet_query."""
     calls = []
     estimate, write_gpkg = parquet_query.estimate, parquet_query.write_gpkg
 
     def call(function, name, args, kwargs):
-        # estimate takes the box fourth, after the plan. write_gpkg takes
-        # the GeoPackage path there, and the box fifth.
-        bbox = args[3] if name == "estimate" else args[4]
-        calls.append((name, bbox, kwargs.get("area")))
+        # estimate takes the clip fourth, after the plan. write_gpkg takes
+        # the target there, which holds the clip.
+        clip = args[3] if name == "estimate" else args[3].clip
+        calls.append((name, clip))
         return function(*args, **kwargs)
 
     monkeypatch.setattr(parquet_query, "estimate", lambda *a, **k: call(estimate, "estimate", a, k))
@@ -1037,33 +1037,31 @@ def test_parquet_layer_area(catalog, area_calls):
     elsewhere = QgsRectangle(0, 0, 1, 1)
     wgs84 = QgsCoordinateReferenceSystem("EPSG:4326")
     planned = parquet_layer.plan(_parquet_url(catalog), context, elsewhere, wgs84, area=STRIP)
-    assert planned.bbox == pytest.approx((11.095, 44.0, 11.305, 45.0))
-    assert QgsGeometry.fromWkt(planned.area).equals(QgsGeometry.fromWkt(STRIP))
+    assert planned.clip.bbox == pytest.approx((11.095, 44.0, 11.305, 45.0))
+    assert QgsGeometry.fromWkt(planned.clip.area).equals(QgsGeometry.fromWkt(STRIP))
     assert planned.estimate == 21
     prepared = parquet_layer.prepare(planned)
-    assert prepared.area == planned.area
-    assert [name for name, _, _ in area_calls] == ["estimate", "write_gpkg"]
-    assert all(area == planned.area for _, _, area in area_calls)
-    assert all(bbox == planned.bbox for _, bbox, _ in area_calls)
+    assert prepared.clip == planned.clip
+    assert area_calls == [("estimate", planned.clip), ("write_gpkg", planned.clip)]
     layer, _ = parquet_layer.build(prepared, "strip")
     assert sorted(f["id"] for f in layer.getFeatures()) == list(range(10, 31))
-    assert layer.customProperty(parquet_layer.AREA_PROPERTY) == planned.area
+    assert layer.customProperty(parquet_layer.AREA_PROPERTY) == planned.clip.area
 
     # A saved project copies the same area again.
     area_calls.clear()
     url, bbox, area = parquet_layer.saved_copy(layer)
-    assert area == planned.area
+    assert area == planned.clip.area
     restored = parquet_layer.restore(url, bbox, area_text=area)
-    assert restored.area == planned.area
-    assert area_calls == [("write_gpkg", planned.bbox, planned.area)]
+    assert restored.clip == planned.clip
+    assert area_calls == [("write_gpkg", planned.clip)]
     parquet_layer.discard_path(prepared.path)
     parquet_layer.discard_path(restored.path)
 
 
 def test_parquet_layer_without_area_keeps_its_property_empty(catalog, area_calls):
     planned, prepared = _load(_parquet_url(catalog))
-    assert planned.area is None
-    assert all(area is None for _, _, area in area_calls)
+    assert planned.clip.area is None
+    assert all(clip.area is None for _, clip in area_calls)
     layer, _ = parquet_layer.build(prepared, "points")
     assert layer.customProperty(parquet_layer.AREA_PROPERTY) == ""
     assert parquet_layer.saved_copy(layer)[2] == ""
@@ -1072,7 +1070,8 @@ def test_parquet_layer_without_area_keeps_its_property_empty(catalog, area_calls
 def test_file_area_transforms_to_the_file_crs():
     context = QgsProject.instance().transformContext()
     mercator = QgsCoordinateReferenceSystem("EPSG:3857")
-    wkt, bbox = parquet_layer.file_area(STRIP, mercator, context)
+    clip = parquet_layer.file_area(STRIP, mercator, context)
+    wkt, bbox = clip.area, clip.bbox
     expected = QgsCoordinateTransform(
         QgsCoordinateReferenceSystem("EPSG:4326"), mercator, context
     ).transformBoundingBox(QgsRectangle(11.095, 44.0, 11.305, 45.0))

@@ -251,6 +251,28 @@ class StacError(ValueError):
     """A document is not a STAC object the plugin can read."""
 
 
+# The link keys that ``Link`` holds. ``Link.extra`` keeps the rest.
+_LINK_KEYS = frozenset({"rel", "href", "title", "type"})
+
+
+def int_or_none(value: object) -> int | None:
+    """Return ``value`` when it is an integer, else None. A bool is not an integer."""
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def str_or_none(value: object, *, empty_ok: bool = True) -> str | None:
+    """Return ``value`` when it is a string, else None.
+
+    Args:
+        value: A value from parsed JSON.
+        empty_ok: Whether an empty string counts. Without it, an empty
+            string returns None.
+    """
+    if not isinstance(value, str) or (not value and not empty_ok):
+        return None
+    return value
+
+
 def links_of(value: object, base: str) -> tuple[Link, ...]:
     """Return the well-formed links in ``value`` with absolute hrefs."""
     if not isinstance(value, list):
@@ -263,16 +285,13 @@ def links_of(value: object, base: str) -> tuple[Link, ...]:
             href = absolute_href(str(raw["href"]), base)
         except ValueError:
             continue
-        title = raw.get("title")
-        media = raw.get("type")
-        extra = {k: v for k, v in raw.items() if k not in {"rel", "href", "title", "type"}}
         links.append(
             Link(
                 rel=raw["rel"],
                 href=href,
-                title=title if isinstance(title, str) else None,
-                type=media if isinstance(media, str) else None,
-                extra=extra,
+                title=str_or_none(raw.get("title")),
+                type=str_or_none(raw.get("type")),
+                extra={k: v for k, v in raw.items() if k not in _LINK_KEYS},
             )
         )
     return tuple(links)
@@ -345,10 +364,6 @@ def asset_format(href: str, media_type: str | None) -> AssetFormat | None:
     return None
 
 
-def _int_or_none(value: object) -> int | None:
-    return value if isinstance(value, int) and not isinstance(value, bool) else None
-
-
 def _account(raw: dict[str, Any], fallback: str | None) -> str | None:
     storage = raw.get("table:storage_options")  # i18n: skip - a STAC key
     if isinstance(storage, dict) and isinstance(storage.get("account_name"), str):
@@ -393,6 +408,29 @@ def is_tabular(columns: object) -> bool:
     return not any(is_geometry_column(column) for column in columns)
 
 
+def _roles(raw: object) -> tuple[str, ...]:
+    """Return the string roles of an asset's ``roles`` list."""
+    return tuple(r for r in raw if isinstance(r, str)) if isinstance(raw, list) else ()
+
+
+def _asset(key: object, raw: dict[str, Any], href: str, shared_columns: object) -> Asset:
+    """Read one asset whose href is already resolved."""
+    media = str_or_none(raw.get("type"))
+    detected = asset_format(href, media)
+    columns = raw.get("table:columns", shared_columns)  # i18n: skip - a STAC key
+    return Asset(
+        key=str(key),
+        href=href,
+        title=str_or_none(raw.get("title")),
+        type=media,
+        roles=_roles(raw.get("roles")),
+        size=int_or_none(raw.get("file:size")),  # i18n: skip - a STAC key
+        checksum=str_or_none(raw.get("file:checksum")),  # i18n: skip - a STAC key
+        format=detected,
+        tabular=detected == "parquet" and is_tabular(columns),
+    )
+
+
 def assets_of(document: dict[str, Any], base: str) -> tuple[Asset, ...]:
     """Return a document's assets with resolved hrefs and detected formats.
 
@@ -403,10 +441,11 @@ def assets_of(document: dict[str, Any], base: str) -> tuple[Asset, ...]:
     if not isinstance(raw_assets, dict):
         return ()
     properties = document.get("properties")
-    item_account = _account(properties, None) if isinstance(properties, dict) else None
+    props = properties if isinstance(properties, dict) else {}
+    item_account = _account(props, None)
     shared_columns = document.get("table:columns")  # i18n: skip - a STAC key
-    if shared_columns is None and isinstance(properties, dict):
-        shared_columns = properties.get("table:columns")  # i18n: skip - a STAC key
+    if shared_columns is None:
+        shared_columns = props.get("table:columns")  # i18n: skip - a STAC key
     assets = []
     for key, raw in raw_assets.items():
         if not isinstance(raw, dict) or not isinstance(raw.get("href"), str):
@@ -415,27 +454,7 @@ def assets_of(document: dict[str, Any], base: str) -> tuple[Asset, ...]:
             href = asset_href(raw["href"], base, _account(raw, item_account))
         except ValueError:
             continue
-        roles = raw.get("roles")
-        title = raw.get("title")
-        media = raw.get("type")
-        checksum = raw.get("file:checksum")  # i18n: skip - a STAC key
-        detected = asset_format(href, media if isinstance(media, str) else None)
-        columns = raw.get("table:columns", shared_columns)  # i18n: skip - a STAC key
-        assets.append(
-            Asset(
-                key=str(key),
-                href=href,
-                title=title if isinstance(title, str) else None,
-                type=media if isinstance(media, str) else None,
-                roles=tuple(r for r in roles if isinstance(r, str))
-                if isinstance(roles, list)
-                else (),
-                size=_int_or_none(raw.get("file:size")),  # i18n: skip - a STAC key
-                checksum=checksum if isinstance(checksum, str) else None,
-                format=detected,
-                tabular=detected == "parquet" and is_tabular(columns),
-            )
-        )
+        assets.append(_asset(key, raw, href, shared_columns))
     return tuple(assets)
 
 

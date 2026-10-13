@@ -8,7 +8,13 @@ from pathlib import Path
 
 import pytest
 
-from portolan_registry_qgis.core.download import PlannedFile, local_path, plan, split_collisions
+from portolan_registry_qgis.core.download import (
+    PlannedFile,
+    Walk,
+    local_path,
+    plan,
+    split_collisions,
+)
 from portolan_registry_qgis.core.scope import Area, Everything, MapView
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "anncsu"
@@ -81,8 +87,8 @@ def test_plan_of_one_collection_keeps_catalog_layout():
 
 def test_plan_stops_at_the_limit_and_on_cancel():
     documents = anncsu_documents()
-    assert plan(fake_fetch(documents), ROOT, max_documents=1).truncated
-    cancelled = plan(fake_fetch(documents), ROOT, cancelled=lambda: True)
+    assert plan(fake_fetch(documents), ROOT, how=Walk(max_documents=1)).truncated
+    cancelled = plan(fake_fetch(documents), ROOT, how=Walk(cancelled=lambda: True))
     assert cancelled.files == []
 
 
@@ -182,7 +188,7 @@ def test_walk_reads_a_level_in_parallel():
         return documents[url]
 
     with ThreadPoolExecutor(8) as executor:
-        result = plan(fetch, root, executor=executor)
+        result = plan(fetch, root, how=Walk(executor=executor))
     assert result.failures == []
     assert peak == 8
     assert [f.url for f in result.files] == [root, *children]
@@ -202,7 +208,7 @@ def test_walk_keeps_link_order_when_reads_finish_out_of_order():
         return documents[url]
 
     with ThreadPoolExecutor(4) as executor:
-        result = plan(fetch, root, executor=executor)
+        result = plan(fetch, root, how=Walk(executor=executor))
     assert [f.url for f in result.files] == [root, *(c for c in children if c != failing)]
     assert result.failures == [(failing, f"404 {failing}")]
 
@@ -216,7 +222,7 @@ def test_walk_respects_the_limit_inside_a_level():
         return documents[url]
 
     with ThreadPoolExecutor(4) as executor:
-        result = plan(fetch, root, max_documents=5, executor=executor)
+        result = plan(fetch, root, how=Walk(max_documents=5, executor=executor))
     assert len(reads) == 5
     assert len(result.files) == 5
     assert result.truncated
@@ -234,7 +240,7 @@ def test_walk_stops_reading_on_cancel():
         return documents[url]
 
     with ThreadPoolExecutor(2) as executor:
-        plan(fetch, root, cancelled=stop.is_set, executor=executor)
+        plan(fetch, root, how=Walk(cancelled=stop.is_set, executor=executor))
     # The reads already started may finish. No new read starts.
     assert len(reads) <= 4
 
@@ -248,7 +254,7 @@ def test_walk_uses_a_given_executor_and_leaves_it_open():
         return documents[url]
 
     with ThreadPoolExecutor(2, thread_name_prefix="caller") as executor:
-        result = plan(fetch, root, executor=executor)
+        result = plan(fetch, root, how=Walk(executor=executor))
         assert executor.submit(lambda: "open").result() == "open"
     assert [f.url for f in result.files] == [root, *children]
     assert threads and all(name.startswith("caller") for name in threads)
@@ -304,7 +310,7 @@ def test_walk_reads_below_a_slow_sibling():
         return documents[url]
 
     with ThreadPoolExecutor(8) as executor:
-        result = plan(fetch, root, executor=executor)
+        result = plan(fetch, root, how=Walk(executor=executor))
     assert result.failures == []
     # The plan still lists the documents breadth first.
     assert [f.url for f in result.files] == [root, a, b, *grandchildren]

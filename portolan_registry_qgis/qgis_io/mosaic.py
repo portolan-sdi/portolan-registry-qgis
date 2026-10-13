@@ -26,7 +26,7 @@ from qgis.core import Qgis, QgsMessageLog, QgsProviderRegistry, QgsRasterLayer
 
 from portolan_registry_qgis.core import parquet_query
 from portolan_registry_qgis.core import scope as scopes
-from portolan_registry_qgis.core.download import walk
+from portolan_registry_qgis.core.download import Walk, walk
 from portolan_registry_qgis.core.geoparquet import quote
 from portolan_registry_qgis.core.hrefs import asset_href
 from portolan_registry_qgis.core.i18n import _, ngettext, number
@@ -135,7 +135,7 @@ def walked_hrefs(
     """Read every item below ``start`` and return the COGs of those in ``scope``."""
     failures: list[tuple[str, str]] = []
     hrefs: list[str] = []
-    for document in walk(fetch_json, start, failures, MAX_DOCUMENTS, cancelled, executor):
+    for document in walk(fetch_json, start, failures, Walk(MAX_DOCUMENTS, cancelled, executor)):
         if document.kind != "item" or not scopes.intersects(document.bbox, scope):
             continue
         href = next(
@@ -244,7 +244,7 @@ def mirror_hrefs(
     """
     con = parquet_query.connection(parquet_layer.extension_directory())
     # The cursor stops the running query when ``cancelled`` returns True.
-    with parquet_query._cursor(con, cancelled) as cursor:
+    with parquet_query.cursor(con, cancelled) as cursor:
         described = cursor.execute("DESCRIBE SELECT * FROM read_parquet(?)", [url]).fetchall()
         columns = {str(row[0]): str(row[1]) for row in described}
         sql, params = mirror_query(columns, scope)

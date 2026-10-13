@@ -23,7 +23,12 @@ from qgis.PyQt.QtWidgets import QAction
 from portolan_registry_qgis.core import parquet_query
 from portolan_registry_qgis.core.i18n import _
 from portolan_registry_qgis.qgis_io import mosaic, parquet_layer
-from portolan_registry_qgis.qgis_io.layers import PMTILES_PROPERTY, LayerError, vector_tile_layer
+from portolan_registry_qgis.qgis_io.layers import (
+    PMTILES_PROPERTY,
+    LayerError,
+    apply_bounds,
+    vector_tile_layer,
+)
 from portolan_registry_qgis.qgis_io.network import run_task
 from portolan_registry_qgis.qgis_io.tileserver import Archive, TileServer, open_archive
 
@@ -176,6 +181,7 @@ class PortolanRegistryPlugin:
                 return
             fresh = vector_tile_layer(self.server, result, layer.name())
             layer.setDataSource(fresh.source(), layer.name(), fresh.providerType())
+            apply_bounds(layer, result)
             layer.triggerRepaint()
 
         run_task(_("Reopen {url}").format(url=url), lambda _task: open_archive(url), done)

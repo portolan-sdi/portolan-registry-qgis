@@ -20,14 +20,17 @@ from urllib.parse import urljoin, urlsplit
 from osgeo import gdal
 from qgis.core import (
     QgsCoordinateReferenceSystem,
+    QgsCoordinateTransform,
     QgsDataSourceUri,
     QgsMapBoxGlStyleConversionContext,
     QgsMapBoxGlStyleConverter,
     QgsMapLayer,
     QgsMapLayerStyle,
     QgsPointCloudLayer,
+    QgsProject,
     QgsProviderRegistry,
     QgsRasterLayer,
+    QgsRectangle,
     QgsVectorLayer,
     QgsVectorTileLayer,
 )
@@ -319,7 +322,33 @@ def vector_tile_layer(
     if not layer.isValid():
         raise LayerError(_("QGIS could not open the tiles of {url}").format(url=archive.url))
     layer.setCustomProperty(PMTILES_PROPERTY, archive.url)
+    apply_bounds(layer, archive)
     return layer
+
+
+# The Web Mercator tile grid stops at this latitude. A bound past it
+# transforms to infinity, so the extent clamps to the grid first.
+_WEB_MERCATOR_LAT = 85.051129
+
+
+def apply_bounds(layer: QgsVectorTileLayer, archive: Archive) -> None:
+    """Give ``layer`` the extent of ``archive``, so "Zoom to Layer" frames the data.
+
+    The XYZ vector tile provider cannot read bounds from a URL template, so
+    it reports the whole Web Mercator world. The PMTiles header carries the
+    bounds in EPSG:4326. Call this again after ``setDataSource``, which
+    resets the extent to the provider's. An archive without bounds keeps the
+    world extent.
+    """
+    if archive.bounds is None:
+        return
+    west, south, east, north = archive.bounds
+    south = max(south, -_WEB_MERCATOR_LAT)
+    north = min(north, _WEB_MERCATOR_LAT)
+    transform = QgsCoordinateTransform(
+        QgsCoordinateReferenceSystem("EPSG:4326"), layer.crs(), QgsProject.instance()
+    )
+    layer.setExtent(transform.transformBoundingBox(QgsRectangle(west, south, east, north)))
 
 
 @dataclass

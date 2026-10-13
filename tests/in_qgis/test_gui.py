@@ -158,57 +158,75 @@ def test_unreachable_registry_says_so(iface, server, catalog):
     window.disconnect_canvas()
 
 
-def test_tree_details_and_assets(iface, server, catalog):
+@pytest.fixture
+def collection_window(iface, server, catalog):
+    """A window that shows the points collection."""
     window = open_window(iface, server, catalog)
     open_collection(window)
+    yield window
+    window.disconnect_canvas()
+
+
+def test_assets_show_only_files_qgis_opens(collection_window):
+    window = collection_window
     names = rows(window.details.assets)
     # Only the files QGIS can open show. The archive that is both a link and
     # the "visual" asset shows once. Styles and the thumbnail do not show.
     assert names == ["Point tiles", "geojson", "relief", "data"]
     badges = {
-        window.details.assets.topLevelItem(i).text(0): window.details.assets.topLevelItem(i).data(
-            0, BADGE_ROLE
-        )[0]
-        for i in range(len(names))
+        name: window.details.assets.topLevelItem(i).data(0, BADGE_ROLE)[0]
+        for i, name in enumerate(names)
     }
     assert badges["Point tiles"] == "PMTiles"
     assert badges["data"] == "GeoParquet"
     assert badges["relief"] == "COG"
+    assert window.details.files_box.title() == f"All files ({len(names)})"
+    assert "2 styles" in window.details.tile_styles.text()
+    assert not window.details.tile_styles.isHidden()
+
+
+def test_details_show_plain_facts(collection_window):
+    window = collection_window
     assert "Test points" in shown(window)
     assert "CC-BY-4.0" in shown(window)
     # The facts name the publisher and the total size, in plain words. They
     # show no STAC type or ID, and no extent coordinates.
     facts = window.details.facts.text()
-    assert ">Publisher<" in facts and "Test catalog" in facts
+    assert ">Publisher<" in facts
+    assert "Test catalog" in facts
     total = sum(asset.size for asset in window.document.assets)
-    assert ">Size<" in facts and human_size(total) in facts
+    assert ">Size<" in facts
+    assert human_size(total) in facts
     for hidden in (">Type<", ">ID<", ">Extent<", "11.0000"):
         assert hidden not in facts
-    assert window.details.files_box.title() == f"All files ({len(names)})"
-    assert "2 styles" in window.details.tile_styles.text()
-    assert not window.details.tile_styles.isHidden()
-    assert not window.details.scope_row.isHidden()
-    assert window.details.zoom.isEnabled()
-    assert window.details.download_all.isEnabled()
+
+
+def test_details_buttons_start_in_their_sections(collection_window):
+    details = collection_window.details
+    assert not details.scope_row.isHidden()
+    assert details.zoom.isEnabled()
+    assert details.download_all.isEnabled()
     # All files acts only on rows the user selects, so nothing starts
     # selected, and its buttons wait.
-    assert window.details.assets.selectedItems() == []
-    assert not window.details.add.isEnabled()
-    assert not window.details.download_selected.isEnabled()
-    assert window.details.add.text() == "Add selected"
+    assert details.assets.selectedItems() == []
+    assert not details.add.isEnabled()
+    assert not details.download_selected.isEnabled()
+    assert details.add.text() == "Add selected"
     # Each section holds its own buttons. Add to map holds the area first.
-    assert window.details.files_box.isAncestorOf(window.details.add)
-    assert window.details.files_box.isAncestorOf(window.details.download_files)
-    assert window.details.add_box.isAncestorOf(window.details.download_area)
+    assert details.files_box.isAncestorOf(details.add)
+    assert details.files_box.isAncestorOf(details.download_files)
+    assert details.add_box.isAncestorOf(details.download_area)
     # Zoom to and the browser link sit next to the dataset's name.
-    assert window.details.title_row.isAncestorOf(window.details.zoom)
-    assert window.details.title_row.isAncestorOf(window.details.open_browser)
-    add_layout = window.details.scope_row.parentWidget().layout()
-    assert add_layout.indexOf(window.details.scope_row) == 0
-    # The missing collection reports its failure in the details pane.
+    assert details.title_row.isAncestorOf(details.zoom)
+    assert details.title_row.isAncestorOf(details.open_browser)
+    add_layout = details.scope_row.parentWidget().layout()
+    assert add_layout.indexOf(details.scope_row) == 0
+
+
+def test_a_missing_collection_says_so_in_the_details(collection_window):
+    window = collection_window
     window.catalog_tree.tree.setCurrentItem(window.catalog_tree.tree.topLevelItem(1))
     wait_for(lambda: "Could not read" in window.details.description.text())
-    window.disconnect_canvas()
 
 
 def test_pictures_and_navigation(iface, server, catalog):
@@ -448,26 +466,12 @@ def test_cancelled_listing_asks_nothing(iface, server, catalog, tmp_path, monkey
     monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *a: str(tmp_path))
     asked = []
     monkeypatch.setattr(QMessageBox, "question", lambda *a: asked.append(a))
-    real = downloads_module.fetch_json
-
-    reading = threading.Event()
-
-    def slow(url):
-        reading.set()
-        time.sleep(0.5)
-        return real(url)
-
     window = open_window(iface, server, catalog)
-    open_collection(window)
-    window.catalog_tree.header.clicked.emit()
-    wait_for(lambda: window.document is not None and window.document.kind == "catalog")
-    monkeypatch.setattr(downloads_module, "fetch_json", slow)
-    manager = QgsApplication.taskManager()
-    window.details.download_all.trigger()
     # Cancel during the first read, so the walk returns a partial plan.
-    wait_for(reading.is_set)
-    manager.cancelAll()
-    wait_for(lambda: window.tasks.progress.isHidden() and manager.countActiveTasks() == 0)
+    release = _start_held_listing(window, monkeypatch)
+    QgsApplication.taskManager().cancelAll()
+    release.set()
+    wait_for(lambda: window.tasks.progress.isHidden() and not window.is_busy())
     for _ in range(20):
         QgsApplication.processEvents()
     assert asked == []
@@ -1051,6 +1055,21 @@ def _held_fetch(monkeypatch):
     return reading, release
 
 
+def _start_held_listing(window, monkeypatch):
+    """Start the listing of the whole catalog, and hold its reads.
+
+    The function returns once the first read waits. The reads go on when
+    the test sets the returned event.
+    """
+    open_collection(window)
+    window.catalog_tree.header.clicked.emit()
+    wait_for(lambda: window.document is not None and window.document.kind == "catalog")
+    reading, release = _held_fetch(monkeypatch)
+    window.details.download_all.trigger()
+    wait_for(reading.is_set)
+    return release
+
+
 def test_cancel_stops_a_mosaic_search(iface, server, catalog, monkeypatch):
     # Before, the busy message said to cancel the search, but the window
     # showed Cancel for a download only.
@@ -1091,12 +1110,7 @@ def test_cancel_stops_a_mosaic_build(iface, server, catalog, monkeypatch):
 
 def test_cancel_stops_a_download_listing(iface, server, catalog, tmp_path, asked, monkeypatch):
     window = open_window(iface, server, catalog)
-    open_collection(window)
-    window.catalog_tree.header.clicked.emit()
-    wait_for(lambda: window.document is not None and window.document.kind == "catalog")
-    reading, release = _held_fetch(monkeypatch)
-    window.details.download_all.trigger()
-    wait_for(reading.is_set)
+    release = _start_held_listing(window, monkeypatch)
     assert not window.tasks.cancel.isHidden()
     window.tasks.cancel.click()
     release.set()

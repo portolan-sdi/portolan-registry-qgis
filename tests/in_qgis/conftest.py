@@ -17,9 +17,8 @@ import json
 import os
 import re
 import shutil
-import threading
 import time
-from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from http.server import SimpleHTTPRequestHandler
 from pathlib import Path
 
 import pytest
@@ -31,7 +30,9 @@ from qgis.core import QgsApplication, QgsCoordinateReferenceSystem, QgsProject  
 from qgis.gui import QgsMapCanvas, QgsMessageBar  # noqa: E402
 from qgis.PyQt.QtWidgets import QMainWindow  # noqa: E402
 
+from tests.loopback import base_url, serve  # noqa: E402
 from tests.points import write_points  # noqa: E402
+from tests.stac_builders import box_polygon, make_catalog, make_collection, make_item  # noqa: E402
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 gdal.UseExceptions()
@@ -204,26 +205,13 @@ def _tiles(root: Path) -> None:
         (folder / key).mkdir(parents=True)
         _raster(folder / key / f"{key}.tif", west, north, 50 + index * 100)
         bbox = [west, north - 0.64, west + 0.64, north]
-        item = {
-            "type": "Feature",
-            "stac_version": "1.1.0",
-            "id": key,
-            "bbox": bbox,
-            "geometry": {
-                "type": "Polygon",
-                "coordinates": [
-                    [
-                        [bbox[0], bbox[1]],
-                        [bbox[2], bbox[1]],
-                        [bbox[2], bbox[3]],
-                        [bbox[0], bbox[3]],
-                        [bbox[0], bbox[1]],
-                    ]
-                ],
-            },
-            "properties": {"datetime": "2026-01-01T00:00:00Z"},
-            "links": [{"rel": "collection", "href": "../collection.json"}],
-            "assets": {
+        item = make_item(
+            key,
+            bbox,
+            [{"rel": "collection", "href": "../collection.json"}],
+            geometry=box_polygon(bbox),
+            properties={"datetime": "2026-01-01T00:00:00Z"},
+            assets={
                 "thumbnail": {
                     "href": "../../logo.png",
                     "type": "image/png",
@@ -235,7 +223,7 @@ def _tiles(root: Path) -> None:
                     "roles": ["data"],
                 },
             },
-        }
+        )
         (folder / key / f"{key}.json").write_text(json.dumps(item))
         # An asset href is relative to its item document. Item a has no self
         # link, as in the GHSL mirror, so its document comes from the
@@ -258,26 +246,24 @@ def _tiles(root: Path) -> None:
         f"COPY ({' UNION ALL '.join(rows)}) TO '{folder / 'items.parquet'}' (FORMAT parquet)"
     )
     con.close()
-    collection = {
-        "type": "Collection",
-        "stac_version": "1.1.0",
-        "id": "tiles",
-        "title": "Test tiles",
-        "description": "Two COG items.",
-        "license": "CC-BY-4.0",
-        "extent": {
+    collection = make_collection(
+        "tiles",
+        [f"./{key}/{key}.json" for key in TILES],
+        title="Test tiles",
+        description="Two COG items.",
+        license="CC-BY-4.0",
+        extent={
             "spatial": {"bbox": [[11.0, 44.0, 12.64, 44.64]]},
             "temporal": {"interval": [[None, None]]},
         },
-        "links": [{"rel": "item", "href": f"./{key}/{key}.json"} for key in TILES],
-        "assets": {
+        assets={
             "mirror": {
                 "href": "./items.parquet",
                 "type": "application/vnd.apache.parquet",
                 "roles": ["collection-mirror"],
             }
         },
-    }
+    )
     (folder / "collection.json").write_text(json.dumps(collection))
 
 
@@ -424,51 +410,80 @@ def _build(root: Path) -> dict:
     assets["data"] = _asset(
         root / "points.parquet", "../points.parquet", "application/vnd.apache.parquet", ["data"]
     )
-    (collection / "collection.json").write_text(
-        json.dumps(
-            {
-                "type": "Collection",
-                "stac_version": "1.1.0",
-                "id": "points",
-                "title": "Test points",
-                "description": "Points along a line near Bologna.",
-                "license": "CC-BY-4.0",
-                "extent": {
-                    "spatial": {"bbox": [[11.0, 44.0, 13.0, 45.0]]},
-                    "temporal": {"interval": [[None, None]]},
-                },
-                "links": [
-                    {"rel": "root", "href": "../catalog.json"},
-                    {"rel": "icon", "href": "../leaf.svg", "type": "image/svg+xml"},
-                    {
-                        "rel": "pmtiles",
-                        "href": "../points.pmtiles",
-                        "type": "application/vnd.pmtiles",
-                        "title": "Point tiles",
-                        "pmtiles:layers": ["points"],
-                    },
-                ],
-                "assets": assets,
-            }
-        )
+    links = [
+        {"rel": "root", "href": "../catalog.json"},
+        {"rel": "icon", "href": "../leaf.svg", "type": "image/svg+xml"},
+        {
+            "rel": "pmtiles",
+            "href": "../points.pmtiles",
+            "type": "application/vnd.pmtiles",
+            "title": "Point tiles",
+            "pmtiles:layers": ["points"],
+        },
+    ]
+    points = make_collection(
+        "points",
+        other_links=links,
+        title="Test points",
+        description="Points along a line near Bologna.",
+        license="CC-BY-4.0",
+        extent={
+            "spatial": {"bbox": [[11.0, 44.0, 13.0, 45.0]]},
+            "temporal": {"interval": [[None, None]]},
+        },
+        assets=assets,
     )
-    (root / "catalog.json").write_text(
-        json.dumps(
-            {
-                "type": "Catalog",
-                "stac_version": "1.1.0",
-                "id": "test",
-                "title": "Test catalog",
-                "description": "A catalog the tests build.",
-                "links": [
-                    {"rel": "root", "href": "./catalog.json"},
-                    {"rel": "child", "href": "./points/collection.json", "title": "Test points"},
-                    {"rel": "child", "href": "./missing/collection.json", "title": "Missing"},
-                ],
-            }
-        )
+    (collection / "collection.json").write_text(json.dumps(points))
+    children = [
+        {"rel": "root", "href": "./catalog.json"},
+        {"rel": "child", "href": "./points/collection.json", "title": "Test points"},
+        {"rel": "child", "href": "./missing/collection.json", "title": "Missing"},
+    ]
+    test_catalog = make_catalog(
+        "test",
+        other_links=children,
+        title="Test catalog",
+        description="A catalog the tests build.",
     )
+    (root / "catalog.json").write_text(json.dumps(test_catalog))
     return {}
+
+
+def _registries(root: Path, base: str) -> None:
+    """Write the registry of the test catalog, and a second one for the mosaic tests."""
+    entry = {
+        "rel": "child",
+        "href": f"{base}/catalog.json",
+        "title": "Test catalog",
+        "bbox": [11.0, 44.0, 13.0, 45.0],
+        "portolan_registry:id": "test",
+        "portolan_registry:status": "valid",
+        "portolan_registry:collection_count": 1,
+        "portolan_registry:total_size_bytes": 123456,
+        "portolan_registry:licenses": {"CC-BY-4.0": 1},
+        "portolan_registry:logo": {"href": f"{base}/logo.png", "type": "image/png"},
+    }
+    (root / "registry.json").write_text(
+        json.dumps(make_catalog("portolan-registry", other_links=[entry]))
+    )
+    # A second registry lists a catalog of the tiles collection alone, for
+    # the mosaic tests. The first registry stays as the other tests expect.
+    tiles_catalog = make_catalog(
+        "tiles-catalog",
+        other_links=[{"rel": "child", "href": "./tiles/collection.json", "title": "Test tiles"}],
+        title="Tiles catalog",
+        description="A catalog of COG items.",
+    )
+    (root / "tiles-catalog.json").write_text(json.dumps(tiles_catalog))
+    tiles_entry = {
+        **entry,
+        "href": f"{base}/tiles-catalog.json",
+        "title": "Tiles catalog",
+        "portolan_registry:id": "tiles",
+    }
+    (root / "tiles-registry.json").write_text(
+        json.dumps(make_catalog("portolan-registry", other_links=[tiles_entry]))
+    )
 
 
 @pytest.fixture(scope="session")
@@ -480,59 +495,14 @@ def catalog(tmp_path_factory):
     def handler(*args, **kwargs):
         return RangeHandler(*args, directory=str(root), **kwargs)
 
-    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
-    server.requests = []
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    base = f"http://127.0.0.1:{server.server_address[1]}"
-    registry = {
-        "type": "Catalog",
-        "id": "portolan-registry",
-        "links": [
-            {
-                "rel": "child",
-                "href": f"{base}/catalog.json",
-                "title": "Test catalog",
-                "bbox": [11.0, 44.0, 13.0, 45.0],
-                "portolan_registry:id": "test",
-                "portolan_registry:status": "valid",
-                "portolan_registry:collection_count": 1,
-                "portolan_registry:total_size_bytes": 123456,
-                "portolan_registry:licenses": {"CC-BY-4.0": 1},
-                "portolan_registry:logo": {"href": f"{base}/logo.png", "type": "image/png"},
-            }
-        ],
-    }
-    (root / "registry.json").write_text(json.dumps(registry))
-    # A second registry lists a catalog of the tiles collection alone, for
-    # the mosaic tests. The first registry stays as the other tests expect.
-    (root / "tiles-catalog.json").write_text(
-        json.dumps(
-            {
-                "type": "Catalog",
-                "stac_version": "1.1.0",
-                "id": "tiles-catalog",
-                "title": "Tiles catalog",
-                "description": "A catalog of COG items.",
-                "links": [
-                    {"rel": "child", "href": "./tiles/collection.json", "title": "Test tiles"}
-                ],
-            }
-        )
-    )
-    tiles_entry = {
-        **registry["links"][0],
-        "href": f"{base}/tiles-catalog.json",
-        "title": "Tiles catalog",
-        "portolan_registry:id": "tiles",
-    }
-    (root / "tiles-registry.json").write_text(json.dumps({**registry, "links": [tiles_entry]}))
-    yield {
-        "url": f"{base}/catalog.json",
-        "base": base,
-        "root": root,
-        "requests": server.requests,
-        **info,
-    }
-    server.shutdown()
-    server.server_close()
+    with serve(handler) as server:
+        server.requests = []
+        base = base_url(server)
+        _registries(root, base)
+        yield {
+            "url": f"{base}/catalog.json",
+            "base": base,
+            "root": root,
+            "requests": server.requests,
+            **info,
+        }

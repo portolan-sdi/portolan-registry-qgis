@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import functools
 import json
-import threading
-from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from http.server import SimpleHTTPRequestHandler
 
 import pytest
 
@@ -11,6 +10,7 @@ from portolan_registry_qgis.core import mirror, parquet_query
 from portolan_registry_qgis.core.geoparquet import plan_read
 from portolan_registry_qgis.core.scope import Everything, MapView
 from portolan_registry_qgis.core.stac import Asset, read_document
+from tests.loopback import base_url, serve
 from tests.tiles import EAST_AREA, TRIANGLE, WEST_VIEW
 
 BASE = "https://x.test/tiles"
@@ -180,10 +180,8 @@ def served(tmp_path_factory, con):
     # An asset href must be HTTP to have a format, so DuckDB reads the file
     # from a server on loopback. DuckDB needs no range support.
     handler = functools.partial(_QuietHandler, directory=str(folder))
-    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    yield f"http://127.0.0.1:{server.server_address[1]}"
-    server.shutdown()
+    with serve(handler) as server:
+        yield base_url(server)
 
 
 class _QuietHandler(SimpleHTTPRequestHandler):
@@ -191,15 +189,20 @@ class _QuietHandler(SimpleHTTPRequestHandler):
         pass
 
 
-def test_mirror_hrefs(con, served):
-    url = f"{served}/items.parquet"
+@pytest.mark.parametrize(
+    ("scope", "keys"),
+    [
+        pytest.param(Everything(), ("a", "b"), id="everything"),
+        pytest.param(WEST_VIEW, ("a",), id="west-view"),
+        pytest.param(EAST_AREA, ("b",), id="east-area"),
+        # DuckDB tests the item geometry against the polygon, not its envelope.
+        pytest.param(TRIANGLE, ("a",), id="triangle"),
+    ],
+)
+def test_mirror_hrefs(con, served, scope, keys):
     items = {"a": f"{served}/a/a.json", "b": f"{served}/b/b.json"}
-    both = [f"{served}/a/a.tif", f"{served}/b/b.tif"]
-    assert mirror.mirror_hrefs(con, url, Everything(), items=items) == both
-    assert mirror.mirror_hrefs(con, url, WEST_VIEW, items=items) == both[:1]
-    assert mirror.mirror_hrefs(con, url, EAST_AREA, items=items) == both[1:]
-    # DuckDB tests the item geometry against the polygon, not its envelope.
-    assert mirror.mirror_hrefs(con, url, TRIANGLE, items=items) == both[:1]
+    hrefs = mirror.mirror_hrefs(con, f"{served}/items.parquet", scope, items=items)
+    assert hrefs == [f"{served}/{key}/{key}.tif" for key in keys]
 
 
 def test_a_mirror_without_self_links_resolves_against_the_items(con, served):

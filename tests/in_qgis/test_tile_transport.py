@@ -11,7 +11,7 @@ import statistics
 import threading
 import time
 import urllib.request
-from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from http.server import SimpleHTTPRequestHandler
 
 import pytest
 from qgis.core import (
@@ -34,14 +34,9 @@ from portolan_registry_qgis.qgis_io.network import (
     range_fetcher,
 )
 from portolan_registry_qgis.qgis_io.tileserver import CACHE_CONTROL, TileServer, open_archive
+from tests.loopback import base_url, serve
 
 from .conftest import RangeHandler
-
-
-def _serve(handler):
-    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    return server
 
 
 @pytest.fixture
@@ -59,10 +54,8 @@ def remote(catalog):
     def handler(*args, **kwargs):
         return KeepAlive(*args, directory=str(catalog["root"]), **kwargs)
 
-    server = _serve(handler)
-    yield f"http://127.0.0.1:{server.server_address[1]}", connections
-    server.shutdown()
-    server.server_close()
+    with serve(handler) as server:
+        yield base_url(server), connections
 
 
 @pytest.fixture
@@ -231,14 +224,10 @@ def test_fetch_range_keeps_the_range_through_a_redirect(catalog, prefix):
     def handler(*args, **kwargs):
         return Redirect(*args, directory=str(catalog["root"]), **kwargs)
 
-    moved = _serve(handler)
-    try:
-        url = f"http://127.0.0.1:{moved.server_address[1]}/moved/points.pmtiles"
+    with serve(handler) as moved:
+        url = f"{base_url(moved)}/moved/points.pmtiles"
         whole = (catalog["root"] / "points.pmtiles").read_bytes()
         assert fetch_range(url, 100, 10) == whole[100:110]
-    finally:
-        moved.shutdown()
-        moved.server_close()
     assert seen == [
         ("/moved/points.pmtiles", "bytes=100-109"),
         ("/points.pmtiles", "bytes=100-109"),
@@ -254,17 +243,13 @@ def test_no_store_from_the_server_keeps_tiles_off_disk(catalog, server):
     def handler(*args, **kwargs):
         return NoStore(*args, directory=str(catalog["root"]), **kwargs)
 
-    private = _serve(handler)
-    try:
-        archive = open_archive(f"http://127.0.0.1:{private.server_address[1]}/points.pmtiles")
+    with serve(handler) as private:
+        archive = open_archive(f"{base_url(private)}/points.pmtiles")
         template = server.register(archive)
         assert archive.no_store
         for zxy in ("0/0/0", "8/0/0"):
             with urllib.request.urlopen(template.replace("{z}/{x}/{y}", zxy)) as response:
                 assert response.headers["Cache-Control"] == "no-store"
-    finally:
-        private.shutdown()
-        private.server_close()
     assert not open_archive(f"{catalog['base']}/points.pmtiles").no_store
 
 
@@ -272,17 +257,13 @@ def test_fetch_range_rejects_a_server_that_ignores_ranges(catalog):
     def handler(*args, **kwargs):
         return SimpleHTTPRequestHandler(*args, directory=str(catalog["root"]), **kwargs)
 
-    plain = _serve(handler)
-    base = f"http://127.0.0.1:{plain.server_address[1]}"
-    try:
+    with serve(handler) as plain:
+        base = base_url(plain)
         with pytest.raises(NetworkError, match="ignores HTTP range requests"):
             fetch_range(f"{base}/points.pmtiles", 0, 127)
         # A range past the end of a small file is rejected the same way.
         with pytest.raises(NetworkError, match="ignores HTTP range requests"):
             fetch_range(f"{base}/catalog.json", 0, 10**6)
-    finally:
-        plain.shutdown()
-        plain.server_close()
 
 
 def test_fetch_range_cancels_a_body_longer_than_the_range(tmp_path):
@@ -312,13 +293,8 @@ def test_fetch_range_cancels_a_body_longer_than_the_range(tmp_path):
     def handler(*args, **kwargs):
         return WholeFile(*args, directory=str(tmp_path), **kwargs)
 
-    whole = _serve(handler)
-    try:
-        with pytest.raises(NetworkError, match="ignores HTTP range requests"):
-            fetch_range(f"http://127.0.0.1:{whole.server_address[1]}/big.bin", 0, 127)
-    finally:
-        whole.shutdown()
-        whole.server_close()
+    with serve(handler) as whole, pytest.raises(NetworkError, match="ignores HTTP range"):
+        fetch_range(f"{base_url(whole)}/big.bin", 0, 127)
     # The cancel stops the transfer long before the end of the file.
     assert sum(sent) < 2 << 20
 

@@ -10,7 +10,7 @@ import threading
 import pytest
 
 from portolan_registry_qgis.core import parquet_query
-from portolan_registry_qgis.core.geoparquet import Clip, plan_read
+from portolan_registry_qgis.core.geoparquet import Clip, Covering, plan_read
 from portolan_registry_qgis.core.parquet_query import Target
 from tests.points import write_points
 
@@ -32,9 +32,9 @@ def points(tmp_path_factory, con):
 
 
 def test_status_and_install_command(monkeypatch):
-    ok, version = parquet_query.duckdb_status()
-    assert ok
-    assert version
+    import duckdb
+
+    assert parquet_query.duckdb_status() == (True, duckdb.__version__)
     monkeypatch.setenv("FLATPAK_ID", "org.qgis.qgis")
     assert parquet_query.install_command(upgrade=False).startswith("flatpak run")
     assert "--upgrade" in parquet_query.install_command(upgrade=True)
@@ -232,7 +232,9 @@ def test_covering_filter_gives_the_same_rows(con, points, tmp_path):
         }
     }
     plan = plan_read(schema, json.dumps(covering))
-    assert plan.covering is not None
+    assert plan.covering == Covering(
+        ("bbox", "xmin"), ("bbox", "ymin"), ("bbox", "xmax"), ("bbox", "ymax")
+    )
     assert "bbox" not in [c.name for c in plan.columns]
     box = (11.095, 44.0, 11.305, 45.0)
     parquet_query.write_gpkg(con, points, plan, Target(str(tmp_path / "cov.gpkg"), Clip(box)))

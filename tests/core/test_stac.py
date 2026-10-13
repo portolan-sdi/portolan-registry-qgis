@@ -26,6 +26,7 @@ from portolan_registry_qgis.core.stac import (
     read_document,
     str_or_none,
 )
+from tests.stac_builders import make_catalog, make_collection, make_item
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "anncsu"
 ANNCSU = "https://pub-1e760dc850cb4a5aa5f8afb77713f8cd.r2.dev"
@@ -36,22 +37,21 @@ def load(name):
 
 
 def test_children_are_named_and_classified():
+    children = [
+        "./100%_coverage/catalog.json",
+        "./UPPER/CATALOG.JSON",
+        "./quads/",
+        "/standalone.json",
+        "javascript:alert(1)",
+    ]
+    other_links = [
+        {"rel": "self", "href": "./catalog.json"},
+        {"rel": "root", "href": "./catalog.json"},
+        {"rel": "parent", "href": "../catalog.json"},
+        {"rel": "child", "href": "./maps/collection.json", "title": "Geologic Maps"},
+    ]
     document = read_document(
-        {
-            "type": "Catalog",
-            "id": "warehouse",
-            "links": [
-                {"rel": "self", "href": "./catalog.json"},
-                {"rel": "root", "href": "./catalog.json"},
-                {"rel": "parent", "href": "../catalog.json"},
-                {"rel": "child", "href": "./maps/collection.json", "title": "Geologic Maps"},
-                {"rel": "child", "href": "./100%_coverage/catalog.json"},
-                {"rel": "child", "href": "./UPPER/CATALOG.JSON"},
-                {"rel": "child", "href": "./quads/"},
-                {"rel": "child", "href": "/standalone.json"},
-                {"rel": "child", "href": "javascript:alert(1)"},
-            ],
-        },
+        make_catalog("warehouse", children, other_links),
         "https://example.com/stac/catalog.json",
     )
     assert [(n.title, n.kind) for n in document.children] == [
@@ -90,10 +90,7 @@ def test_items_are_children_too():
     ],
 )
 def test_collection_links_however_written(href, kind):
-    document = read_document(
-        {"type": "Catalog", "id": "x", "links": [{"rel": "child", "href": href}]},
-        "https://example.com/stac/catalog.json",
-    )
+    document = read_document(make_catalog("x", [href]), "https://example.com/stac/catalog.json")
     assert document.children[0].kind == kind
 
 
@@ -121,18 +118,14 @@ def test_non_stac_documents_are_refused(value):
 def test_collection_extent(extent, bbox):
     assert collection_bbox({"extent": extent}) == bbox
     document = read_document(
-        {"type": "Collection", "id": "c", "links": [], "extent": extent},
-        "https://example.com/c/collection.json",
+        make_collection("c", extent=extent), "https://example.com/c/collection.json"
     )
     assert document.bbox == bbox
 
 
 def test_item_bbox_drops_elevation():
     assert horizontal_bbox([1, 2, 10, 3, 4, 20]) == (1, 2, 3, 4)
-    document = read_document(
-        {"type": "Feature", "id": "i", "bbox": [1, 2, 10, 3, 4, 20], "properties": {}},
-        "https://example.com/i.json",
-    )
+    document = read_document(make_item("i", [1, 2, 10, 3, 4, 20]), "https://example.com/i.json")
     assert document.kind == "item"
     assert document.bbox == (1, 2, 3, 4)
 
@@ -191,8 +184,10 @@ def test_real_portolan_collection():
     assert tiles.href == f"{ANNCSU}/anncsu-indirizzi.pmtiles"
     assert tiles.layers == ("addresses",)
     style = document.default_style
-    assert style is not None
-    assert style.href == f"{ANNCSU}/indirizzi/styles/indirizzi.json"
+    assert (style.key, style.href) == (
+        "style-indirizzi",
+        f"{ANNCSU}/indirizzi/styles/indirizzi.json",
+    )
     assert [a.key for a in document.data_assets] == ["data", "visual"]
     data = document.data_assets[0]
     assert data.format == "parquet"
@@ -217,8 +212,7 @@ def _with_styles(*roles):
         f"style-{i}": {"href": f"./styles/{i}.json", "roles": list(r)} for i, r in enumerate(roles)
     }
     return read_document(
-        {"type": "Collection", "id": "c", "links": [], "assets": assets},
-        "https://example.com/c/collection.json",
+        make_collection("c", assets=assets), "https://example.com/c/collection.json"
     )
 
 
@@ -232,11 +226,10 @@ def test_default_style_selection():
 
 def test_assets_resolve_storage_options():
     document = read_document(
-        {
-            "type": "Feature",
-            "id": "i",
-            "properties": {"table:storage_options": {"account_name": "acct"}},
-            "assets": {
+        make_item(
+            "i",
+            properties={"table:storage_options": {"account_name": "acct"}},
+            assets={
                 "a": {"href": "abfs://box/a.parquet"},
                 "b": {
                     "href": "abfs://box/b.parquet",
@@ -245,7 +238,7 @@ def test_assets_resolve_storage_options():
                 "bad": {"title": "no href"},
                 "list": ["not", "a", "dict"],
             },
-        },
+        ),
         "https://example.com/i.json",
     )
     assert [(a.key, a.href, a.format) for a in document.assets] == [
@@ -287,12 +280,7 @@ def test_parquet_without_a_geometry_column_is_tabular():
         asset = {"href": "data.parquet", "type": "application/vnd.apache.parquet"}
         if asset_columns is not None:
             asset["table:columns"] = asset_columns
-        raw = {
-            "type": "Collection",
-            "id": "c",
-            "links": [],
-            "assets": {"data": asset, "csv": {"href": "data.csv"}},
-        }
+        raw = make_collection("c", assets={"data": asset, "csv": {"href": "data.csv"}})
         if columns is not None:
             raw["table:columns"] = columns
         return read_document(raw, "https://example.com/c/collection.json")
@@ -309,29 +297,23 @@ def test_parquet_without_a_geometry_column_is_tabular():
     assert flags(collection(spatial, _TABLE_COLUMNS))["data"] is True
     # An item lists its columns in its properties.
     item = read_document(
-        {
-            "type": "Feature",
-            "id": "i",
-            "properties": {"table:columns": _TABLE_COLUMNS},
-            "assets": {"data": {"href": "data.parquet"}},
-        },
+        make_item(
+            "i",
+            properties={"table:columns": _TABLE_COLUMNS},
+            assets={"data": {"href": "data.parquet"}},
+        ),
         "https://example.com/i.json",
     )
     assert flags(item) == {"data": True}
 
 
 def test_asset_label_and_style_detection():
+    assets = {
+        "s": {"href": "./s.json", "type": "application/vnd.mapbox.style+json"},
+        "t": {"href": "./t.png", "title": "Preview", "roles": ["thumbnail"]},
+    }
     document = read_document(
-        {
-            "type": "Collection",
-            "id": "c",
-            "links": [],
-            "assets": {
-                "s": {"href": "./s.json", "type": "application/vnd.mapbox.style+json"},
-                "t": {"href": "./t.png", "title": "Preview", "roles": ["thumbnail"]},
-            },
-        },
-        "https://example.com/c/collection.json",
+        make_collection("c", assets=assets), "https://example.com/c/collection.json"
     )
     style, thumb = document.assets
     assert style.is_style
@@ -341,40 +323,36 @@ def test_asset_label_and_style_detection():
 
 
 def test_icon_and_thumbnail():
+    icons = [
+        {"rel": "icon", "href": "s3://bucket/icon.png"},
+        {"rel": "icon", "href": "../icons/leaf.svg", "type": "image/svg+xml"},
+    ]
+    assets = {
+        "cog": {"href": "./o.tif", "type": "image/tiff", "roles": ["overview"]},
+        "o": {"href": "./o.jpg", "roles": ["overview"]},
+        "t": {"href": "./t.png", "type": "image/png", "roles": ["thumbnail"]},
+    }
     document = read_document(
-        {
-            "type": "Collection",
-            "id": "c",
-            "links": [
-                {"rel": "icon", "href": "s3://bucket/icon.png"},
-                {"rel": "icon", "href": "../icons/leaf.svg", "type": "image/svg+xml"},
-            ],
-            "assets": {
-                "cog": {"href": "./o.tif", "type": "image/tiff", "roles": ["overview"]},
-                "o": {"href": "./o.jpg", "roles": ["overview"]},
-                "t": {"href": "./t.png", "type": "image/png", "roles": ["thumbnail"]},
-            },
-        },
+        make_collection("c", other_links=icons, assets=assets),
         "https://example.com/c/collection.json",
     )
     assert document.icon == "https://example.com/icons/leaf.svg"
-    assert document.thumbnail is not None
-    assert document.thumbnail.key == "t"
+    thumbnail = document.thumbnail
+    assert (thumbnail.key, thumbnail.href) == ("t", "https://example.com/c/t.png")
 
 
 def test_overview_stands_in_for_a_missing_thumbnail():
     document = read_document(
-        {
-            "type": "Feature",
-            "id": "i",
-            "links": [{"rel": "icon", "href": "./readme.txt"}],
-            "assets": {"o": {"href": "./o.webp?v=2", "roles": ["overview"]}},
-        },
+        make_item(
+            "i",
+            other_links=[{"rel": "icon", "href": "./readme.txt"}],
+            assets={"o": {"href": "./o.webp?v=2", "roles": ["overview"]}},
+        ),
         "https://example.com/i.json",
     )
     assert document.icon is None
-    assert document.thumbnail is not None
-    assert document.thumbnail.key == "o"
+    thumbnail = document.thumbnail
+    assert (thumbnail.key, thumbnail.href) == ("o", "https://example.com/o.webp?v=2")
 
 
 @pytest.mark.parametrize(
@@ -393,7 +371,7 @@ def test_is_image(href, media, expected):
 
 def _with_assets(assets, links=()):
     return read_document(
-        {"type": "Collection", "id": "c", "links": list(links), "assets": assets},
+        make_collection("c", other_links=links, assets=assets),
         "https://example.com/c/collection.json",
     )
 
@@ -478,8 +456,8 @@ def test_loadable_keeps_only_files_the_plugin_adds():
         (f"{base}other.pmtiles", "archive", "pmtiles"),
     ]
     assert loadable[0].asset is None
-    assert loadable[1].asset is not None
-    assert loadable[1].asset.key == "table"
+    table = next(asset for asset in document.assets if asset.key == "table")
+    assert loadable[1].asset is table
     assert document.pmtiles_duplicates == frozenset()
     assert _with_assets({}).loadable() == ()
 

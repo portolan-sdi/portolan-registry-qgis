@@ -8,7 +8,7 @@ import time
 import urllib.parse
 import urllib.request
 from dataclasses import replace
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
 import pytest
@@ -62,6 +62,7 @@ from portolan_registry_qgis.qgis_io.tileserver import (
     open_archive,
     read_tile,
 )
+from tests.loopback import base_url, serve
 from tests.tiles import EAST_AREA, TRIANGLE, WEST_VIEW
 
 from .conftest import wait_for
@@ -701,15 +702,10 @@ def test_download_runs_files_at_the_same_time(tmp_path):
         def log_message(self, format, *args):  # noqa: A002
             pass
 
-    gate = ThreadingHTTPServer(("127.0.0.1", 0), Gate)
-    threading.Thread(target=gate.serve_forever, daemon=True).start()
-    base = f"http://127.0.0.1:{gate.server_address[1]}"
-    try:
+    with serve(Gate) as gate:
+        base = base_url(gate)
         files = [PlannedFile(f"{base}/f{i}", f"f{i}.txt") for i in range(6)]
         report = _download(tmp_path, files)
-    finally:
-        gate.shutdown()
-        gate.server_close()
     assert report.failed == []
     assert sorted(report.downloaded) == [f"f{i}.txt" for i in range(6)]
     assert peak == 3

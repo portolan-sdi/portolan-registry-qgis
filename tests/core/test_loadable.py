@@ -16,6 +16,7 @@ from portolan_registry_qgis.core.loadable import (
     is_on_map,
     is_table,
     item_cog,
+    loadable_tip,
     only_items,
     parquet_name,
     parquet_to_clip,
@@ -255,3 +256,16 @@ def test_plan_summary_names_each_gap():
         "The listing stopped at its document limit.",
         "1 item outside the chosen area is left out.",
     ]
+
+
+def test_loadable_tip():
+    tiles = Loadable(f"{BASE}/a&b.pmtiles", "tiles", "pmtiles", layers=("roads", "<water>"))
+    assert loadable_tip(tiles) == f"{BASE}/a&amp;b.pmtiles<br>Layers: roads, &lt;water&gt;"
+    data = _file("parquet", roles=("data", "visual"))
+    tip = loadable_tip(data, on_map=True)
+    assert tip.split("<br>") == [
+        data.href,
+        "Roles: data, visual",
+        "A layer in the project already reads this file.",
+    ]
+    assert loadable_tip(_file("geojson", roles=())) == f"{BASE}/file.geojson"

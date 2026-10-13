@@ -15,9 +15,35 @@ from portolan_registry_qgis.core.format import human_size, license_name, link_la
 from portolan_registry_qgis.core.i18n import N_, _
 
 if TYPE_CHECKING:
-    from portolan_registry_qgis.core.stac import Document
+    from portolan_registry_qgis.core.registry import CatalogEntry
+    from portolan_registry_qgis.core.stac import Bbox, Document
 
 BROWSER_LINK = N_("All files and metadata in the Portolan browser")
+
+
+def document_extent(document: Document, catalog: CatalogEntry | None) -> Bbox | None:
+    """Return the document's extent.
+
+    A STAC catalog declares none, so the registry's extent for the open
+    ``catalog`` stands in for it.
+    """
+    if document.bbox is not None:
+        return document.bbox
+    return catalog.bbox if catalog is not None and catalog.url == document.href else None
+
+
+def document_size(document: Document, catalog: CatalogEntry | None) -> int | None:
+    """Return the sum of the asset sizes that the document declares.
+
+    A document with no sized assets returns None. When it is the open
+    ``catalog``, the registry's total size stands in.
+    """
+    sizes = [asset.size for asset in document.assets if asset.size is not None]
+    if sizes:
+        return sum(sizes)
+    if catalog is not None and catalog.url == document.href:
+        return catalog.total_size_bytes
+    return None
 
 
 def _anchor(href: str, text: str) -> str:

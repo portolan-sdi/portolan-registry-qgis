@@ -4,6 +4,7 @@ import pytest
 
 from portolan_registry_qgis.core.format import (
     catalog_summary,
+    excerpt,
     format_label,
     human_size,
     license_name,
@@ -102,3 +103,9 @@ def test_license_name(value, name):
 )
 def test_link_label(href, title, label):
     assert link_label(href, title) == label
+
+
+def test_excerpt():
+    assert excerpt("one\n  two\tthree") == "one two three"
+    assert excerpt("a" * 10, limit=10) == "a" * 10
+    assert excerpt("word " * 5, limit=8) == "word wo…"

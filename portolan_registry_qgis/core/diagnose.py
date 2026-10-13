@@ -32,15 +32,15 @@ def gdal_reason(detail: str, invalid: str = "") -> str:
         invalid: The start of QGIS's "Provider is not valid" line in the
             language QGIS runs in. The English line is always dropped.
     """
-    lines = []
-    for raw in detail.splitlines():
-        line = _PREFIX.sub("", raw.strip())
-        if not line or _PROVIDER_INVALID.match(line):
-            continue
-        if invalid and line.startswith(invalid):
-            continue
-        lines.append(line)
-    return " ".join(lines)
+    lines = (_PREFIX.sub("", raw.strip()) for raw in detail.splitlines())
+    return " ".join(line for line in lines if _says_more(line, invalid))
+
+
+def _says_more(line: str, invalid: str) -> bool:
+    """Return whether ``line`` holds more than QGIS's "Provider is not valid" line."""
+    if not line or _PROVIDER_INVALID.match(line):
+        return False
+    return not (invalid and line.startswith(invalid))
 
 
 def open_failure(href: str, detail: str, flatpak: bool, invalid: str = "") -> str:

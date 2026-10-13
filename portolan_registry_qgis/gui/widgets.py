@@ -5,8 +5,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
-from qgis.PyQt.QtCore import QRect, QRectF, QSize, Qt, pyqtSignal
-from qgis.PyQt.QtGui import QColor, QFont, QFontMetrics, QPainter, QPalette
+from qgis.core import QgsApplication
+from qgis.PyQt.QtCore import QRect, QRectF, QSize, Qt, QUrl, pyqtSignal
+from qgis.PyQt.QtGui import (
+    QColor,
+    QDesktopServices,
+    QFont,
+    QFontMetrics,
+    QIcon,
+    QPainter,
+    QPalette,
+)
 from qgis.PyQt.QtWidgets import (
     QApplication,
     QHBoxLayout,
@@ -49,6 +58,12 @@ BADGE_ROLE = Qt.ItemDataRole.UserRole + 1
 ON_MAP_ROLE = Qt.ItemDataRole.UserRole + 2
 # The mark that an asset row draws when the file is on the map.
 ON_MAP_MARK = "\u2713"
+# The tree and the file list show this many rows, then a row that shows the
+# next page. The tree reads the child documents of each page it shows, for
+# their icons.
+NODE_PAGE = 50
+# Marks a link that leaves QGIS.
+EXTERNAL = "\u2197"
 
 _PAD = 8
 
@@ -62,6 +77,22 @@ _STATUSES = {
     # Translators: A catalog status. The registry gives no status.
     "unknown": N_("Unknown"),
 }
+
+
+def theme_icon(name: str) -> QIcon:
+    """Return the QGIS theme icon ``name``, such as "mActionAddLayer"."""
+    return QgsApplication.getThemeIcon(f"/{name}.svg")
+
+
+def open_label() -> str:
+    """Return the text of the action that opens the Portolan browser."""
+    # Translators: {arrow} is an arrow that marks a link that leaves QGIS.
+    return _("Open in Portolan browser {arrow}").format(arrow=EXTERNAL)
+
+
+def open_url(url: str) -> None:
+    """Open ``url`` in the system's web browser."""
+    QDesktopServices.openUrl(QUrl(url))
 
 
 def status_label(status: str) -> str:

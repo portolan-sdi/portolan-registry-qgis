@@ -40,12 +40,15 @@ def coordinate_columns(header: bytes) -> tuple[str, str] | None:
     lat = _first_named(names, LATITUDE_NAMES)
     if lon is None or lat is None:
         return None
-    if {lon.casefold(), lat.casefold()} & _PLANAR_NAMES:
-        # The last line can stop in the middle of a row.
-        complete = rows[1:-1] if not text.endswith(("\n", "\r")) else rows[1:]
-        if not _degrees(complete, names.index(lon), names.index(lat)):
-            return None
+    planar = bool({lon.casefold(), lat.casefold()} & _PLANAR_NAMES)
+    if planar and not _degrees(_complete_rows(rows, text), names.index(lon), names.index(lat)):
+        return None
     return lon, lat
+
+
+def _complete_rows(rows: list[list[str]], text: str) -> list[list[str]]:
+    """Return the rows after the header. The last line can stop in the middle of a row."""
+    return rows[1:] if text.endswith(("\n", "\r")) else rows[1:-1]
 
 
 def _first_named(names: list[str], wanted: tuple[str, ...]) -> str | None:

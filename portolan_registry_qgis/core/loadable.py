@@ -9,6 +9,7 @@ tests cover them.
 
 from __future__ import annotations
 
+import html
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, NamedTuple
 
@@ -270,3 +271,18 @@ def plan_summary(plan: Plan, clipped: int = 0) -> str:
             )
         )
     return "\n".join(lines)
+
+
+def loadable_tip(item: Loadable, on_map: bool = False) -> str:
+    """Return the tooltip of a file row.
+
+    ``on_map`` adds the note that a layer in the project reads the file.
+    """
+    lines = [html.escape(item.href)]
+    if item.layers:
+        lines.append(_("Layers: {layers}").format(layers=html.escape(", ".join(item.layers))))
+    if item.asset is not None and item.asset.roles:
+        lines.append(_("Roles: {roles}").format(roles=html.escape(", ".join(item.asset.roles))))
+    if on_map:
+        lines.append(_("A layer in the project already reads this file."))
+    return "<br>".join(lines)

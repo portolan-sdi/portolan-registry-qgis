@@ -212,3 +212,11 @@ def test_a_mirror_without_self_links_resolves_against_the_items(con, served):
 def test_a_file_that_is_not_stac_geoparquet(con, served):
     with pytest.raises(ValueError, match="no bbox or assets"):
         mirror.mirror_hrefs(con, f"{served}/plain.parquet", Everything())
+
+
+def test_skipped_path():
+    message = "Can't open /vsicurl/https://x.test/a.tif. Skipping it"
+    assert mirror.skipped_path(message) == "/vsicurl/https://x.test/a.tif"
+    assert mirror.skipped_path("Can't open /vsicurl/https://x.test/a.tif") is None
+    assert mirror.skipped_path("Some other warning. Skipping it") is None
+    assert mirror.skipped_path("") is None

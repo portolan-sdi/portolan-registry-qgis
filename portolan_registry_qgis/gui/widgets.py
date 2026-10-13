@@ -26,6 +26,7 @@ from portolan_registry_qgis.gui.pictures import (
     ACCENT,
     FORMAT_COLORS,
     WARNING,
+    ExtentPicture,
     ImageCache,
     Picture,
     WorldMap,
@@ -196,33 +197,20 @@ class CatalogDelegate(QStyledItemDelegate):
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex) -> None:
         """Draw the row."""
         entry = index.data(ROLE)
+        if not isinstance(entry, CatalogEntry):
+            _paint_note(painter, option, index, isinstance(entry, More))
+            return
         rect = option.rect
         palette = option.palette
-        if not isinstance(entry, CatalogEntry):
-            painter.save()
-            if isinstance(entry, More):
-                _panel(painter, option)
-                painter.setPen(ACCENT if not _selected(option) else _text_color(option))
-            else:
-                painter.setPen(muted(palette))
-            painter.drawText(
-                rect.adjusted(_PAD * 2, 0, -_PAD * 2, 0),
-                Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap,
-                str(index.data(Qt.ItemDataRole.DisplayRole) or ""),
-            )
-            painter.restore()
-            return
         painter.save()
         _panel(painter, option)
-        selected = _selected(option)
-        text = _text_color(option)
         tile = QRectF(
             rect.left() + _PAD,
             rect.center().y() - _TILE.height() / 2 + 0.5,
             _TILE.width(),
             _TILE.height(),
         )
-        paint_extent(painter, tile, entry.bbox, self._world, palette)
+        paint_extent(painter, tile, ExtentPicture(entry.bbox, self._world, palette))
 
         picture = self._images.get(entry.logo_url)
         if picture is not None:
@@ -232,8 +220,19 @@ class CatalogDelegate(QStyledItemDelegate):
                 _LOGO.width(),
                 _LOGO.height(),
             )
-            _logo(painter, area, picture, palette, text)
+            _logo(painter, area, picture, palette, _text_color(option))
+        self._paint_text(painter, option, entry)
+        painter.setPen(
+            mix(palette.color(QPalette.ColorRole.Base), palette.color(QPalette.ColorRole.Text), 0.1)
+        )
+        painter.drawLine(rect.left() + _PAD, rect.bottom(), rect.right() - _PAD, rect.bottom())
+        painter.restore()
 
+    def _paint_text(
+        self, painter: QPainter, option: QStyleOptionViewItem, entry: CatalogEntry
+    ) -> None:
+        """Draw the title, and below it the status and the facts."""
+        rect = option.rect
         left, width = self._text_span(entry, rect.left(), rect.right())
         bold = self._bold(option)
         bold_metrics = QFontMetrics(bold)
@@ -242,7 +241,7 @@ class CatalogDelegate(QStyledItemDelegate):
         height = bold_metrics.height() * len(title) + 2 + metrics.height()
         top = rect.center().y() - height // 2
         painter.setFont(bold)
-        painter.setPen(text)
+        painter.setPen(_text_color(option))
         for row, words in enumerate(title):
             painter.drawText(
                 QRect(left, top + row * bold_metrics.height(), width, bold_metrics.height()),
@@ -251,26 +250,40 @@ class CatalogDelegate(QStyledItemDelegate):
             )
         painter.setFont(option.font)
         second = QRect(left, top + bold_metrics.height() * len(title) + 2, width, metrics.height())
+        selected = _selected(option)
         if entry.status != "valid":
             status = status_label(entry.status)
-            painter.setPen(text if selected else WARNING)
+            painter.setPen(_text_color(option) if selected else WARNING)
             painter.drawText(
                 second, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, status
             )
             shift = metrics.horizontalAdvance(status + "  ")
             second.adjust(shift, 0, 0, 0)
-        painter.setPen(muted(palette, selected))
+        painter.setPen(muted(option.palette, selected))
         summary = catalog_summary(entry.collection_count, entry.total_size_bytes, entry.licenses)
         painter.drawText(
             second,
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
             metrics.elidedText(summary, Qt.TextElideMode.ElideRight, second.width()),
         )
-        painter.setPen(
-            mix(palette.color(QPalette.ColorRole.Base), palette.color(QPalette.ColorRole.Text), 0.1)
-        )
-        painter.drawLine(rect.left() + _PAD, rect.bottom(), rect.right() - _PAD, rect.bottom())
-        painter.restore()
+
+
+def _paint_note(
+    painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex, more: bool
+) -> None:
+    """Draw a row that holds no catalog: the "more" row, or a note such as an error."""
+    painter.save()
+    if more:
+        _panel(painter, option)
+        painter.setPen(ACCENT if not _selected(option) else _text_color(option))
+    else:
+        painter.setPen(muted(option.palette))
+    painter.drawText(
+        option.rect.adjusted(_PAD * 2, 0, -_PAD * 2, 0),
+        Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap,
+        str(index.data(Qt.ItemDataRole.DisplayRole) or ""),
+    )
+    painter.restore()
 
 
 class AssetDelegate(QStyledItemDelegate):
@@ -301,6 +314,25 @@ class AssetDelegate(QStyledItemDelegate):
         label, format_key, size = badge
         painter.save()
         _panel(painter, option)
+        box = self._paint_badge(painter, option, label, format_key)
+        metrics = option.fontMetrics
+        rect = option.rect
+        painter.setFont(option.font)
+        right = _paint_trailing(painter, option, bool(index.data(ON_MAP_ROLE)), size)
+        left = int(box.right()) + 10
+        painter.setPen(_text_color(option))
+        title = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
+        painter.drawText(
+            QRect(left, rect.top(), max(0, right - left), rect.height()),
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            metrics.elidedText(title, Qt.TextElideMode.ElideRight, max(0, right - left)),
+        )
+        painter.restore()
+
+    def _paint_badge(
+        self, painter: QPainter, option: QStyleOptionViewItem, label: str, format_key: str
+    ) -> QRectF:
+        """Draw the format badge at the left of the row, and return its box."""
         palette = option.palette
         rect = option.rect
         small = self._small(option)
@@ -327,37 +359,39 @@ class AssetDelegate(QStyledItemDelegate):
             Qt.AlignmentFlag.AlignCenter,
             small_metrics.elidedText(label, Qt.TextElideMode.ElideRight, int(box.width()) - 6),
         )
+        return box
 
-        metrics = option.fontMetrics
-        painter.setFont(option.font)
-        right = rect.right() - 6
-        if index.data(ON_MAP_ROLE):
-            mark_width = metrics.horizontalAdvance(ON_MAP_MARK)
-            painter.setPen(_text_color(option) if _selected(option) else ACCENT)
-            painter.drawText(
-                QRect(right - mark_width, rect.top(), mark_width, rect.height()),
-                Qt.AlignmentFlag.AlignVCenter,
-                ON_MAP_MARK,
-            )
-            right -= mark_width + 10
-        if size:
-            size_width = metrics.horizontalAdvance(size)
-            painter.setPen(muted(palette, _selected(option)))
-            painter.drawText(
-                QRect(right - size_width, rect.top(), size_width, rect.height()),
-                Qt.AlignmentFlag.AlignVCenter,
-                size,
-            )
-            right -= size_width + 10
-        left = int(box.right()) + 10
-        painter.setPen(_text_color(option))
-        title = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
+
+def _paint_trailing(
+    painter: QPainter, option: QStyleOptionViewItem, on_map: bool, size: str
+) -> int:
+    """Draw the on-map mark and the size at the right of an asset row.
+
+    Returns:
+        The right edge that is left for the title.
+    """
+    rect = option.rect
+    metrics = option.fontMetrics
+    right = rect.right() - 6
+    if on_map:
+        mark_width = metrics.horizontalAdvance(ON_MAP_MARK)
+        painter.setPen(_text_color(option) if _selected(option) else ACCENT)
         painter.drawText(
-            QRect(left, rect.top(), max(0, right - left), rect.height()),
-            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-            metrics.elidedText(title, Qt.TextElideMode.ElideRight, max(0, right - left)),
+            QRect(right - mark_width, rect.top(), mark_width, rect.height()),
+            Qt.AlignmentFlag.AlignVCenter,
+            ON_MAP_MARK,
         )
-        painter.restore()
+        right -= mark_width + 10
+    if size:
+        size_width = metrics.horizontalAdvance(size)
+        painter.setPen(muted(option.palette, _selected(option)))
+        painter.drawText(
+            QRect(right - size_width, rect.top(), size_width, rect.height()),
+            Qt.AlignmentFlag.AlignVCenter,
+            size,
+        )
+        right -= size_width + 10
+    return right
 
 
 class RoomyDelegate(QStyledItemDelegate):
@@ -387,7 +421,8 @@ class ExtentTile(QWidget):
     def paintEvent(self, _event: object) -> None:
         """Draw the picture."""
         painter = QPainter(self)
-        paint_extent(painter, QRectF(self.rect()), self._bbox, self._world, self.palette())
+        picture = ExtentPicture(self._bbox, self._world, self.palette())
+        paint_extent(painter, QRectF(self.rect()), picture)
         painter.end()
 
 
@@ -445,7 +480,8 @@ class HeroView(QWidget):
         palette = self.palette()
         self.painted_extent = self._picture is None
         if self._picture is None:
-            paint_extent(painter, rect, self._bbox, self._world, palette, min_span=40.0, radius=4.0)
+            extent = ExtentPicture(self._bbox, self._world, palette, min_span=40.0, radius=4.0)
+            paint_extent(painter, rect, extent)
             painter.end()
             return
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)

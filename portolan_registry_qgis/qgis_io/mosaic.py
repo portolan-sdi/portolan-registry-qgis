@@ -4,8 +4,9 @@ A collection of COG items becomes a GDAL VRT over the ``/vsicurl/`` paths
 of the items that intersect the scope. QGIS reads only the tiles on screen.
 
 ``item_hrefs_in`` and ``write_vrt`` send network requests, so they run off
-the main thread. ``open_mosaic`` runs on the main thread. ``build_mosaic``
-does all three steps in the calling thread.
+the main thread. ``start_vrt`` runs ``write_vrt`` in a task.
+``open_mosaic`` runs on the main thread. ``build_mosaic`` does all three
+steps in the calling thread.
 
 The VRT goes into the session folder of ``parquet_layer``, so the same
 sweep deletes it when the last layer that reads it is gone. The layer keeps
@@ -21,7 +22,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from osgeo import gdal, ogr
-from qgis.core import Qgis, QgsMessageLog, QgsProviderRegistry, QgsRasterLayer
+from qgis.core import QgsProviderRegistry, QgsRasterLayer
 
 from portolan_registry_qgis.core import mirror as mirrors
 from portolan_registry_qgis.core import parquet_query
@@ -37,10 +38,14 @@ from portolan_registry_qgis.qgis_io.layers import (
     gdal_path,
     remote_reads,
 )
+from portolan_registry_qgis.qgis_io.log import log
+from portolan_registry_qgis.qgis_io.network import run_task
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from concurrent.futures import Executor
+
+    from qgis.core import QgsTask
 
     from portolan_registry_qgis.core.download import FetchJson
     from portolan_registry_qgis.core.scope import Scope
@@ -88,7 +93,7 @@ def item_hrefs_in(
         except (duckdb.Error, OSError, ValueError) as error:
             if cancelled is not None and cancelled():
                 return []
-            _log(
+            log(
                 _("Could not read {url}, so the plugin reads each item: {error}").format(
                     url=mirror, error=error
                 )
@@ -113,7 +118,7 @@ def walked_hrefs(
         if href is not None:
             hrefs.append(href)
     if failures:
-        _log(
+        log(
             ngettext(
                 "Could not read {n} document below {start}, first {first}",
                 "Could not read {n} documents below {start}, first {first}",
@@ -154,27 +159,60 @@ def write_vrt(
     if not hrefs:
         raise LayerError(_("No file intersects the area"))
     path = parquet_layer.new_path(".vrt")
+    try:
+        _raise_if_blocked(hrefs)
+        by_path = {gdal_path(h): h for h in hrefs}
+        bands, error, skipped = _build_vrt(hrefs, path, cancelled, clip)
+        reasons = _skip_reasons(skipped, by_path)
+        if cancelled is not None and cancelled():
+            # Translators: Why a task stopped. The user cancelled it.
+            raise MosaicCancelledError(_("Cancelled"))
+        if bands == 0 or not path.exists():
+            raise _mosaic_error(len(hrefs), error, reasons)
+    except BaseException:
+        parquet_layer.discard_path(path)
+        raise
+    return path
+
+
+def _raise_if_blocked(hrefs: list[str]) -> None:
+    """Raise a ``LayerError`` when the GDAL settings block one of ``hrefs``.
+
+    GDAL would draw nothing for such a file, so the error comes first.
+    """
+    blocked = next((message for h in hrefs if (message := blocked_message(h))), None)
+    if blocked is not None:
+        raise LayerError(blocked)
+
+
+def _build_vrt(
+    hrefs: list[str],
+    path: Path,
+    cancelled: Callable[[], bool] | None,
+    clip: str | None,
+) -> tuple[int, str, dict[str, str]]:
+    """Let GDAL write the VRT over the COGs at ``hrefs`` at ``path``.
+
+    Returns:
+        The band count, which is 0 when GDAL wrote no VRT, GDAL's error,
+        and GDAL's reason for each path it left out.
+    """
 
     def progress(_complete: float, _message: object, _data: object) -> int:
         return 0 if cancelled is not None and cancelled() else 1
 
     options = gdal.BuildVRTOptions(callback=progress)
-    # A file that the GDAL settings block would draw nothing. Say so first.
-    blocked = next((message for h in hrefs if (message := blocked_message(h))), None)
-    if blocked is not None:
-        parquet_layer.discard_path(path)
-        raise LayerError(blocked)
     paths = [gdal_path(h) for h in hrefs]
-    error = ""
     # BuildVRT says only "Can't open <path>. Skipping it." for a file it
     # cannot open. The handler keeps those paths, to ask GDAL why.
     skipped: list[str] = []
 
     def keep(_level: int, _number: int, message: str) -> None:
-        # GDAL writes this message in English, so it stays English here.
-        if message.startswith("Can't open ") and message.endswith(". Skipping it"):  # i18n: skip
-            skipped.append(message[len("Can't open ") : -len(". Skipping it")])
+        skip = mirrors.skipped_path(message)
+        if skip is not None:
+            skipped.append(skip)
 
+    error = ""
     gdal.PushErrorHandler(keep)
     try:
         with remote_reads(hrefs):
@@ -190,37 +228,42 @@ def write_vrt(
             dataset = None
             reasons = {skip: gdal_open_error(skip) for skip in skipped}
     except RuntimeError as failure:
-        bands, error, reasons = 0, str(failure), {}
+        return 0, str(failure), {}
     finally:
         gdal.PopErrorHandler()
-    by_path = dict(zip(paths, hrefs, strict=True))
-    for skip, reason in list(reasons.items()):
-        reasons[skip] = explain_open_error(by_path.get(skip, skip), reason)
-    for skip, reason in reasons.items():
-        _log(
-            _("The mosaic left out {url}: {reason}").format(
-                url=by_path.get(skip, skip), reason=reason
-            )
-        )
-    if cancelled is not None and cancelled():
-        parquet_layer.discard_path(path)
-        # Translators: Why a task stopped. The user cancelled it.
-        raise MosaicCancelledError(_("Cancelled"))
-    if bands == 0 or not path.exists():
-        parquet_layer.discard_path(path)
-        if reasons:
-            first, reason = next(iter(reasons.items()))
-            error = _("GDAL could not open {url}: {reason}").format(
-                url=by_path.get(first, first), reason=reason
-            )
-        raise LayerError(
-            ngettext(
-                "GDAL could not build a mosaic of {n} file. {error}",
-                "GDAL could not build a mosaic of {n} files. {error}",
-                len(hrefs),
-            ).format(n=number(len(hrefs)), error=error)
-        )
-    return path
+    return bands, error, reasons
+
+
+def _skip_reasons(skipped: dict[str, str], by_path: dict[str, str]) -> dict[str, str]:
+    """Explain GDAL's reason for each path it left out, and log each one.
+
+    Returns:
+        The explained reason by URL.
+    """
+    reasons = {
+        by_path.get(skip, skip): explain_open_error(by_path.get(skip, skip), reason)
+        for skip, reason in skipped.items()
+    }
+    for url, reason in reasons.items():
+        log(_("The mosaic left out {url}: {reason}").format(url=url, reason=reason))
+    return reasons
+
+
+def _mosaic_error(files: int, error: str, reasons: dict[str, str]) -> LayerError:
+    """Return the error for a mosaic of ``files`` files that GDAL did not write.
+
+    The first file GDAL left out, with its reason, replaces GDAL's own error.
+    """
+    if reasons:
+        url, reason = next(iter(reasons.items()))
+        error = _("GDAL could not open {url}: {reason}").format(url=url, reason=reason)
+    return LayerError(
+        ngettext(
+            "GDAL could not build a mosaic of {n} file. {error}",
+            "GDAL could not build a mosaic of {n} files. {error}",
+            files,
+        ).format(n=number(files), error=error)
+    )
 
 
 def _warp(mosaic: Any, path: Path, clip: str) -> None:
@@ -354,5 +397,31 @@ def rebuild(layer: QgsRasterLayer, cancelled: Callable[[], bool] | None = None) 
     reopen(layer, write_vrt(hrefs, cancelled, clip_of(layer)))
 
 
-def _log(text: str) -> None:
-    QgsMessageLog.logMessage(text, "Portolan Registry", Qgis.MessageLevel.Warning)
+def start_vrt(
+    description: str,
+    hrefs: list[str],
+    clip: str | None,
+    on_done: Callable[[Path | None, BaseException | None], None],
+) -> QgsTask:
+    """Run ``write_vrt`` in a background task. Call on the main thread.
+
+    Cancel on the task stops the write.
+
+    Args:
+        description: Shown in the QGIS task manager.
+        hrefs: The COG URLs, as for ``write_vrt``.
+        clip: The clip polygon, as for ``write_vrt``.
+        on_done: Called on the main thread with the path of the VRT and
+            None, or with None and the error.
+
+    Returns:
+        The task, already queued.
+    """
+
+    def write(task: QgsTask) -> Path:
+        return write_vrt(hrefs, task.isCanceled, clip)
+
+    def done(result: object, error: BaseException | None) -> None:
+        on_done(result if isinstance(result, Path) else None, error)
+
+    return run_task(description, write, done)

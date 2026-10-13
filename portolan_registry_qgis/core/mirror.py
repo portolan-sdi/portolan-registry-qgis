@@ -36,6 +36,23 @@ if TYPE_CHECKING:
 MIRROR_ROLE = "collection-mirror"
 
 
+# GDAL BuildVRT reports a file it cannot open with only this message. GDAL
+# writes it in English, so it stays English here.
+_SKIP_START = "Can't open "  # i18n: skip - a GDAL message
+_SKIP_END = ". Skipping it"  # i18n: skip - a GDAL message
+
+
+def skipped_path(message: str) -> str | None:
+    """Return the path in GDAL's "Can't open <path>. Skipping it" message.
+
+    Returns:
+        The path, or None for any other message.
+    """
+    if message.startswith(_SKIP_START) and message.endswith(_SKIP_END):
+        return message[len(_SKIP_START) : -len(_SKIP_END)]
+    return None
+
+
 def mirror_href(collection: Document) -> str | None:
     """Return the href of the collection's stac-geoparquet mirror, if it has one."""
     return next(

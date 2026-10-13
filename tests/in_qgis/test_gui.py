@@ -502,8 +502,7 @@ def test_plugin_restores_saved_parquet(iface, catalog, tmp_path, monkeypatch, pr
     planned = parquet_layer.plan(
         f"{catalog['base']}/points.parquet",
         context,
-        extent,
-        QgsCoordinateReferenceSystem("EPSG:4326"),
+        parquet_layer.Limits(extent, QgsCoordinateReferenceSystem("EPSG:4326")),
     )
     prepared = parquet_layer.prepare(planned)
     layer, _ = parquet_layer.build(prepared, "points")

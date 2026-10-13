@@ -27,6 +27,8 @@ from qgis.PyQt.QtWidgets import QCheckBox, QComboBox, QHBoxLayout, QToolButton, 
 from portolan_registry_qgis.core import scope as scopes
 from portolan_registry_qgis.core.i18n import N_, _
 from portolan_registry_qgis.core.scope import Area, Everything, MapView, Scope
+from portolan_registry_qgis.qgis_io.crs import WGS84, wgs84
+from portolan_registry_qgis.qgis_io.log import LOG_TAG
 
 EVERYTHING = "everything"
 MAP_VIEW = "view"
@@ -40,7 +42,6 @@ CHOICES = (
     (DRAW, N_("Draw an area…")),
     (FROM_LAYER, N_("From a layer…")),
 )
-WGS84 = "EPSG:4326"
 _WORLD = (-180.0, -90.0, 180.0, 90.0)
 _STROKE = QColor(65, 99, 204)
 _FILL = QColor(65, 99, 204, 50)
@@ -70,10 +71,6 @@ def _remove_band(canvas: Any, band: QgsRubberBand | None) -> None:
         scene.removeItem(band)
 
 
-def _wgs84() -> QgsCoordinateReferenceSystem:
-    return QgsCoordinateReferenceSystem(WGS84)
-
-
 def view_bbox(
     extent: QgsRectangle, crs: QgsCoordinateReferenceSystem
 ) -> tuple[float, float, float, float]:
@@ -81,7 +78,7 @@ def view_bbox(
 
     An extent that cannot be transformed gives the whole world.
     """
-    transform = QgsCoordinateTransform(crs, _wgs84(), QgsProject.instance())
+    transform = QgsCoordinateTransform(crs, wgs84(), QgsProject.instance())
     transform.setBallparkTransformsAreAppropriate(True)
     try:
         rect = transform.transformBoundingBox(extent)
@@ -144,7 +141,7 @@ def _to_wgs84(geometry: QgsGeometry, crs: QgsCoordinateReferenceSystem) -> QgsGe
         ScopeError: The transform fails.
     """
     shape = QgsGeometry(geometry)
-    transform = QgsCoordinateTransform(crs, _wgs84(), QgsProject.instance())
+    transform = QgsCoordinateTransform(crs, wgs84(), QgsProject.instance())
     transform.setBallparkTransformsAreAppropriate(True)
     try:
         result = shape.transform(transform)
@@ -554,9 +551,7 @@ class ScopePicker(QWidget):
         try:
             area = area_of(polygon, crs)
         except ScopeError as error:
-            self._iface.messageBar().pushMessage(
-                "Portolan Registry", str(error), Qgis.MessageLevel.Warning, 5
-            )
+            self._iface.messageBar().pushMessage(LOG_TAG, str(error), Qgis.MessageLevel.Warning, 5)
             self._draw_cancelled()
             return
         self._area = area
@@ -583,7 +578,7 @@ class ScopePicker(QWidget):
             return
         if self._area_band is None:
             self._area_band = _band(self._canvas)
-        self._area_band.setToGeometry(QgsGeometry.fromWkt(self._area.wkt), _wgs84())
+        self._area_band.setToGeometry(QgsGeometry.fromWkt(self._area.wkt), wgs84())
 
     def _view_changed(self) -> None:
         if self._current == MAP_VIEW:

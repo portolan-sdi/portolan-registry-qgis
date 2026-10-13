@@ -56,11 +56,12 @@ from qgis.core import (
 from portolan_registry_qgis.core import parquet_query
 from portolan_registry_qgis.core.geoparquet import LAYER, WHOLE_FILE, Clip
 from portolan_registry_qgis.core.i18n import _
+from portolan_registry_qgis.qgis_io.crs import wgs84
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from qgis.core import QgsCoordinateTransformContext
+    from qgis.core import QgsCoordinateTransformContext, QgsTask
 
     from portolan_registry_qgis.core.geoparquet import ReadPlan
     from portolan_registry_qgis.core.stac import Bbox
@@ -101,6 +102,22 @@ _pending: set[Path] = set()
 
 
 @dataclass(frozen=True)
+class Limits:
+    """The part of a GeoParquet file that ``plan`` reads.
+
+    With no field set, ``plan`` reads the whole file.
+    """
+
+    # Keep only features that intersect this rectangle.
+    extent: QgsRectangle | None = None
+    # The CRS of ``extent``.
+    extent_crs: QgsCoordinateReferenceSystem | None = None
+    # Keep only features that intersect this Polygon or MultiPolygon WKT in
+    # EPSG:4326. It replaces ``extent``.
+    area: str | None = None
+
+
+@dataclass(frozen=True)
 class Planned:
     """A GeoParquet file's read plan, ready to copy."""
 
@@ -127,7 +144,7 @@ def crs_for(plan: ReadPlan) -> QgsCoordinateReferenceSystem:
     crs = QgsCoordinateReferenceSystem()
     if plan.crs and crs.createFromUserInput(plan.crs) and crs.isValid():
         return crs
-    return QgsCoordinateReferenceSystem("EPSG:4326")
+    return wgs84()
 
 
 def _profile_folder(name: str, *, create: bool = True) -> Path:
@@ -181,7 +198,7 @@ def file_area(
     geometry = QgsGeometry.fromWkt(area)
     if geometry.isNull() or geometry.type() != Qgis.GeometryType.Polygon:
         raise ValueError(_("Not a Polygon or MultiPolygon: {wkt}").format(wkt=area[:80]))
-    transform = QgsCoordinateTransform(QgsCoordinateReferenceSystem("EPSG:4326"), file_crs, context)
+    transform = QgsCoordinateTransform(wgs84(), file_crs, context)
     if geometry.transform(transform) != Qgis.GeometryOperationResult.Success:
         crs = file_crs.authid()
         if crs:
@@ -195,40 +212,62 @@ def file_area(
 def plan(
     url: str,
     context: QgsCoordinateTransformContext,
-    extent: QgsRectangle | None = None,
-    extent_crs: QgsCoordinateReferenceSystem | None = None,
+    limits: Limits | None = None,
     extension_dir: str | None = None,
     cancelled: Callable[[], bool] | None = None,
-    area: str | None = None,
 ) -> Planned:
     """Read a GeoParquet file's schema and estimate its features. Safe off the main thread.
 
     Args:
         url: The file's URL or local path.
         context: The project's transform context, for the extent and the area.
-        extent: Keep only features that intersect this rectangle.
-        extent_crs: The CRS of ``extent``.
+        limits: The part of the file to read. None reads the whole file.
         extension_dir: Where DuckDB installs extensions if its default
             folder is read-only.
         cancelled: Polled while the queries run. When it returns True, the
             running query stops and raises ``duckdb.InterruptException``.
-        area: Keep only features that intersect this Polygon or
-            MultiPolygon WKT in EPSG:4326. It replaces ``extent``.
 
     Raises:
         parquet_query.DuckDBMissingError: DuckDB is absent or too old.
         GeoParquetError: The geo metadata names a column the file does not have.
-        ValueError: ``area`` is not a polygon the file's CRS can hold.
+        ValueError: ``limits.area`` is not a polygon the file's CRS can hold.
     """
+    limits = limits or Limits()
     con = parquet_query.connection(extension_dir)
     read = parquet_query.read_plan(con, url, cancelled)
     crs = crs_for(read)
-    if area is None:
-        clip = Clip(file_bbox(extent, extent_crs, crs, context))
+    if limits.area is None:
+        clip = Clip(file_bbox(limits.extent, limits.extent_crs, crs, context))
     else:
-        clip = file_area(area, crs, context)
+        clip = file_area(limits.area, crs, context)
     count = parquet_query.estimate(con, url, read, clip, cancelled)
     return Planned(url, read, crs, clip, count)
+
+
+def planner(
+    url: str, limits: Limits, extension_dir: str | None = None
+) -> Callable[[QgsTask], Planned]:
+    """Return a task function that runs ``plan`` on ``url``. Call on the main thread.
+
+    The function reads the project's transform context now, on the main
+    thread. The task function stops the queries when the task is cancelled.
+    """
+    context = QgsProject.instance().transformContext()
+
+    def read(task: QgsTask) -> Planned:
+        return plan(url, context, limits, extension_dir, task.isCanceled)
+
+    return read
+
+
+def is_interrupt(error: BaseException | None) -> bool:
+    """Return whether ``error`` is DuckDB's ``InterruptException``.
+
+    A cancelled task stops the running query, and DuckDB then raises that
+    error. The test reads the class name, because DuckDB is imported only
+    inside functions.
+    """
+    return type(error).__name__ == "InterruptException"
 
 
 def prepare(
@@ -302,7 +341,7 @@ def placeholder() -> Path:
             str(path),
             QgsFields(),
             Qgis.WkbType.Unknown,
-            QgsCoordinateReferenceSystem("EPSG:4326"),
+            wgs84(),
             QgsProject.instance().transformContext(),
             options,
         )

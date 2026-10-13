@@ -28,9 +28,7 @@ from typing import TYPE_CHECKING, Any
 from qgis.core import (
     Qgis,
     QgsApplication,
-    QgsCoordinateReferenceSystem,
     QgsCoordinateTransform,
-    QgsMessageLog,
     QgsProject,
     QgsRectangle,
     QgsSettings,
@@ -105,7 +103,9 @@ from portolan_registry_qgis.gui.widgets import (
 )
 from portolan_registry_qgis.qgis_io import layers as layer_io
 from portolan_registry_qgis.qgis_io import mosaic, parquet_layer
+from portolan_registry_qgis.qgis_io.crs import wgs84
 from portolan_registry_qgis.qgis_io.downloader import DownloadJob, DownloadReport
+from portolan_registry_qgis.qgis_io.log import LOG_TAG, log
 from portolan_registry_qgis.qgis_io.network import (
     QtExecutor,
     fetch_bytes,
@@ -123,9 +123,7 @@ if TYPE_CHECKING:
     from portolan_registry_qgis.gui.pictures import Picture
     from portolan_registry_qgis.qgis_io.tileserver import TileServer
 
-LOG_TAG = "Portolan Registry"
 _ROLE = ROLE
-_WGS84 = "EPSG:4326"
 # The lists show this many rows, then a row that shows the next page. The
 # tree reads the child documents of each page it shows, for their icons.
 CATALOG_PAGE = 25
@@ -170,10 +168,6 @@ SETTINGS_GROUP = "PortolanRegistry"
 GEOMETRY_SETTING = f"{SETTINGS_GROUP}/geometry"
 SPLITTER_SETTING = f"{SETTINGS_GROUP}/splitter"
 DEFAULT_SIZE = QSize(1000, 700)
-
-
-def _log(message: str, level: Any = None) -> None:
-    QgsMessageLog.logMessage(message, LOG_TAG, level or Qgis.MessageLevel.Info)
 
 
 def _zoomed(message: str, moved: bool) -> str:
@@ -737,7 +731,7 @@ class RegistryWindow(QDialog):
         canvas = self._iface.mapCanvas()
         transform = QgsCoordinateTransform(
             canvas.mapSettings().destinationCrs(),
-            QgsCoordinateReferenceSystem(_WGS84),
+            wgs84(),
             QgsProject.instance(),
         )
         try:
@@ -1393,7 +1387,7 @@ class RegistryWindow(QDialog):
                 self._warn(str(failure))
                 return
             for note in warnings:
-                _log(note, Qgis.MessageLevel.Warning)
+                log(note, Qgis.MessageLevel.Warning)
             moved = self._add_layers(layers)
             added = ngettext(
                 "Added {n} vector tile layer from {title}.",
@@ -1413,8 +1407,8 @@ class RegistryWindow(QDialog):
         moved = self._add_layers([layer])
         self._info(_zoomed(_("Added {name}.").format(name=asset.label), moved))
 
-    def _parquet_scope(self) -> tuple[Scope, dict[str, Any]] | None:
-        """Return the scope and the ``parquet_layer.plan`` arguments it gives.
+    def _parquet_scope(self) -> tuple[Scope, parquet_layer.Limits] | None:
+        """Return the scope and the ``parquet_layer.Limits`` it gives.
 
         A map view passes the canvas extent in the canvas CRS, which is
         exact. An area passes its WKT in EPSG:4326. The method warns and
@@ -1428,41 +1422,32 @@ class RegistryWindow(QDialog):
         canvas = self._iface.mapCanvas()
         if isinstance(scope, MapView):
             crs = canvas.mapSettings().destinationCrs()
-            return scope, {"extent": canvas.extent(), "extent_crs": crs}
+            return scope, parquet_layer.Limits(extent=canvas.extent(), extent_crs=crs)
         if isinstance(scope, Area):
-            return scope, {"area": scope.wkt}
-        return scope, {}
+            return scope, parquet_layer.Limits(area=scope.wkt)
+        return scope, parquet_layer.Limits()
 
     def _add_parquet(self, asset: Asset, whole: bool = False) -> None:
         ok, version = parquet_query.duckdb_status()
         if not ok:
             self._duckdb_help(version)
             return
-        scoped: tuple[Scope, dict[str, Any]] | None = (Everything(), {})
+        scoped: tuple[Scope, parquet_layer.Limits] | None = (Everything(), parquet_layer.Limits())
         if not whole:
             scoped = self._parquet_scope()
         if scoped is None:
             return
         scope, limits = scoped
-        context = QgsProject.instance().transformContext()
         extension_dir = parquet_layer.extension_directory()
+        read = parquet_layer.planner(asset.href, limits, extension_dir)
         name = _parquet_name(asset)
         in_scope = not isinstance(scope, Everything)
         document = self._document
         has_tiles = document is not None and bool(archive_urls(document))
 
-        def read(task: Any) -> parquet_layer.Planned:
-            return parquet_layer.plan(
-                asset.href,
-                context,
-                extension_dir=extension_dir,
-                cancelled=task.isCanceled,
-                **limits,
-            )
-
         def planned(result: object, error: BaseException | None) -> None:
             if not isinstance(result, parquet_layer.Planned):
-                if type(error).__name__ == "InterruptException":
+                if parquet_layer.is_interrupt(error):
                     self._info(_("Stopped reading {name}.").format(name=name))
                 else:
                     self._warn(
@@ -1516,7 +1501,7 @@ class RegistryWindow(QDialog):
 
         def done(result: object, error: BaseException | None) -> None:
             if not isinstance(result, parquet_layer.Prepared):
-                if type(error).__name__ == "InterruptException":
+                if parquet_layer.is_interrupt(error):
                     self._info(_("Stopped the copy of {name}.").format(name=name))
                 else:
                     self._warn(
@@ -1628,10 +1613,11 @@ class RegistryWindow(QDialog):
             try:
                 extent = transform.transformBoundingBox(layer.extent())
             except Exception as error:  # noqa: BLE001 - see canvas_bbox
-                _log(
+                log(
                     _("Could not place {name} on the map: {error}").format(
                         name=layer.name(), error=error
-                    )
+                    ),
+                    Qgis.MessageLevel.Info,
                 )
                 continue
             if extent.intersects(view):
@@ -1654,7 +1640,7 @@ class RegistryWindow(QDialog):
             return
         canvas = self._iface.mapCanvas()
         transform = QgsCoordinateTransform(
-            QgsCoordinateReferenceSystem(_WGS84),
+            wgs84(),
             canvas.mapSettings().destinationCrs(),
             QgsProject.instance(),
         )
@@ -1747,13 +1733,10 @@ class RegistryWindow(QDialog):
         return answer == QMessageBox.StandardButton.Yes
 
     def _build_mosaic(self, hrefs: list[str], name: str, clip: str | None = None) -> None:
-        def write(task: Any) -> Path:
-            return mosaic.write_vrt(hrefs, task.isCanceled, clip)
-
-        def done(result: object, error: BaseException | None) -> None:
+        def done(result: Path | None, error: BaseException | None) -> None:
             self._hide_progress()
             self._mosaic_done()
-            if not isinstance(result, Path):
+            if result is None:
                 if isinstance(error, mosaic.MosaicCancelledError):
                     self._info(_("Stopped the mosaic of {name}.").format(name=name))
                 else:
@@ -1781,7 +1764,8 @@ class RegistryWindow(QDialog):
             0,
             count("Building a mosaic of {n} file…", "Building a mosaic of {n} files…", len(hrefs)),
         )
-        self._track(run_task(_("Build a mosaic of {name}").format(name=name), write, done))
+        description = _("Build a mosaic of {name}").format(name=name)
+        self._track(mosaic.start_vrt(description, hrefs, clip, done))
 
     def _mosaic_done(self) -> None:
         self._mosaic_busy = False
@@ -1850,24 +1834,18 @@ class RegistryWindow(QDialog):
         if folder is not None:
             self._start_download(folder, files)
 
-    def _download_clipped(self, asset: Asset, target: Path, limits: dict[str, Any]) -> None:
+    def _download_clipped(self, asset: Asset, target: Path, limits: parquet_layer.Limits) -> None:
         """Write the features of a GeoParquet file in the scope to a GeoPackage at ``target``.
 
         A file with no geometry column has nothing to clip, so the copy
         holds every row.
         """
-        context = QgsProject.instance().transformContext()
         extension_dir = parquet_layer.extension_directory()
+        plan = parquet_layer.planner(asset.href, limits, extension_dir)
         name = _parquet_name(asset)
 
         def write(task: Any) -> parquet_query.Written:
-            planned = parquet_layer.plan(
-                asset.href,
-                context,
-                extension_dir=extension_dir,
-                cancelled=task.isCanceled,
-                **limits,
-            )
+            planned = plan(task)
             prepared = parquet_layer.prepare(planned, extension_dir, cancelled=task.isCanceled)
             try:
                 target.parent.mkdir(parents=True, exist_ok=True)
@@ -1878,7 +1856,7 @@ class RegistryWindow(QDialog):
 
         def done(result: object, error: BaseException | None) -> None:
             if not isinstance(result, parquet_query.Written):
-                if type(error).__name__ == "InterruptException":
+                if parquet_layer.is_interrupt(error):
                     self._info(_("Stopped the download of {name}.").format(name=name))
                 else:
                     self._warn(
@@ -2047,7 +2025,7 @@ class RegistryWindow(QDialog):
         self._hide_progress()
         self._sync_buttons()
         for path, reason in report.failed:
-            _log(f"{path}: {reason}", Qgis.MessageLevel.Warning)
+            log(f"{path}: {reason}", Qgis.MessageLevel.Warning)
         summary = ", ".join(
             (
                 count("{n} downloaded", "{n} downloaded", len(report.downloaded)),
@@ -2090,7 +2068,7 @@ class RegistryWindow(QDialog):
         self._iface.messageBar().pushMessage(LOG_TAG, text, Qgis.MessageLevel.Info, 5)
 
     def _warn(self, text: str) -> None:
-        _log(text, Qgis.MessageLevel.Warning)
+        log(text, Qgis.MessageLevel.Warning)
         self._iface.messageBar().pushMessage(LOG_TAG, text, Qgis.MessageLevel.Warning, 10)
 
 

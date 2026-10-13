@@ -401,9 +401,41 @@ def _parquet_url(catalog):
 
 def _load(url, extent=None, extent_crs=None):
     context = QgsProject.instance().transformContext()
-    planned = parquet_layer.plan(url, context, extent, extent_crs)
+    planned = parquet_layer.plan(url, context, parquet_layer.Limits(extent, extent_crs))
     prepared = parquet_layer.prepare(planned)
     return planned, prepared
+
+
+def test_planner_plans_in_a_task(catalog):
+    results = []
+    read = parquet_layer.planner(_parquet_url(catalog), parquet_layer.Limits())
+    run_task("plan", read, lambda r, e: results.append((r, e)))
+    wait_for(lambda: results)
+    planned, error = results[0]
+    assert error is None
+    assert planned.estimate == 200
+
+
+def test_is_interrupt():
+    duckdb = pytest.importorskip("duckdb")
+    assert parquet_layer.is_interrupt(duckdb.InterruptException("stop"))
+    assert not parquet_layer.is_interrupt(ValueError("other"))
+    assert not parquet_layer.is_interrupt(None)
+
+
+def test_start_vrt_reports_the_path_or_the_error(catalog):
+    results = []
+    mosaic.start_vrt("vrt", [_tile(catalog, "a")], None, lambda p, e: results.append((p, e)))
+    mosaic.start_vrt("none", [], None, lambda p, e: results.append((p, e)))
+    wait_for(lambda: len(results) == 2)
+    by_error = {error is None: (path, error) for path, error in results}
+    path, _ = by_error[True]
+    assert path is not None
+    assert path.exists()
+    parquet_layer.discard_path(path)
+    path, error = by_error[False]
+    assert path is None
+    assert isinstance(error, layers.LayerError)
 
 
 def test_parquet_layer_whole_file(catalog):
@@ -942,7 +974,8 @@ def test_parquet_layer_area(catalog, area_calls):
     # The area replaces the extent.
     elsewhere = QgsRectangle(0, 0, 1, 1)
     wgs84 = QgsCoordinateReferenceSystem("EPSG:4326")
-    planned = parquet_layer.plan(_parquet_url(catalog), context, elsewhere, wgs84, area=STRIP)
+    limits = parquet_layer.Limits(elsewhere, wgs84, area=STRIP)
+    planned = parquet_layer.plan(_parquet_url(catalog), context, limits)
     assert planned.clip.bbox == pytest.approx((11.095, 44.0, 11.305, 45.0))
     assert QgsGeometry.fromWkt(planned.clip.area).equals(QgsGeometry.fromWkt(STRIP))
     assert planned.estimate == 21
@@ -1136,7 +1169,7 @@ def test_a_mosaic_says_why_gdal_left_a_file_out(catalog, monkeypatch):
     # BuildVRT reports only "Can't open <path>. Skipping it." The mosaic asks
     # GDAL for the reason, such as the HTTP status.
     logged = []
-    monkeypatch.setattr(mosaic, "_log", logged.append)
+    monkeypatch.setattr(mosaic, "log", logged.append)
     gone = f"{catalog['base']}/tiles/gone-{id(logged)}.tif"
     with pytest.raises(layers.LayerError) as failure:
         mosaic.write_vrt([gone])

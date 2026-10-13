@@ -18,7 +18,6 @@ from qgis.core import (
     QgsApplication,
     QgsBlockingNetworkRequest,
     QgsFeedback,
-    QgsMessageLog,
     QgsTask,
 )
 from qgis.PyQt.QtCore import QRunnable, Qt, QThreadPool, QUrl
@@ -26,6 +25,7 @@ from qgis.PyQt.QtNetwork import QNetworkRequest
 
 from portolan_registry_qgis.core.hrefs import is_http_url
 from portolan_registry_qgis.core.i18n import _
+from portolan_registry_qgis.qgis_io.log import log
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -55,10 +55,21 @@ def fetch_bytes(url: str, accept: bytes = _ACCEPT) -> bytes:
     request.setRawHeader(b"Accept", accept)
     blocking = QgsBlockingNetworkRequest()
     code = blocking.get(request, forceRefresh=False)
+    _raise_for(code, blocking, url)
+    return bytes(blocking.reply().content())
+
+
+def _raise_for(code: Any, blocking: QgsBlockingNetworkRequest, url: str) -> None:
+    """Raise a ``NetworkError`` when the request to ``url`` did not succeed.
+
+    Args:
+        code: The error code that ``blocking.get`` returned.
+        blocking: The request, for its error message.
+        url: The address of the request.
+    """
     if code != QgsBlockingNetworkRequest.ErrorCode.NoError:
         # Translators: An error about the file at {url}.
         raise NetworkError(_("{url}: {error}").format(url=url, error=blocking.errorMessage()))
-    return bytes(blocking.reply().content())
 
 
 def http_status(url: str) -> tuple[int | None, str]:
@@ -124,9 +135,7 @@ def _range(url: str, offset: int, length: int) -> tuple[bytes, bytes]:
     status = reply.attribute(QNetworkRequest.Attribute.HttpStatusCodeAttribute)
     if feedback.isCanceled() or status == 200:
         raise NetworkError(_("{url}: the server ignores HTTP range requests").format(url=url))
-    if code != QgsBlockingNetworkRequest.ErrorCode.NoError:
-        # Translators: An error about the file at {url}.
-        raise NetworkError(_("{url}: {error}").format(url=url, error=blocking.errorMessage()))
+    _raise_for(code, blocking, url)
     return bytes(reply.content()), bytes(reply.rawHeader(b"Cache-Control"))
 
 
@@ -196,7 +205,7 @@ def fetch_json(url: str) -> object:
 
 def report_failure(text: str) -> None:
     """Write a failure that no message reports to the QGIS message log."""
-    QgsMessageLog.logMessage(text, "Portolan Registry", Qgis.MessageLevel.Critical)
+    log(text, Qgis.MessageLevel.Critical)
 
 
 def run_task(

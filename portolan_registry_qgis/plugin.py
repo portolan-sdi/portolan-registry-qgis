@@ -8,7 +8,6 @@ from typing import Any
 
 from qgis.core import (
     Qgis,
-    QgsMessageLog,
     QgsPathResolver,
     QgsProject,
     QgsRasterLayer,
@@ -29,6 +28,7 @@ from portolan_registry_qgis.qgis_io.layers import (
     apply_bounds,
     vector_tile_layer,
 )
+from portolan_registry_qgis.qgis_io.log import LOG_TAG, log
 from portolan_registry_qgis.qgis_io.network import run_task
 from portolan_registry_qgis.qgis_io.tileserver import Archive, TileServer, open_archive
 
@@ -75,7 +75,7 @@ class PortolanRegistryPlugin:
         try:
             parquet_layer.remove_stale()
         except OSError as error:
-            _log(_("Could not clean the scratch folder: {error}").format(error=error))
+            log(_("Could not clean the scratch folder: {error}").format(error=error))
 
     def unload(self) -> None:
         """Remove everything initGui added. QGIS calls this on unload."""
@@ -116,7 +116,7 @@ class PortolanRegistryPlugin:
             return
         self._warned_save = True
         self.iface.messageBar().pushMessage(
-            "Portolan Registry",
+            LOG_TAG,
             _(
                 "The project saves each GeoParquet layer as a link to its source file. "
                 "When the project opens, QGIS copies the features again, without your edits. "
@@ -173,11 +173,7 @@ class PortolanRegistryPlugin:
     def _reopen(self, layer: QgsVectorTileLayer, url: str) -> None:
         def done(result: object, error: BaseException | None) -> None:
             if not isinstance(result, Archive):
-                QgsMessageLog.logMessage(
-                    _("Could not reopen {url}: {error}").format(url=url, error=error),
-                    "Portolan Registry",
-                    Qgis.MessageLevel.Warning,
-                )
+                log(_("Could not reopen {url}: {error}").format(url=url, error=error))
                 return
             fresh = vector_tile_layer(self.server, result, layer.name())
             layer.setDataSource(fresh.source(), layer.name(), fresh.providerType())
@@ -191,14 +187,14 @@ class PortolanRegistryPlugin:
         ok, version = parquet_query.duckdb_status()
         if not ok:
             if version:
-                _log(
+                log(
                     # Translators: {version} is the installed DuckDB version, which is too old.
                     _("Could not copy {url} again: DuckDB {version}.").format(
                         url=url, version=version
                     )
                 )
             else:
-                _log(_("Could not copy {url} again: DuckDB is not installed.").format(url=url))
+                log(_("Could not copy {url} again: DuckDB is not installed.").format(url=url))
             return
         extension_dir = parquet_layer.extension_directory()
 
@@ -207,7 +203,7 @@ class PortolanRegistryPlugin:
 
         def done(result: object, error: BaseException | None) -> None:
             if not isinstance(result, parquet_layer.Prepared):
-                _log(_("Could not copy {url} again: {error}").format(url=url, error=error))
+                log(_("Could not copy {url} again: {error}").format(url=url, error=error))
                 return
             if sip.isdeleted(layer):
                 parquet_layer.discard_path(result.path)
@@ -215,7 +211,7 @@ class PortolanRegistryPlugin:
             try:
                 parquet_layer.reopen(layer, result)
             except OSError as failure:
-                _log(str(failure))
+                log(str(failure))
 
         run_task(_("Copy {url} again with DuckDB").format(url=url), copy, done)
 
@@ -228,27 +224,20 @@ class PortolanRegistryPlugin:
         clip = mosaic.clip_of(layer)
         name = layer.name()
 
-        def write(task: Any) -> Path:
-            return mosaic.write_vrt(hrefs, task.isCanceled, clip)
-
-        def done(result: object, error: BaseException | None) -> None:
-            if not isinstance(result, Path):
-                _log(
+        def done(path: Path | None, error: BaseException | None) -> None:
+            if path is None:
+                log(
                     _("Could not build the mosaic {name} again: {error}").format(
                         name=name, error=error
                     )
                 )
                 return
             if sip.isdeleted(layer):
-                parquet_layer.discard_path(result)
+                parquet_layer.discard_path(path)
                 return
             try:
-                mosaic.reopen(layer, result)
+                mosaic.reopen(layer, path)
             except LayerError as failure:
-                _log(str(failure))
+                log(str(failure))
 
-        run_task(_("Build the mosaic {name} again").format(name=name), write, done)
-
-
-def _log(text: str) -> None:
-    QgsMessageLog.logMessage(text, "Portolan Registry", Qgis.MessageLevel.Warning)
+        mosaic.start_vrt(_("Build the mosaic {name} again").format(name=name), hrefs, clip, done)

@@ -16,7 +16,6 @@ from typing import TYPE_CHECKING, Any
 
 from osgeo import gdal
 from qgis.core import (
-    QgsCoordinateReferenceSystem,
     QgsCoordinateTransform,
     QgsDataSourceUri,
     QgsMapBoxGlStyleConversionContext,
@@ -52,11 +51,12 @@ from portolan_registry_qgis.core.style import (
     split_style,
     unique_name,
 )
+from portolan_registry_qgis.qgis_io.crs import wgs84
 from portolan_registry_qgis.qgis_io.network import NetworkError, fetch_range, http_status
 from portolan_registry_qgis.qgis_io.tileserver import Archive, TileServer, open_archive
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable, Iterable, Iterator
 
     from portolan_registry_qgis.core.stac import Asset, Document
 
@@ -259,9 +259,7 @@ def apply_bounds(layer: QgsVectorTileLayer, archive: Archive) -> None:
     west, south, east, north = archive.bounds
     south = max(south, -_WEB_MERCATOR_LAT)
     north = min(north, _WEB_MERCATOR_LAT)
-    transform = QgsCoordinateTransform(
-        QgsCoordinateReferenceSystem("EPSG:4326"), layer.crs(), QgsProject.instance()
-    )
+    transform = QgsCoordinateTransform(wgs84(), layer.crs(), QgsProject.instance())
     layer.setExtent(transform.transformBoundingBox(QgsRectangle(west, south, east, north)))
 
 
@@ -312,6 +310,30 @@ def prepare_pmtiles(
         PmtilesError: An archive cannot be read.
     """
     warnings: list[str] = []
+    by_archive = _styles_by_archive(document, urls, fetch_bytes, warnings)
+    titles = {link.href: link.title for link in document.pmtiles}
+    parts = []
+    for url in urls:
+        if document.styles and not by_archive[url]:
+            warnings.append(
+                _("No style in {title} draws {url}.").format(title=document.title, url=url)
+            )
+        title = titles.get(url) or document.title
+        parts.append(TilePart(open_archive(url), title, by_archive[url]))
+    return PreparedTiles(parts=parts, warnings=warnings)
+
+
+def _styles_by_archive(
+    document: Document,
+    urls: list[str],
+    fetch_bytes: Callable[[str], bytes],
+    warnings: list[str],
+) -> dict[str, list[TileStyle]]:
+    """Return the collection styles that draw each archive in ``urls``.
+
+    A style that cannot be read, and each note about a style, adds a
+    warning to ``warnings``.
+    """
     archives = archive_urls(document)
     fallback = archives[0] if len(archives) == 1 else None
     by_archive: dict[str, list[TileStyle]] = {url: [] for url in urls}
@@ -329,24 +351,20 @@ def prepare_pmtiles(
         used = [url for url in styled.by_source if url in by_archive]
         if not used:
             continue
-        warnings.extend(
-            # Translators: A warning about one style. {style} is the style's name.
-            _("{style}: {warning}").format(style=asset.label, warning=note)
-            for note in styled.warnings
-        )
+        warnings.extend(_style_notes(asset.label, styled.warnings))
         sprite = read_sprite(style, asset.href, fetch_bytes, warnings, sprites)
         for url in used:
             by_archive[url].append(TileStyle(asset.label, styled.by_source[url], sprite))
-    titles = {link.href: link.title for link in document.pmtiles}
-    parts = []
-    for url in urls:
-        if document.styles and not by_archive[url]:
-            warnings.append(
-                _("No style in {title} draws {url}.").format(title=document.title, url=url)
-            )
-        title = titles.get(url) or document.title
-        parts.append(TilePart(open_archive(url), title, by_archive[url]))
-    return PreparedTiles(parts=parts, warnings=warnings)
+    return by_archive
+
+
+def _style_notes(name: str, notes: Iterable[str]) -> list[str]:
+    """Return each note about the style ``name`` as a warning that names the style."""
+    return [
+        # Translators: A warning about one style. {style} is the style's name.
+        _("{style}: {warning}").format(style=name, warning=note)
+        for note in notes
+    ]
 
 
 def build_pmtiles(
@@ -387,11 +405,7 @@ def add_styles(
         if style.sprite is not None:
             sprite = (load_image(style.sprite[0]), style.sprite[1])
         renderer, labeling, notes = convert_style(style.style, sprite)
-        warnings.extend(
-            # Translators: A warning about one style. {style} is the style's name.
-            _("{style}: {warning}").format(style=style.name, warning=note)
-            for note in notes
-        )
+        warnings.extend(_style_notes(style.name, notes))
         if renderer is None:
             continue
         layer.setRenderer(renderer)
@@ -460,7 +474,7 @@ def csv_layer(url: str, title: str, header: Callable[[str], bytes] = csv_header)
     if columns is not None and layer.isValid():
         # A CSV has no CRS of its own. STAC gives coordinates as longitude
         # and latitude.
-        layer.setCrs(QgsCoordinateReferenceSystem("EPSG:4326"))
+        layer.setCrs(wgs84())
     return layer
 
 

@@ -70,8 +70,10 @@ def test_live_source_coop_geoparquet_in_an_extent():
     planned = parquet_layer.plan(
         f"{PHL}/land_use.parquet",
         context,
-        QgsRectangle(-75.17, 39.94, -75.15, 39.96),
-        QgsCoordinateReferenceSystem("EPSG:4326"),
+        parquet_layer.Limits(
+            QgsRectangle(-75.17, 39.94, -75.15, 39.96),
+            QgsCoordinateReferenceSystem("EPSG:4326"),
+        ),
     )
     assert planned.estimate is not None
     assert planned.estimate >= 7332

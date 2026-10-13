@@ -21,7 +21,7 @@ from __future__ import annotations
 import contextlib
 import html
 import shutil
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -63,20 +63,28 @@ from qgis.PyQt.QtWidgets import (
 )
 
 from portolan_registry_qgis.core import download, parquet_query, registry
-from portolan_registry_qgis.core.format import (
-    format_label,
-    human_size,
-    license_name,
-    link_label,
+from portolan_registry_qgis.core.facts import facts_html
+from portolan_registry_qgis.core.format import format_label, human_size
+from portolan_registry_qgis.core.hrefs import BROWSER_URL, browser_url
+from portolan_registry_qgis.core.i18n import _, count, ngettext, number
+from portolan_registry_qgis.core.loadable import (
+    ItemFiles,
+    Targets,
+    button_state,
+    button_tip,
+    files_hint,
+    has_parquet,
+    is_on_map,
+    is_table,
+    item_cog,
+    only_items,
+    parquet_name,
+    parquet_to_clip,
+    pick_targets,
+    plan_summary,
+    split_plan,
 )
-from portolan_registry_qgis.core.hrefs import (
-    BROWSER_URL,
-    browser_url,
-    plain_vsicurl_path,
-    vsicurl_path,
-)
-from portolan_registry_qgis.core.i18n import N_, _, count, ngettext, number
-from portolan_registry_qgis.core.scope import Area, Everything, MapView, Scope
+from portolan_registry_qgis.core.scope import Area, Everything, MapView, Scope, clip_wkt
 from portolan_registry_qgis.core.stac import Asset, Document, Loadable, Node, read_document
 from portolan_registry_qgis.core.style import archive_urls
 from portolan_registry_qgis.gui.pictures import (
@@ -123,7 +131,6 @@ if TYPE_CHECKING:
     from portolan_registry_qgis.gui.pictures import Picture
     from portolan_registry_qgis.qgis_io.tileserver import TileServer
 
-_ROLE = ROLE
 # The lists show this many rows, then a row that shows the next page. The
 # tree reads the child documents of each page it shows, for their icons.
 CATALOG_PAGE = 25
@@ -134,26 +141,8 @@ CONFIRM_FEATURES = 1_000_000
 # A mosaic of more than this many files asks first. GDAL opens each file to
 # write the VRT.
 CONFIRM_FILES = 500
-# The two primary buttons. Each adds the first file of its formats, in order.
-VIEW_TIP = N_("Fast. Draws with the publisher's style.")
-LOAD_TIP = N_("All features and attributes, for analysis.")
-TABLE_TIP = N_("All rows and columns, as a table with no geometry.")
-# What each button adds, by format. The tooltip leads with it.
-VIEW_KINDS = {
-    "pmtiles": N_("Adds the vector tiles (PMTiles). They read only the tiles on screen."),
-    "cog": N_("Adds the raster (Cloud Optimized GeoTIFF), read in place over HTTP."),
-}
-LOAD_KINDS = {
-    "parquet": N_("Loads the GeoParquet. DuckDB copies the features in the area of interest."),
-    "flatgeobuf": N_("Loads the FlatGeobuf, read in place over HTTP."),
-    "geojson": N_("Loads the GeoJSON, read in place over HTTP."),
-    "csv": N_("Loads the CSV, read in place over HTTP."),
-}
 # Marks a link that leaves QGIS.
 EXTERNAL = "\u2197"
-VIEW_FORMATS = ("pmtiles", "cog")
-LOAD_FORMATS = ("parquet", "flatgeobuf", "geojson", "csv")
-BROWSER_LINK = N_("All files and metadata in the Portolan browser")
 _KIND_ICONS = {
     "catalog": "mIconFolder",
     "collection": "mIconLayerTree",
@@ -191,26 +180,13 @@ def _kind_icon(kind: str) -> QIcon:
 
 
 @dataclass(frozen=True)
-class ItemFiles:
-    """The tree row that stands for every item of a collection."""
+class _Listed:
+    """Where a download of the area goes, and the GeoParquet files it clips."""
 
-    href: str
-    title: str
-    count: int
-
-
-def only_items(document: Document) -> bool:
-    """Return whether every child of ``document`` is an item."""
-    return bool(document.children) and all(node.kind == "item" for node in document.children)
-
-
-def _first(loadable: tuple[Loadable, ...], formats: tuple[str, ...]) -> Loadable | None:
-    """Return the first file of the first format in ``formats`` that has one."""
-    for wanted in formats:
-        for candidate in loadable:
-            if candidate.format == wanted:
-                return candidate
-    return None
+    folder: Path
+    root: str
+    clip: list[Asset]
+    limits: parquet_layer.Limits
 
 
 def _section(
@@ -271,22 +247,36 @@ class RegistryWindow(QDialog):
         self._reading: dict[str, list[Callable[[object, BaseException | None], None]]] = {}
         self._document: Document | None = None
         self._job: DownloadJob | None = None
-        self._view_target: Loadable | None = None
-        self._load_target: Loadable | None = None
+        # The files that "View on map" and "Load full data" add.
+        self._targets = Targets(None, None)
         self._mosaic_busy = False
         # True while a download lists its files, before the job starts.
         self._listing = False
         # The task of the mosaic search, the mosaic build, or the listing.
         # Cancel stops it.
         self._task: QgsTask | None = None
-        # The COG file of each item read for the "All files" list, by item href.
-        self._item_files: dict[str, Asset | None] = {}
         self.images = ImageCache(self)
         self.world = WorldMap(self)
         self.logomark_file: Path | None = None
         self._build()
         self._restore_layout()
         self.reload()
+
+    @property
+    def document(self) -> Document | None:
+        """Return the document that the details panel shows, or None."""
+        return self._document
+
+    @property
+    def catalog_entries(self) -> list[CatalogEntry]:
+        """Return the publishers that the registry lists."""
+        return self._entries
+
+    @catalog_entries.setter
+    def catalog_entries(self, entries: list[CatalogEntry]) -> None:
+        """List ``entries`` as the registry's publishers."""
+        self._entries = entries
+        self._show_catalogs()
 
     # ---------- layout ----------
 
@@ -658,11 +648,11 @@ class RegistryWindow(QDialog):
         self.add.clicked.connect(self._add_selected)
         self.zoom.clicked.connect(self._zoom)
         self.download_selected.triggered.connect(self._download_selected)
-        self.download_all.triggered.connect(self._download_all)
+        self.download_all.triggered.connect(self.start_download)
         self.cancel.clicked.connect(self._cancel)
         self.view_button.clicked.connect(self._view_on_map)
         self.load_button.clicked.connect(self._load_full_data)
-        self.mosaic_button.clicked.connect(self._add_mosaic)
+        self.mosaic_button.clicked.connect(self.add_mosaic)
         self.open_browser.clicked.connect(self._open_in_browser)
         self.catalogs.customContextMenuRequested.connect(self._catalog_context)
         self.scope_picker.changed.connect(self._sync_buttons)
@@ -719,8 +709,7 @@ class RegistryWindow(QDialog):
             )
             self._warn(_("Could not read the Portolan registry: {error}").format(error=error))
             return
-        self._entries = result
-        self._show_catalogs()
+        self.catalog_entries = result
 
     def _extent_changed(self) -> None:
         if self.in_extent.isChecked():
@@ -760,7 +749,7 @@ class RegistryWindow(QDialog):
         """Add one page of ``entries``, and a row that lists the rest."""
         for entry in entries[:CATALOG_PAGE]:
             item = QListWidgetItem(entry.title)
-            item.setData(_ROLE, entry)
+            item.setData(ROLE, entry)
             tip = [html.escape(entry.title), html.escape(entry.url)]
             if entry.failure_reason:
                 tip.append(html.escape(entry.failure_reason))
@@ -770,7 +759,7 @@ class RegistryWindow(QDialog):
         if rest:
             more = More(tuple(rest))
             item = QListWidgetItem(more.label(CATALOG_PAGE, "publisher"))
-            item.setData(_ROLE, more)
+            item.setData(ROLE, more)
             self.catalogs.addItem(item)
 
     def _placeholder(self, text: str) -> None:
@@ -791,14 +780,14 @@ class RegistryWindow(QDialog):
 
     def _catalog_context(self, position: Any) -> None:
         item = self.catalogs.itemAt(position)
-        entry = item.data(_ROLE) if item is not None else None
+        entry = item.data(ROLE) if item is not None else None
         if isinstance(entry, registry.CatalogEntry):
             self.catalog_menu(entry).exec(self.catalogs.viewport().mapToGlobal(position))
 
     # ---------- catalog tree ----------
 
     def _catalog_chosen(self, item: QListWidgetItem | None) -> None:
-        entry = item.data(_ROLE) if item is not None else None
+        entry = item.data(ROLE) if item is not None else None
         if isinstance(entry, More):
             self.catalogs.takeItem(self.catalogs.row(item))
             self._list_catalogs(list(entry.rest))
@@ -843,7 +832,7 @@ class RegistryWindow(QDialog):
 
     def _node_item(self, node: Node) -> QTreeWidgetItem:
         item = QTreeWidgetItem([node.title])
-        item.setData(0, _ROLE, node)
+        item.setData(0, ROLE, node)
         item.setToolTip(0, node.href)
         item.setIcon(0, _kind_icon(node.kind))
         if node.kind != "item":
@@ -861,7 +850,7 @@ class RegistryWindow(QDialog):
             return
         files = ItemFiles(document.href, document.title, len(document.children))
         row = QTreeWidgetItem([count("{n} file", "{n} files", files.count)])
-        row.setData(0, _ROLE, files)
+        row.setData(0, ROLE, files)
         row.setIcon(0, _kind_icon("item"))
         tip = _("Choose {title} to add or download these files")
         row.setToolTip(0, tip.format(title=html.escape(document.title)))
@@ -877,7 +866,7 @@ class RegistryWindow(QDialog):
         if rest:
             more = More(rest)
             row = QTreeWidgetItem([more.label(NODE_PAGE)])
-            row.setData(0, _ROLE, more)
+            row.setData(0, ROLE, more)
             row.setForeground(0, QBrush(ACCENT))
             row.setToolTip(
                 0, count("This level lists {n} more", "This level lists {n} more", len(rest))
@@ -888,12 +877,12 @@ class RegistryWindow(QDialog):
         else:
             parent.addChildren(items)
         for item in items:
-            node = item.data(0, _ROLE)
+            node = item.data(0, ROLE)
             if isinstance(node, Node) and node.kind != "item":
                 self._open(node.href, self._decorate(item), quiet=True)
 
     def _tree_clicked(self, item: QTreeWidgetItem | None, _column: int = 0) -> None:
-        if item is None or not isinstance(more := item.data(0, _ROLE), More):
+        if item is None or not isinstance(more := item.data(0, ROLE), More):
             return
         parent = item.parent()
         if parent is None:
@@ -960,10 +949,10 @@ class RegistryWindow(QDialog):
         run_task(_("Read {url}").format(url=href), read, done, hidden=quiet)
 
     def _expand(self, item: QTreeWidgetItem) -> None:
-        node = item.data(0, _ROLE)
-        if not isinstance(node, Node) or item.data(1, _ROLE):
+        node = item.data(0, ROLE)
+        if not isinstance(node, Node) or item.data(1, ROLE):
             return
-        item.setData(1, _ROLE, True)
+        item.setData(1, ROLE, True)
         loading = QTreeWidgetItem([_("Reading…")])
         loading.setFlags(Qt.ItemFlag.NoItemFlags)
         item.addChild(loading)
@@ -971,7 +960,7 @@ class RegistryWindow(QDialog):
         def opened(document: object, error: BaseException | None) -> None:
             item.takeChildren()
             if not isinstance(document, Document):
-                item.setData(1, _ROLE, False)
+                item.setData(1, ROLE, False)
                 failed = QTreeWidgetItem([_("Could not read: {error}").format(error=error)])
                 failed.setFlags(Qt.ItemFlag.NoItemFlags)
                 item.addChild(failed)
@@ -985,14 +974,14 @@ class RegistryWindow(QDialog):
         self._open(node.href, opened)
 
     def _node_chosen(self, item: QTreeWidgetItem | None, _previous: object = None) -> None:
-        node = item.data(0, _ROLE) if item is not None else None
+        node = item.data(0, ROLE) if item is not None else None
         if isinstance(node, (Node, ItemFiles)):
             self._choose(node.href, node.title, item)
 
     def _choose(self, href: str, title: str, item: QTreeWidgetItem | None = None) -> None:
         """Show the document at ``href`` once it is read."""
         self._document = None
-        self._view_target = self._load_target = None
+        self._targets = Targets(None, None)
         self._show_browser_link()
         self.title.setText(title)
         self.description.setText(_("Reading…"))
@@ -1010,7 +999,7 @@ class RegistryWindow(QDialog):
             if not isinstance(document, Document):
                 self._show_failure(title, href, error)
                 return
-            self._show_document(document)
+            self.show_document(document)
 
         self._open(href, opened)
 
@@ -1047,7 +1036,8 @@ class RegistryWindow(QDialog):
             return entry.total_size_bytes
         return None
 
-    def _show_document(self, document: Document) -> None:
+    def show_document(self, document: Document) -> None:
+        """Show ``document`` in the details panel, with its files and actions."""
         self._document = document
         bbox = self._extent(document)
         self.hero.show_extent(bbox)
@@ -1067,7 +1057,9 @@ class RegistryWindow(QDialog):
         publisher = self._catalog.title if self._catalog is not None else None
         size = self._size(document)
         link = self.browser_link(document.href)
-        self.facts.setText(_facts_html(document, publisher, size, muted(self.palette()), link))
+        self.facts.setText(
+            facts_html(document, publisher, size, muted(self.palette()).name(), link)
+        )
         self._show_browser_link()
         self.download_all.setToolTip(
             _("Download the files of {title} in the area").format(title=document.title)
@@ -1079,7 +1071,7 @@ class RegistryWindow(QDialog):
         self.assets.clear()
         for item in loadable:
             row = QTreeWidgetItem([item.title])
-            row.setData(0, _ROLE, item)
+            row.setData(0, ROLE, item)
             asset = item.asset
             if asset is None:
                 row.setData(0, BADGE_ROLE, ("PMTiles", "pmtiles", ""))
@@ -1097,30 +1089,15 @@ class RegistryWindow(QDialog):
 
     def _show_actions(self, document: Document, loadable: tuple[Loadable, ...]) -> None:
         """Show the primary buttons, the style note, and the scope picker that fit the document."""
-        self._view_target = _first(loadable, VIEW_FORMATS)
-        # GeoParquet needs DuckDB. Without it, another format loads in its
-        # place. A document with GeoParquet alone keeps it, and the button
-        # shows how to install DuckDB.
-        formats = LOAD_FORMATS if parquet_query.duckdb_status()[0] else LOAD_FORMATS[1:]
-        self._load_target = _first(loadable, formats) or _first(loadable, ("parquet",))
+        self._targets = pick_targets(loadable, duckdb_ok=parquet_query.duckdb_status()[0])
+        load = self._targets.load
         # A table has no geometry, so it loads whole and says so.
-        table = self._load_target is not None and _is_table(self._load_target)
+        table = load is not None and is_table(load)
         self.load_button.setText(_("Load table") if table else _("Load full data"))
-        for button, target, tip in (
-            (self.view_button, self._view_target, VIEW_TIP),
-            (self.load_button, self._load_target, TABLE_TIP if table else LOAD_TIP),
-        ):
+        for button, target in ((self.view_button, self._targets.view), (self.load_button, load)):
             button.setVisible(target is not None)
             if target is not None:
-                kinds = VIEW_KINDS if button is self.view_button else LOAD_KINDS
-                kind = kinds.get(target.format)
-                lines = [_(kind) if kind else ""]
-                if table and button is self.load_button:
-                    lines = [_("Loads the Parquet table. It has no geometry, so it loads whole.")]
-                # Translators: {title} names a file, and {format} its format, such as GeoParquet.
-                file_line = _("File: {title} ({format})")
-                lines += [_(tip), file_line.format(title=target.title, format=_format_name(target))]
-                button.setToolTip("\n".join(line for line in lines if line))
+                button.setToolTip(button_tip(target, view=button is self.view_button))
         self.mosaic_button.setVisible(only_items(document))
 
         styles = len(document.styles)
@@ -1136,8 +1113,7 @@ class RegistryWindow(QDialog):
         self.tile_styles.setStyleSheet(f"color: {muted(self.palette()).name()};")
         self.tile_styles.setVisible(bool(styles and archive_urls(document)))
         # The scope limits GeoParquet reads, mosaics, and the walk of a download.
-        has_parquet = any(item.format == "parquet" and not _is_table(item) for item in loadable)
-        self.scope_row.setVisible(has_parquet or bool(document.children))
+        self.scope_row.setVisible(has_parquet(loadable) or bool(document.children))
 
     def _hide_actions(self) -> None:
         for widget in (
@@ -1155,7 +1131,6 @@ class RegistryWindow(QDialog):
         The rows let the user pick single files. **Add as one layer** in
         "Add to map" covers every file in the area.
         """
-        self._item_files = {}
         self._add_item_rows(document, document.children)
 
     def _add_item_rows(self, document: Document, nodes: tuple[Node, ...]) -> None:
@@ -1163,7 +1138,7 @@ class RegistryWindow(QDialog):
         for node in nodes[:NODE_PAGE]:
             row = QTreeWidgetItem([node.title])
             row.setData(0, BADGE_ROLE, ("COG", "cog", ""))
-            row.setData(0, _ROLE, node)
+            row.setData(0, ROLE, node)
             row.setToolTip(0, _("Reading…"))
             self.assets.addTopLevelItem(row)
             self._open(node.href, self._item_read(document, row), quiet=True)
@@ -1171,7 +1146,7 @@ class RegistryWindow(QDialog):
         if rest:
             more = More(rest)
             row = QTreeWidgetItem([more.label(NODE_PAGE, "file")])
-            row.setData(0, _ROLE, more)
+            row.setData(0, ROLE, more)
             row.setForeground(0, QBrush(ACCENT))
             # The row is a button, so a selection skips it.
             row.setFlags(Qt.ItemFlag.ItemIsEnabled)
@@ -1187,7 +1162,7 @@ class RegistryWindow(QDialog):
             if self._document is not document:
                 return
             read = item if isinstance(item, Document) else None
-            cog = _item_cog(read) if read is not None else None
+            cog = item_cog(read) if read is not None else None
             if read is None or cog is None:
                 # The item has no COG to add, or it cannot be read.
                 index = self.assets.indexOfTopLevelItem(row)
@@ -1195,11 +1170,9 @@ class RegistryWindow(QDialog):
                     self.assets.takeTopLevelItem(index)
             else:
                 loadable = Loadable(cog.href, read.title, "cog", asset=cog)
-                row.setData(0, _ROLE, loadable)
+                row.setData(0, ROLE, loadable)
                 badge = format_label(cog.format, cog.type, cog.href)
                 row.setData(0, BADGE_ROLE, (badge, "cog", human_size(cog.size)))
-            if read is not None:
-                self._item_files[read.href] = cog
             self._mark_on_map()
             self._fit_assets()
             self._sync_buttons()
@@ -1209,7 +1182,7 @@ class RegistryWindow(QDialog):
     def _asset_clicked(self, row: QTreeWidgetItem | None, _column: int = 0) -> None:
         """List the next page of item files when the user clicks the "Show more" row."""
         document = self._document
-        if row is None or document is None or not isinstance(more := row.data(0, _ROLE), More):
+        if row is None or document is None or not isinstance(more := row.data(0, ROLE), More):
             return
         self.assets.takeTopLevelItem(self.assets.indexOfTopLevelItem(row))
         self._add_item_rows(document, more.rest)
@@ -1232,14 +1205,10 @@ class RegistryWindow(QDialog):
         urls, sources = self._on_map()
         for i in range(self.assets.topLevelItemCount()):
             row = self.assets.topLevelItem(i)
-            item = row.data(0, _ROLE)
+            item = row.data(0, ROLE)
             if not isinstance(item, Loadable):
                 continue
-            # The path form depends on the GDAL settings of the session.
-            paths = (vsicurl_path(item.href), plain_vsicurl_path(item.href))
-            on_map = item.href in urls or any(
-                item.href == source or any(path in source for path in paths) for source in sources
-            )
+            on_map = is_on_map(item, urls, sources)
             row.setData(0, ON_MAP_ROLE, on_map)
             row.setToolTip(0, _loadable_tip(item, on_map))
 
@@ -1254,17 +1223,7 @@ class RegistryWindow(QDialog):
             height = sum(self.assets.sizeHintForRow(i) for i in range(rows))
             self.assets.setFixedHeight(height + 2 * self.assets.frameWidth() + 2)
         document = self._document
-        text = ""
-        if document is not None and only_items(document):
-            text = _(
-                "To add every file in the area as one layer, use Add as one layer above. "
-                "Select files here to add or download them whole."
-            )
-        elif document is not None and not rows:
-            if document.children:
-                text = _("This entry has no files of its own. Choose a dataset in the tree.")
-            else:
-                text = _("This entry lists no files QGIS can open.")
+        text = files_hint(document, rows)
         if text:
             self.no_assets.setText(text)
             self.no_assets.setStyleSheet(f"color: {muted(self.palette()).name()};")
@@ -1278,7 +1237,7 @@ class RegistryWindow(QDialog):
         tiles: list[str] = []
         assets: list[Asset] = []
         for row in self.assets.selectedItems():
-            value = row.data(0, _ROLE)
+            value = row.data(0, ROLE)
             if not isinstance(value, Loadable):
                 continue
             if value.format == "pmtiles":
@@ -1297,13 +1256,13 @@ class RegistryWindow(QDialog):
             return Everything()
         return self.scope_picker.scope()
 
-    def _busy(self) -> bool:
+    def is_busy(self) -> bool:
         """Return whether a mosaic search, a download listing, or a download runs."""
         return self._job is not None or self._listing or self._mosaic_busy
 
     def _refuse_when_busy(self) -> bool:
         """Say why an action waits, and return True, while another task runs."""
-        if not self._busy():
+        if not self.is_busy():
             return False
         if self._mosaic_busy:
             self._info(_("Wait for the mosaic to finish, or cancel it."))
@@ -1316,27 +1275,24 @@ class RegistryWindow(QDialog):
     def _sync_buttons(self) -> None:
         tiles, assets = self._selected()
         document = self._document
-        has_document = document is not None
         self.zoom.setEnabled(document is not None and self._extent(document) is not None)
         problem = None if self.scope_row.isHidden() else self.scope_picker.problem()
         self.scope_hint.setText(problem or "")
         self.scope_hint.setStyleSheet(f"color: {muted(self.palette()).name()};")
         self.scope_hint.setVisible(problem is not None)
-        ready = problem is None
-        # The mosaic search, the listing, and the download share the progress
-        # bar and the Cancel button, so only one of them runs at a time.
-        busy = self._busy()
-        # The All files buttons act on the selected rows, whole, so the area
-        # does not hold them back.
-        self.add.setEnabled(bool(tiles or assets))
-        self.view_button.setEnabled(self._view_target is not None)
-        load = self._load_target
-        self.load_button.setEnabled(load is not None and (load.format != "parquet" or ready))
-        self.mosaic_button.setEnabled(
-            document is not None and only_items(document) and ready and not busy
+        state = button_state(
+            document,
+            self._targets,
+            selected=bool(tiles or assets),
+            ready=problem is None,
+            busy=self.is_busy(),
         )
-        self.download_selected.setEnabled(bool(tiles or assets) and not busy)
-        self.download_all.setEnabled(has_document and not busy and ready)
+        self.add.setEnabled(state.add)
+        self.view_button.setEnabled(state.view)
+        self.load_button.setEnabled(state.load)
+        self.mosaic_button.setEnabled(state.mosaic)
+        self.download_selected.setEnabled(state.download_selected)
+        self.download_all.setEnabled(state.download_all)
 
     def _add_selected(self) -> None:
         document = self._document
@@ -1356,7 +1312,7 @@ class RegistryWindow(QDialog):
             self._add_asset(asset)
 
     def _view_on_map(self) -> None:
-        document, target = self._document, self._view_target
+        document, target = self._document, self._targets.view
         if document is None or target is None:
             return
         if target.asset is None or target.format == "pmtiles":
@@ -1365,7 +1321,7 @@ class RegistryWindow(QDialog):
             self._add_file(target.asset)
 
     def _load_full_data(self) -> None:
-        target = self._load_target
+        target = self._targets.load
         if target is not None and target.asset is not None:
             self._add_file(target.asset)
 
@@ -1440,7 +1396,7 @@ class RegistryWindow(QDialog):
         scope, limits = scoped
         extension_dir = parquet_layer.extension_directory()
         read = parquet_layer.planner(asset.href, limits, extension_dir)
-        name = _parquet_name(asset)
+        name = parquet_name(asset)
         in_scope = not isinstance(scope, Everything)
         document = self._document
         has_tiles = document is not None and bool(archive_urls(document))
@@ -1654,7 +1610,7 @@ class RegistryWindow(QDialog):
 
     # ---------- mosaics ----------
 
-    def _add_mosaic(self) -> None:
+    def add_mosaic(self) -> None:
         """Add the COG files of the open collection's items in the scope as one layer."""
         document = self._document
         if document is None or not only_items(document) or self._refuse_when_busy():
@@ -1682,39 +1638,43 @@ class RegistryWindow(QDialog):
 
         def found(result: object, error: BaseException | None) -> None:
             try:
-                searched(result, error)
+                self._hide_progress()
+                hrefs = self._mosaic_files(result, error, title, cancelled=task.isCanceled())
+                if hrefs is None:
+                    self._mosaic_done()
+                    return
+                self._build_mosaic(hrefs, title, clip_wkt(scope))
             except BaseException:
                 # The flag must not stay set, or every later click does nothing.
                 self._mosaic_done()
                 raise
 
-        def searched(result: object, error: BaseException | None) -> None:
-            self._hide_progress()
-            # A cancelled walk returns the partial list it has. Drop it.
-            if task.isCanceled():
-                self._mosaic_done()
-                self._info(_("Stopped the search for the files of {title}.").format(title=title))
-                return
-            if not isinstance(result, list):
-                self._mosaic_done()
-                self._warn(
-                    _("Could not list the files of {title}: {error}").format(
-                        title=title, error=error
-                    )
-                )
-                return
-            if not result:
-                self._mosaic_done()
-                self._info(_("No COG file of {title} lies in the chosen area.").format(title=title))
-                return
-            if len(result) > CONFIRM_FILES and not self._confirm_mosaic(title, len(result)):
-                self._mosaic_done()
-                self._info(_("Did not add {title}.").format(title=title))
-                return
-            self._build_mosaic(result, title, _clip_of(scope))
-
         task = run_task(_("List the files of {title}").format(title=title), find, found)
         self._track(task)
+
+    def _mosaic_files(
+        self, result: object, error: BaseException | None, title: str, *, cancelled: bool
+    ) -> list[str] | None:
+        """Return the files of a mosaic search, or None when the mosaic stops.
+
+        The method says why the mosaic stops.
+        """
+        # A cancelled walk returns the partial list it has. Drop it.
+        if cancelled:
+            self._info(_("Stopped the search for the files of {title}.").format(title=title))
+            return None
+        if not isinstance(result, list):
+            self._warn(
+                _("Could not list the files of {title}: {error}").format(title=title, error=error)
+            )
+            return None
+        if not result:
+            self._info(_("No COG file of {title} lies in the chosen area.").format(title=title))
+            return None
+        if len(result) > CONFIRM_FILES and not self._confirm_mosaic(title, len(result)):
+            self._info(_("Did not add {title}.").format(title=title))
+            return None
+        return result
 
     def _confirm_mosaic(self, title: str, files: int) -> bool:
         lie = ngettext(
@@ -1832,7 +1792,7 @@ class RegistryWindow(QDialog):
             return
         folder = self._choose_folder()
         if folder is not None:
-            self._start_download(folder, files)
+            self._start_job(folder, files)
 
     def _download_clipped(self, asset: Asset, target: Path, limits: parquet_layer.Limits) -> None:
         """Write the features of a GeoParquet file in the scope to a GeoPackage at ``target``.
@@ -1842,7 +1802,7 @@ class RegistryWindow(QDialog):
         """
         extension_dir = parquet_layer.extension_directory()
         plan = parquet_layer.planner(asset.href, limits, extension_dir)
-        name = _parquet_name(asset)
+        name = parquet_name(asset)
 
         def write(task: Any) -> parquet_query.Written:
             planned = plan(task)
@@ -1877,7 +1837,7 @@ class RegistryWindow(QDialog):
         )
         run_task(_("Write {name} in the chosen area").format(name=name), write, done)
 
-    def _download_all(self) -> None:
+    def start_download(self) -> None:
         """Download everything in the area.
 
         The walk leaves out the items outside the area. With a map view or
@@ -1891,16 +1851,12 @@ class RegistryWindow(QDialog):
         if scoped is None:
             return
         scope, limits = scoped
-        clip: list[Asset] = []
-        if not isinstance(scope, Everything):
-            clip = [
-                item.asset
-                for item in document.loadable()
-                if item.asset is not None and item.format == "parquet" and not item.asset.tabular
-            ]
-        if clip and not parquet_query.duckdb_status()[0]:
-            self._duckdb_help(parquet_query.duckdb_status()[1])
-            return
+        clip = parquet_to_clip(document, scope)
+        if clip:
+            ok, version = parquet_query.duckdb_status()
+            if not ok:
+                self._duckdb_help(version)
+                return
         folder = self._choose_folder()
         if folder is None:
             return
@@ -1937,69 +1893,30 @@ class RegistryWindow(QDialog):
                     _("Could not list {title}: {error}").format(title=document.title, error=error)
                 )
                 return
-            clipped = {asset.href for asset in clip}
-            files = [entry for entry in result.files if entry.url not in clipped]
-            if not self._confirm(replace(result, files=files), len(clip)):
-                return
-            if files:
-                self._start_download(folder, files)
-            for asset in clip:
-                self._download_clipped(asset, folder / clipped_path(asset.href, root), limits)
+            self._download_listed(result, _Listed(folder, root, clip, limits))
 
         # Translators: a task in the QGIS task manager that lists the files below {title}.
         task = run_task(_("List {title}").format(title=document.title), build, planned)
         self._track(task)
 
+    def _download_listed(self, plan: download.Plan, listed: _Listed) -> None:
+        """Ask to download ``plan``, then download its files and clip the GeoParquet files."""
+        whole = split_plan(plan, listed.clip)
+        if not self._confirm(whole, len(listed.clip)):
+            return
+        if whole.files:
+            self._start_job(listed.folder, whole.files)
+        for asset in listed.clip:
+            target = listed.folder / download.clipped_path(asset.href, listed.root)
+            self._download_clipped(asset, target, listed.limits)
+
     def _confirm(self, plan: download.Plan, clipped: int = 0) -> bool:
-        files = len(plan.files)
-        size = human_size(plan.known_bytes)
-        lines = [
-            ngettext("{n} file, at least {size}.", "{n} files, at least {size}.", files).format(
-                n=number(files), size=size
-            )
-        ]
-        if clipped:
-            lines.append(
-                count(
-                    "{n} GeoParquet file downloads as GeoPackage, "
-                    "with the features in the area only.",
-                    "{n} GeoParquet files download as GeoPackage, "
-                    "with the features in the area only.",
-                    clipped,
-                )
-            )
-        if plan.unknown_sizes:
-            lines.append(
-                count(
-                    "{n} file does not declare a size.",
-                    "{n} files do not declare a size.",
-                    plan.unknown_sizes,
-                )
-            )
-        if plan.failures:
-            lines.append(
-                count(
-                    "{n} document could not be read and is left out.",
-                    "{n} documents could not be read and are left out.",
-                    len(plan.failures),
-                )
-            )
-        if plan.truncated:
-            lines.append(_("The listing stopped at its document limit."))
-        if plan.outside:
-            lines.append(
-                count(
-                    "{n} item outside the chosen area is left out.",
-                    "{n} items outside the chosen area are left out.",
-                    plan.outside,
-                )
-            )
-        lines += ["", _("Download now?")]
+        text = f"{plan_summary(plan, clipped)}\n\n{_('Download now?')}"
         # Translators: the title of the dialog that confirms a download.
-        answer = QMessageBox.question(self, _("Download"), "\n".join(lines))
+        answer = QMessageBox.question(self, _("Download"), text)
         return answer == QMessageBox.StandardButton.Yes
 
-    def _start_download(self, folder: Path, files: list[download.PlannedFile]) -> None:
+    def _start_job(self, folder: Path, files: list[download.PlannedFile]) -> None:
         job = DownloadJob(folder, files, self)
         job.progress.connect(self._show_progress)
         job.finished.connect(lambda report: self._downloaded(folder, report))
@@ -2078,47 +1995,6 @@ def _excerpt(text: str, limit: int = 240) -> str:
     return flat if len(flat) <= limit else flat[: limit - 1].rstrip() + "…"
 
 
-def _short(title: str, limit: int = 28) -> str:
-    return title if len(title) <= limit else title[: limit - 1].rstrip() + "…"
-
-
-def _item_cog(item: Document) -> Asset | None:
-    """Return the first COG data asset of an item."""
-    return next((asset for asset in item.data_assets if asset.format == "cog"), None)
-
-
-def _clip_of(scope: Scope) -> str | None:
-    """Return the polygon that clips a mosaic for ``scope``, as WKT in EPSG:4326.
-
-    A mosaic shows only the data in the area, so a map view clips to the
-    view. Everything clips to nothing.
-    """
-    if isinstance(scope, Area):
-        return scope.wkt
-    if isinstance(scope, MapView):
-        west, south, east, north = scope.bbox
-        # A view across the antimeridian is two boxes, one on each side.
-        spans = [(west, 180.0), (-180.0, east)] if west > east else [(west, east)]
-        boxes = [
-            f"(({w} {south},{e} {south},{e} {north},{w} {north},{w} {south}))" for w, e in spans
-        ]
-        return f"MULTIPOLYGON({','.join(boxes)})"
-    return None
-
-
-def _is_table(item: Loadable) -> bool:
-    """Return whether ``item`` is a Parquet file with no geometry column."""
-    return item.asset is not None and item.asset.tabular
-
-
-def _format_name(item: Loadable) -> str:
-    """Return the format of a file in plain words, such as "GeoParquet"."""
-    asset = item.asset
-    if asset is None:
-        return "PMTiles"
-    return format_label(asset.format, asset.type, asset.href, asset.tabular)
-
-
 def _loadable_tip(item: Loadable, on_map: bool = False) -> str:
     """Return the tooltip of a file row."""
     lines = [html.escape(item.href)]
@@ -2129,90 +2005,3 @@ def _loadable_tip(item: Loadable, on_map: bool = False) -> str:
     if on_map:
         lines.append(_("A layer in the project already reads this file."))
     return "<br>".join(lines)
-
-
-def _parquet_name(asset: Asset) -> str:
-    """Return the layer name of a GeoParquet file."""
-    return asset.title or asset.href.rsplit("/", 1)[-1].removesuffix(".parquet")
-
-
-def clipped_path(href: str, root: str) -> str:
-    """Return where the GeoPackage of a clipped GeoParquet file goes in the download folder.
-
-    It keeps the file's place in the catalog layout, with a ``.gpkg`` suffix.
-    """
-    path = download.local_path(href, root)
-    folder, _sep, name = path.rpartition("/")
-    stem = name
-    for suffix in (".geoparquet", ".parquet"):
-        if name.lower().endswith(suffix):
-            stem = name[: -len(suffix)]
-            break
-    return f"{folder}/{stem}.gpkg" if folder else f"{stem}.gpkg"
-
-
-def _facts_html(
-    document: Document,
-    publisher: str | None,
-    size: int | None,
-    label_color: QColor,
-    browser: str | None = None,
-) -> str:
-    """Return the document's facts as one two-column table.
-
-    Each fact is one row, and a row leaves out what is not known. The
-    license links make the License row, the publisher's documentation makes
-    the Documentation row, the ``via`` links make the Source row, and the
-    browser page makes the More row. A link
-    that two STAC links repeat shows once.
-    """
-
-    def anchor(href: str, text: str) -> str:
-        return f'<a href="{html.escape(href)}">{html.escape(text)}</a>'
-
-    def hrefs(rel: str) -> list[tuple[str, str | None]]:
-        found: dict[str, str | None] = {}
-        for link in document.links:
-            if link.rel == rel and link.href not in found:
-                found[link.href] = link.title
-        return list(found.items())
-
-    rows: list[tuple[str, str]] = []
-    if publisher:
-        rows.append((_("Publisher"), html.escape(publisher)))
-    name = license_name(document.license)
-    licenses = hrefs("license")
-    if len(licenses) == 1:
-        rows.append((_("License"), anchor(licenses[0][0], name or link_label(*licenses[0]))))
-    elif licenses:
-        linked = ", ".join(anchor(href, link_label(href, title)) for href, title in licenses)
-        rows.append((_("License"), f"{html.escape(name)}: {linked}" if name else linked))
-    elif name:
-        rows.append((_("License"), html.escape(name)))
-    if size:
-        rows.append((_("Size"), html.escape(human_size(size))))
-    docs = hrefs("describedby")
-    if docs:
-        rows.append(
-            (
-                _("Documentation"),
-                ", ".join(anchor(href, link_label(href, title)) for href, title in docs),
-            )
-        )
-    sources = hrefs("via")
-    if sources:
-        # Translators: the label of the row that links to where the data comes from.
-        label = _("Source")
-        rows.append(
-            (label, ", ".join(anchor(href, link_label(href, title)) for href, title in sources))
-        )
-    if browser:
-        # Translators: the label of the row that links to more about the dataset.
-        rows.append((_("More"), anchor(browser, _(BROWSER_LINK))))
-    color = label_color.name()
-    cells = "".join(
-        f'<tr><td style="color: {color}; padding-right: 10px;">{html.escape(key)}</td>'  # i18n: skip
-        f"<td>{value}</td></tr>"
-        for key, value in rows
-    )
-    return f"<table>{cells}</table>"

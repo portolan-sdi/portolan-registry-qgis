@@ -96,6 +96,21 @@ class DownloadJob(QObject):
         self._done = False
         self._pumping = False
 
+    @property
+    def busy(self) -> int:
+        """Return the number of slots that download or verify a file."""
+        return self._busy
+
+    @property
+    def downloading(self) -> int:
+        """Return the number of requests in flight."""
+        return len(self._downloaders)
+
+    @property
+    def report(self) -> DownloadReport:
+        """Return the report so far. The ``finished`` signal sends the final one."""
+        return self._report
+
     def start(self) -> None:
         """Begin with the first files."""
         self._pump()

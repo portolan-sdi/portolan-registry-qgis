@@ -188,7 +188,6 @@ ignore = [
     "S108", # /tmp paths in fixtures
     "D", # test names carry the description; docstrings are optional
     "ARG", # pytest fixtures are injected and often unused by name
-    "SLF001", # tests may reach into private helpers
     "T20", # a test may print for diagnostics
     "PTH123", # open() is fine in a fixture
     "S310", # a test opens a URL it writes itself

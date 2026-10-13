@@ -190,11 +190,11 @@ def mirror_hrefs(
     # The cursor stops the running query when ``cancelled`` returns True.
     with parquet_query.cursor(con, cancelled) as cursor:
         rows = cursor.execute(sql, [url, *params]).fetchall()
-    found = (_row_href(row, url, scope, items or {}) for row in rows)
+    found = (row_href(row, url, scope, items or {}) for row in rows)
     return list(dict.fromkeys(href for href in found if href is not None))
 
 
-def _row_href(row: tuple[Any, ...], url: str, scope: Scope, items: dict[str, str]) -> str | None:
+def row_href(row: tuple[Any, ...], url: str, scope: Scope, items: dict[str, str]) -> str | None:
     """Return the COG href of one row of ``mirror_query``, or None to skip the row."""
     xmin, ymin, xmax, ymax, assets, links, item_id = row
     corners = (xmin, ymin, xmax, ymax)
@@ -203,13 +203,13 @@ def _row_href(row: tuple[Any, ...], url: str, scope: Scope, items: dict[str, str
         box = (float(xmin), float(ymin), float(xmax), float(ymax))
     if not scopes.intersects(box, scope):
         return None
-    base = _self_href(parse_json(links), url)
+    base = self_href(parse_json(links), url)
     if base is None:
         base = items.get(str(item_id), url) if item_id is not None else url
     return cog_href(assets_of({"assets": parse_json(assets)}, base))
 
 
-def _self_href(links: object, base: str) -> str | None:
+def self_href(links: object, base: str) -> str | None:
     """Return the item's ``self`` link resolved against ``base``, or None without one."""
     if not isinstance(links, list):
         return None

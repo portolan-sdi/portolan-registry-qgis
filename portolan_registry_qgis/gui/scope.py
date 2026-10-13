@@ -358,12 +358,12 @@ class ScopePicker(QWidget):
         for key, label in CHOICES:
             self._choice.addItem(_(label), key)
         self._current = EVERYTHING
-        self._redraw = QToolButton()
-        self._redraw.setText(_("Draw again"))
-        self._redraw.setToolTip(_("Draw a new area on the map"))
-        self._layers = QgsMapLayerComboBox()
-        self._layers.setFilters(_polygon_filter())
-        self._selected = QCheckBox(_("Selected features only"))
+        self.redraw = QToolButton()
+        self.redraw.setText(_("Draw again"))
+        self.redraw.setToolTip(_("Draw a new area on the map"))
+        self.layer_combo = QgsMapLayerComboBox()
+        self.layer_combo.setFilters(_polygon_filter())
+        self.selected = QCheckBox(_("Selected features only"))
         self._area: Area | None = None
         self._area_band: QgsRubberBand | None = None
         self._tool: PolygonTool | None = None
@@ -376,28 +376,28 @@ class ScopePicker(QWidget):
         top = QHBoxLayout()
         top.setContentsMargins(0, 0, 0, 0)
         top.addWidget(self._choice, 1)
-        top.addWidget(self._redraw)
+        top.addWidget(self.redraw)
         self._layer_row = QWidget()
         bottom = QHBoxLayout(self._layer_row)
         bottom.setContentsMargins(0, 0, 0, 0)
-        bottom.addWidget(self._layers, 1)
-        bottom.addWidget(self._selected)
+        bottom.addWidget(self.layer_combo, 1)
+        bottom.addWidget(self.selected)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addLayout(top)
         layout.addWidget(self._layer_row)
 
         self._choice.activated.connect(self._activated)
-        self._redraw.clicked.connect(self._draw)
-        self._layers.layerChanged.connect(self._layer_changed)
-        model = self._layers.model()
+        self.redraw.clicked.connect(self._draw)
+        self.layer_combo.layerChanged.connect(self._layer_changed)
+        model = self.layer_combo.model()
         model.rowsInserted.connect(self._follow_layer)
         model.rowsRemoved.connect(self._follow_layer)
         model.modelReset.connect(self._follow_layer)
-        self._selected.toggled.connect(self._layer_input_changed)
+        self.selected.toggled.connect(self._layer_input_changed)
         self._canvas.extentsChanged.connect(self._view_changed)
         self._canvas.destinationCrsChanged.connect(self._show_area)
-        self._watch(self._layers.currentLayer())
+        self._watch(self.layer_combo.currentLayer())
         self._update_rows()
 
     def choice(self) -> str:
@@ -429,13 +429,13 @@ class ScopePicker(QWidget):
                 raise ScopeError(_("Draw an area on the map first."))
             return self._area
         if self._current == FROM_LAYER:
-            layer = self._layers.currentLayer()
+            layer = self.layer_combo.currentLayer()
             if not isinstance(layer, QgsVectorLayer):
                 raise ScopeError(_("Choose a polygon layer."))
             self._follow_layer()
             if self._layer_area is None:
                 try:
-                    self._layer_area = layer_area(layer, self._selected.isChecked())
+                    self._layer_area = layer_area(layer, self.selected.isChecked())
                 except ScopeError as error:
                     self._layer_area = error
             if isinstance(self._layer_area, ScopeError):
@@ -476,11 +476,11 @@ class ScopePicker(QWidget):
         reading the polygons of a layer whenever the layer changes.
         """
         self.clear()
-        model = self._layers.model()
+        model = self.layer_combo.model()
         for signal, slot in (
             (self._canvas.extentsChanged, self._view_changed),
             (self._canvas.destinationCrsChanged, self._show_area),
-            (self._layers.layerChanged, self._layer_changed),
+            (self.layer_combo.layerChanged, self._layer_changed),
             (model.rowsInserted, self._follow_layer),
             (model.rowsRemoved, self._follow_layer),
             (model.modelReset, self._follow_layer),
@@ -495,7 +495,7 @@ class ScopePicker(QWidget):
         self._update_rows()
 
     def _update_rows(self) -> None:
-        self._redraw.setVisible(self._current == DRAW and self._tool is None)
+        self.redraw.setVisible(self._current == DRAW and self._tool is None)
         self._layer_row.setVisible(self._current == FROM_LAYER)
 
     def _activated(self, index: int) -> None:
@@ -590,7 +590,7 @@ class ScopePicker(QWidget):
         QGIS 4 picks the first polygon layer of a new project without a
         ``layerChanged`` signal, so the picker checks the list itself.
         """
-        layer = self._layers.currentLayer()
+        layer = self.layer_combo.currentLayer()
         # PyQt can return a new wrapper for the same layer, so compare IDs.
         current = layer.id() if layer is not None else None
         watched = self._watched.id() if self._watched is not None else None
@@ -625,7 +625,7 @@ class ScopePicker(QWidget):
             self.changed.emit()
 
     def _selection_changed(self, *_args: object) -> None:
-        if self._selected.isChecked():
+        if self.selected.isChecked():
             self._layer_area = None
-        if self._current == FROM_LAYER and self._selected.isChecked():
+        if self._current == FROM_LAYER and self.selected.isChecked():
             self.changed.emit()

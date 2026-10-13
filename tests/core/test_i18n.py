@@ -47,7 +47,7 @@ def test_language_code(locale, code):
 def test_set_language_english_uses_the_source_text():
     assert i18n.set_language("en_GB") == "en"
     assert i18n.language() == "en"
-    assert type(i18n._State.translation) is gettext.NullTranslations
+    assert type(i18n.State.translation) is gettext.NullTranslations
     assert i18n._("Vector tiles") == "Vector tiles"
 
 

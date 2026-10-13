@@ -127,7 +127,8 @@ def close() -> None:
             _connection = None
 
 
-def _interrupt_when(cancelled: Callable[[], bool], cursor: Any, stop: threading.Event) -> None:
+def interrupt_when(cancelled: Callable[[], bool], cursor: Any, stop: threading.Event) -> None:
+    """Interrupt ``cursor`` once ``cancelled`` returns True, until ``stop`` is set."""
     while not stop.wait(0.1):
         if cancelled():
             cursor.interrupt()
@@ -143,7 +144,7 @@ def cursor(con: Any, cancelled: Callable[[], bool] | None = None) -> Iterator[An
     cur = con.cursor()
     stop = threading.Event()
     if cancelled is not None:
-        threading.Thread(target=_interrupt_when, args=(cancelled, cur, stop), daemon=True).start()
+        threading.Thread(target=interrupt_when, args=(cancelled, cur, stop), daemon=True).start()
     try:
         yield cur
     finally:
@@ -228,7 +229,7 @@ def _geometry_column(gpkg: sqlite3.Connection) -> tuple[str, str] | None:
     return (str(row[0]), str(row[1])) if row is not None else None
 
 
-def _null_geometries(path: str) -> int:
+def null_geometries(path: str) -> int:
     """Count the features with a NULL geometry in a GeoPackage.
 
     SQLite reads only the record headers to test for NULL, so the count
@@ -277,12 +278,12 @@ def write_gpkg(
         written = cur.execute(sql, [url, *params]).fetchone()
     features = int(written[0]) if written else 0
     if not plan.has_geometry:
-        _drop_geometry(target.path)
+        drop_geometry(target.path)
         return Written(features, NO_GEOMETRY, 0)
-    return Written(features, layer_type, _null_geometries(target.path) if features else 0)
+    return Written(features, layer_type, null_geometries(target.path) if features else 0)
 
 
-def _drop_geometry(path: str) -> None:
+def drop_geometry(path: str) -> None:
     """Turn the one layer of a GeoPackage into an attribute table.
 
     DuckDB's GDAL writer always adds a geometry column. A table copy leaves

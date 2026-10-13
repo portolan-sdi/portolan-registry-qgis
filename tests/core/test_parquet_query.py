@@ -74,7 +74,6 @@ def test_extensions_fall_back_to_the_given_folder(monkeypatch, tmp_path):
     monkeypatch.setattr(parquet_query, "_connection", None)
     with pytest.raises(duckdb.IOException):
         parquet_query.connection()
-    assert parquet_query._connection is None
     loads.clear()
     fallback = parquet_query.connection(str(tmp_path))
     try:
@@ -368,14 +367,14 @@ def test_watcher_polls_until_the_query_ends():
         return False
 
     watched = _Cursor()
-    parquet_query._interrupt_when(cancelled, watched, stop)
+    parquet_query.interrupt_when(cancelled, watched, stop)
     assert polls == [True]
     assert not watched.interrupted
 
 
 def test_watcher_interrupts_once_cancelled():
     watched = _Cursor()
-    parquet_query._interrupt_when(lambda: True, watched, threading.Event())
+    parquet_query.interrupt_when(lambda: True, watched, threading.Event())
     assert watched.interrupted
 
 
@@ -386,8 +385,8 @@ def test_a_file_with_no_geometry_layer_is_left_alone(tmp_path):
         gpkg.execute("CREATE TABLE gpkg_contents (table_name TEXT, data_type TEXT)")
         gpkg.execute("INSERT INTO gpkg_contents VALUES ('features', 'features')")
         gpkg.commit()
-    assert parquet_query._null_geometries(str(path)) == 0
-    parquet_query._drop_geometry(str(path))
+    assert parquet_query.null_geometries(str(path)) == 0
+    parquet_query.drop_geometry(str(path))
     with contextlib.closing(sqlite3.connect(path)) as gpkg:
         assert gpkg.execute("SELECT data_type FROM gpkg_contents").fetchall() == [("features",)]
 

@@ -53,6 +53,11 @@ class PortolanRegistryPlugin:
         self._preprocessor: str | None = None
         self._warned_save = False
 
+    @property
+    def preprocessor(self) -> str | None:
+        """Return the ID of the path preprocessor the plugin registered, or None."""
+        return self._preprocessor
+
     def initGui(self) -> None:
         """Create the menu entry and toolbar button. QGIS calls this on load."""
         self.action = QAction(QIcon(str(_ICON)), "Portolan Registry", self.iface.mainWindow())

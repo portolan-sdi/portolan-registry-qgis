@@ -119,7 +119,7 @@ def test_mirror_query_needs_bbox_and_assets():
     ],
 )
 def test_self_href(links, expected):
-    assert mirror._self_href(links, f"{BASE}/items.parquet") == expected
+    assert mirror.self_href(links, f"{BASE}/items.parquet") == expected
 
 
 def test_self_href_that_cannot_resolve(monkeypatch):
@@ -127,7 +127,7 @@ def test_self_href_that_cannot_resolve(monkeypatch):
         raise ValueError("bad")
 
     monkeypatch.setattr(mirror, "asset_href", refuse)
-    assert mirror._self_href([{"rel": "self", "href": "a.json"}], BASE) is None
+    assert mirror.self_href([{"rel": "self", "href": "a.json"}], BASE) is None
 
 
 def test_row_href():
@@ -135,14 +135,14 @@ def test_row_href():
     assets = json.dumps({"image": {"href": "./a.tif", "type": COG, "roles": ["data"]}})
     row = (11.0, 44.0, 11.64, 44.64, assets, "[]", "a")
     items = {"a": f"{BASE}/a/a.json"}
-    assert mirror._row_href(row, url, Everything(), items) == f"{BASE}/a/a.tif"
-    assert mirror._row_href(row, url, Everything(), {}) == f"{BASE}/a.tif"
+    assert mirror.row_href(row, url, Everything(), items) == f"{BASE}/a/a.tif"
+    assert mirror.row_href(row, url, Everything(), {}) == f"{BASE}/a.tif"
     # A row out of the scope gives nothing. The query keeps rows across 180°.
-    assert mirror._row_href(row, url, EAST_AREA, items) is None
+    assert mirror.row_href(row, url, EAST_AREA, items) is None
     # A row with no bbox numbers and no ID stays, against the file.
     blank = (None, None, None, None, assets, "not json", None)
-    assert mirror._row_href(blank, url, EAST_AREA, items) == f"{BASE}/a.tif"
-    assert mirror._row_href((*row[:4], "[]", None, "a"), url, Everything(), items) is None
+    assert mirror.row_href(blank, url, EAST_AREA, items) == f"{BASE}/a.tif"
+    assert mirror.row_href((*row[:4], "[]", None, "a"), url, Everything(), items) is None
 
 
 @pytest.fixture(scope="module")

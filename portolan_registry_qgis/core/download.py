@@ -93,6 +93,21 @@ def local_path(url: str, root: str) -> str:
     return "/".join(segments)
 
 
+def clipped_path(href: str, root: str) -> str:
+    """Return where the GeoPackage of a clipped GeoParquet file goes in the download folder.
+
+    It keeps the file's place in the catalog layout, with a ``.gpkg`` suffix.
+    """
+    path = local_path(href, root)
+    folder, _sep, name = path.rpartition("/")
+    stem = name
+    for suffix in (".geoparquet", ".parquet"):
+        if name.lower().endswith(suffix):
+            stem = name[: -len(suffix)]
+            break
+    return f"{folder}/{stem}.gpkg" if folder else f"{stem}.gpkg"
+
+
 def files_of(document: Document, root: str) -> list[PlannedFile]:
     """Return the document itself, its assets, and its PMTiles links.
 

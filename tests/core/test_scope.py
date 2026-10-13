@@ -8,6 +8,7 @@ from portolan_registry_qgis.core.scope import (
     Everything,
     MapView,
     bbox_of,
+    clip_wkt,
     crosses_antimeridian,
     eastward,
     intersects,
@@ -21,6 +22,17 @@ def test_bbox_of():
     assert bbox_of(Everything()) is None
     assert bbox_of(MapView((1, 2, 3, 4))) == (1, 2, 3, 4)
     assert bbox_of(Area(SQUARE, (10, 40, 12, 42))) == (10, 40, 12, 42)
+
+
+def test_clip_wkt():
+    assert clip_wkt(Everything()) is None
+    assert clip_wkt(Area(SQUARE, (10, 40, 12, 42))) == SQUARE
+    assert clip_wkt(MapView((1, 2, 3, 4))) == "MULTIPOLYGON(((1 2,3 2,3 4,1 4,1 2)))"
+    # A view across the antimeridian is two boxes, one on each side.
+    assert clip_wkt(MapView((170, -10, -170, 10))) == (
+        "MULTIPOLYGON(((170 -10,180.0 -10,180.0 10,170 10,170 -10)),"
+        "((-180.0 -10,-170 -10,-170 10,-180.0 10,-180.0 -10)))"
+    )
 
 
 def test_everything_and_files_without_an_extent_are_kept():

@@ -11,6 +11,7 @@ import pytest
 from portolan_registry_qgis.core.download import (
     PlannedFile,
     Walk,
+    clipped_path,
     local_path,
     plan,
     split_collisions,
@@ -324,3 +325,9 @@ def test_split_collisions_keeps_the_first_file_per_path():
     keep, clashes = split_collisions([first, same, other, case])
     assert keep == [first, other]
     assert clashes == [same, case]
+
+
+def test_clipped_path():
+    assert clipped_path(f"{BASE}/a/b.parquet", ROOT) == "a/b.gpkg"
+    assert clipped_path(f"{BASE}/b.GeoParquet", ROOT) == "b.gpkg"
+    assert clipped_path(f"{BASE}/notes.txt", ROOT) == "notes.txt.gpkg"

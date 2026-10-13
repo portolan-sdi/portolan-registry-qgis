@@ -761,16 +761,16 @@ def test_cancel_frees_every_slot_once(catalog, tmp_path):
     job = DownloadJob(tmp_path, files)
     job.finished.connect(reports.append)
     job.start()
-    wait_for(lambda: job._downloaders)
+    wait_for(lambda: job.downloading)
     job.cancel()
     wait_for(lambda: reports)
     # Let any late downloadError signals arrive. None may report again.
-    wait_for(lambda: not job._downloaders)
+    wait_for(lambda: not job.downloading)
     for _ in range(20):
         QgsApplication.processEvents()
     assert len(reports) == 1
     assert reports[0].cancelled
-    assert job._busy == 0
+    assert job.busy == 0
     assert len(reports[0].downloaded) < len(files)
 
 
@@ -888,7 +888,7 @@ def test_progress_names_every_busy_slot(catalog, collection, tmp_path, monkeypat
     job.finished.connect(reports.append)
     job.start()
     wait_for(lambda: any("Verifying relief.tif" in m for m in messages))
-    wait_for(lambda: "catalog.json" in job._report.downloaded)
+    wait_for(lambda: "catalog.json" in job.report.downloaded)
     assert "Verifying relief.tif" in messages[-1]
     release.set()
     wait_for(lambda: reports)

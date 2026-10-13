@@ -112,7 +112,9 @@ def read_tile(archive: Archive, z: int, x: int, y: int) -> bytes | None:
 CACHE_CONTROL = "max-age=86400"
 
 
-class _Handler(BaseHTTPRequestHandler):
+class TileHandler(BaseHTTPRequestHandler):
+    """Answer the tile requests of one connection to the loopback server."""
+
     server: _Server
     protocol_version = "HTTP/1.1"
     # The handler writes the headers and the body in two writes. On a kept
@@ -164,7 +166,7 @@ class _Server(ThreadingHTTPServer):
     daemon_threads = True
 
     def __init__(self) -> None:
-        super().__init__(("127.0.0.1", 0), _Handler)
+        super().__init__(("127.0.0.1", 0), TileHandler)
         self.archives: dict[str, Archive] = {}
 
 
@@ -213,6 +215,11 @@ class TileServer:
             server.archives[token] = archive
             port = server.server_address[1]
         return f"http://127.0.0.1:{port}/{token}/{{z}}/{{x}}/{{y}}.pbf"
+
+    def archive(self, token: str) -> Archive | None:
+        """Return the archive that the server serves under ``token``, or None."""
+        with self._lock:
+            return self._server.archives.get(token) if self._server is not None else None
 
     def serves(self, source: str) -> bool:
         """Return whether a layer source points at an archive this server serves."""

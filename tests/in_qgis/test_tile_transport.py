@@ -76,8 +76,8 @@ def server():
 def loopback(monkeypatch):
     """Count the loopback server's connections and the tiles it reads."""
     counts = {"connections": 0, "requests": 0, "tiles": 0}
-    setup = tileserver._Handler.setup
-    get = tileserver._Handler.do_GET
+    setup = tileserver.TileHandler.setup
+    get = tileserver.TileHandler.do_GET
     read = tileserver.read_tile
 
     def counted_setup(self):
@@ -93,8 +93,8 @@ def loopback(monkeypatch):
         counts["tiles"] += tile is not None
         return tile
 
-    monkeypatch.setattr(tileserver._Handler, "setup", counted_setup)
-    monkeypatch.setattr(tileserver._Handler, "do_GET", counted_get)
+    monkeypatch.setattr(tileserver.TileHandler, "setup", counted_setup)
+    monkeypatch.setattr(tileserver.TileHandler, "do_GET", counted_get)
     monkeypatch.setattr(tileserver, "read_tile", counted_read)
     return counts
 
@@ -188,7 +188,7 @@ def test_register_reuses_an_unchanged_archive(catalog, server, tmp_path):
     template = server.register(first)
     assert server.register(open_archive(url)) == template
     token = template.split("/")[3]
-    assert server._server.archives[token] is first
+    assert server.archive(token) is first
 
     # A republished archive has a different header, here a lower max zoom.
     changed = bytearray((catalog["root"] / "points.pmtiles").read_bytes())
@@ -198,8 +198,8 @@ def test_register_reuses_an_unchanged_archive(catalog, server, tmp_path):
     assert second.max_zoom == 7
     new_template = server.register(second)
     assert new_template != template
-    assert server._server.archives[token] is second
-    assert server._server.archives[new_template.split("/")[3]] is second
+    assert server.archive(token) is second
+    assert server.archive(new_template.split("/")[3]) is second
 
 
 @pytest.mark.parametrize("prefix", ["absolute", "relative"])

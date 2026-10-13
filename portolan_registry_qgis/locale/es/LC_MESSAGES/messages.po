@@ -89,17 +89,17 @@ msgid_plural "Added {n} vector tile layers from {title}."
 msgstr[0] "Se añadió {n} capa de teselas vectoriales de {title}."
 msgstr[1] "Se añadieron {n} capas de teselas vectoriales de {title}."
 
-#: portolan_registry_qgis/gui/window.py
+#: portolan_registry_qgis/core/loadable.py
 msgid "Adds the raster (Cloud Optimized GeoTIFF), read in place over HTTP."
 msgstr "Añade el ráster (Cloud Optimized GeoTIFF), leído en su ubicación por HTTP."
 
-#: portolan_registry_qgis/gui/window.py
+#: portolan_registry_qgis/core/loadable.py
 msgid "Adds the vector tiles (PMTiles). They read only the tiles on screen."
 msgstr ""
 "Añade las teselas vectoriales (PMTiles). Solo se leen las teselas en "
 "pantalla."
 
-#: portolan_registry_qgis/gui/window.py
+#: portolan_registry_qgis/core/loadable.py
 msgid "All features and attributes, for analysis."
 msgstr "Todos los objetos espaciales y atributos, para análisis."
 
@@ -112,7 +112,7 @@ msgstr "Todos los archivos"
 msgid "All files ({count})"
 msgstr "Todos los archivos ({count})"
 
-#: portolan_registry_qgis/gui/window.py
+#: portolan_registry_qgis/core/facts.py
 msgid "All files and metadata in the Portolan browser"
 msgstr "Todos los archivos y metadatos en el navegador de Portolan"
 
@@ -120,7 +120,7 @@ msgstr "Todos los archivos y metadatos en el navegador de Portolan"
 msgid "All publishers"
 msgstr "Todos los publicadores"
 
-#: portolan_registry_qgis/gui/window.py
+#: portolan_registry_qgis/core/loadable.py
 msgid "All rows and columns, as a table with no geometry."
 msgstr "Todas las filas y columnas, como una tabla sin geometría."
 
@@ -388,7 +388,7 @@ msgstr ""
 "El anidamiento de directorios es más profundo de lo que permite la "
 "especificación"
 
-#: portolan_registry_qgis/gui/window.py
+#: portolan_registry_qgis/core/facts.py
 msgid "Documentation"
 msgstr "Documentación"
 
@@ -475,7 +475,7 @@ msgstr ""
 msgid "Everything"
 msgstr "Todo"
 
-#: portolan_registry_qgis/gui/window.py
+#: portolan_registry_qgis/core/loadable.py
 msgid "Fast. Draws with the publisher's style."
 msgstr "Rápido. Dibuja con el estilo del publicador."
 
@@ -485,7 +485,7 @@ msgid "File"
 msgstr "Archivo"
 
 #. {title} names a file, and {format} its format, such as GeoParquet.
-#: portolan_registry_qgis/gui/window.py
+#: portolan_registry_qgis/core/loadable.py
 #, python-brace-format
 msgid "File: {title} ({format})"
 msgstr "Archivo: {title} ({format})"
@@ -573,7 +573,7 @@ msgstr "KB"
 msgid "Layers: {layers}"
 msgstr "Capas: {layers}"
 
-#: portolan_registry_qgis/gui/window.py
+#: portolan_registry_qgis/core/facts.py
 msgid "License"
 msgstr "Licencia"
 
@@ -639,23 +639,23 @@ msgstr "Cargar tabla"
 msgid "Load the features?"
 msgstr "¿Cargar los objetos espaciales?"
 
-#: portolan_registry_qgis/gui/window.py
+#: portolan_registry_qgis/core/loadable.py
 msgid "Loads the CSV, read in place over HTTP."
 msgstr "Carga el CSV, leído en su ubicación por HTTP."
 
-#: portolan_registry_qgis/gui/window.py
+#: portolan_registry_qgis/core/loadable.py
 msgid "Loads the FlatGeobuf, read in place over HTTP."
 msgstr "Carga el FlatGeobuf, leído en su ubicación por HTTP."
 
-#: portolan_registry_qgis/gui/window.py
+#: portolan_registry_qgis/core/loadable.py
 msgid "Loads the GeoJSON, read in place over HTTP."
 msgstr "Carga el GeoJSON, leído en su ubicación por HTTP."
 
-#: portolan_registry_qgis/gui/window.py
+#: portolan_registry_qgis/core/loadable.py
 msgid "Loads the GeoParquet. DuckDB copies the features in the area of interest."
 msgstr "Carga el GeoParquet. DuckDB copia los objetos espaciales del área de interés."
 
-#: portolan_registry_qgis/gui/window.py
+#: portolan_registry_qgis/core/loadable.py
 msgid "Loads the Parquet table. It has no geometry, so it loads whole."
 msgstr "Carga la tabla Parquet. No tiene geometría, así que se carga completa."
 
@@ -669,7 +669,7 @@ msgid "Map extent"
 msgstr "Extensión del mapa"
 
 #. the label of the row that links to more about the dataset.
-#: portolan_registry_qgis/gui/window.py
+#: portolan_registry_qgis/core/facts.py
 msgid "More"
 msgstr "Más"
 
@@ -751,7 +751,7 @@ msgstr "Portolan Registry: se necesita DuckDB"
 msgid "Proprietary"
 msgstr "Propietaria"
 
-#: portolan_registry_qgis/gui/window.py
+#: portolan_registry_qgis/core/facts.py
 msgid "Publisher"
 msgstr "Publicador"
 
@@ -950,12 +950,12 @@ msgid_plural "Show {shown} more of {total} publishers"
 msgstr[0] "Mostrar {shown} más de {total} publicador"
 msgstr[1] "Mostrar {shown} más de {total} publicadores"
 
-#: portolan_registry_qgis/gui/window.py
+#: portolan_registry_qgis/core/facts.py
 msgid "Size"
 msgstr "Tamaño"
 
 #. the label of the row that links to where the data comes from.
-#: portolan_registry_qgis/gui/window.py
+#: portolan_registry_qgis/core/facts.py
 msgid "Source"
 msgstr "Fuente"
 
@@ -1044,7 +1044,7 @@ msgstr "El archivo no tiene la columna de geometría que nombran sus metadatos"
 msgid "The link did not return a STAC document"
 msgstr "El enlace no devolvió un documento STAC"
 
-#: portolan_registry_qgis/gui/window.py
+#: portolan_registry_qgis/core/loadable.py
 msgid "The listing stopped at its document limit."
 msgstr "El listado se detuvo en su límite de documentos."
 
@@ -1087,13 +1087,13 @@ msgstr[1] ""
 msgid "Then restart QGIS."
 msgstr "Después reinicie QGIS."
 
-#: portolan_registry_qgis/gui/window.py
+#: portolan_registry_qgis/core/loadable.py
 msgid "This entry has no files of its own. Choose a dataset in the tree."
 msgstr ""
 "Esta entrada no tiene archivos propios. Seleccione un conjunto de datos en "
 "el árbol."
 
-#: portolan_registry_qgis/gui/window.py
+#: portolan_registry_qgis/core/loadable.py
 msgid "This entry lists no files QGIS can open."
 msgstr "Esta entrada no lista ningún archivo que QGIS pueda abrir."
 
@@ -1104,7 +1104,7 @@ msgid_plural "This level lists {n} more"
 msgstr[0] "Este nivel lista {n} más"
 msgstr[1] "Este nivel lista {n} más"
 
-#: portolan_registry_qgis/gui/window.py
+#: portolan_registry_qgis/core/loadable.py
 msgid ""
 "To add every file in the area as one layer, use Add as one layer above. "
 "Select files here to add or download them whole."
@@ -1264,7 +1264,7 @@ msgstr[1] ""
 msgid "{name} is empty."
 msgstr "{name} está vacío."
 
-#: portolan_registry_qgis/gui/window.py
+#: portolan_registry_qgis/core/loadable.py
 #, python-brace-format
 msgid ""
 "{n} GeoParquet file downloads as GeoPackage, with the features in the area "
@@ -1300,7 +1300,7 @@ msgid_plural "{n} collections"
 msgstr[0] "{n} colección"
 msgstr[1] "{n} colecciones"
 
-#: portolan_registry_qgis/gui/window.py
+#: portolan_registry_qgis/core/loadable.py
 #, python-brace-format
 msgid "{n} document could not be read and is left out."
 msgid_plural "{n} documents could not be read and are left out."
@@ -1328,7 +1328,7 @@ msgid_plural "{n} files"
 msgstr[0] "{n} archivo"
 msgstr[1] "{n} archivos"
 
-#: portolan_registry_qgis/gui/window.py
+#: portolan_registry_qgis/core/loadable.py
 #, python-brace-format
 msgid "{n} file does not declare a size."
 msgid_plural "{n} files do not declare a size."
@@ -1350,14 +1350,14 @@ msgstr[1] ""
 "{n} archivos de {title} están en el área elegida. GDAL abre cada archivo "
 "para crear el mosaico, lo que lleva tiempo."
 
-#: portolan_registry_qgis/gui/window.py
+#: portolan_registry_qgis/core/loadable.py
 #, python-brace-format
 msgid "{n} file, at least {size}."
 msgid_plural "{n} files, at least {size}."
 msgstr[0] "{n} archivo, al menos {size}."
 msgstr[1] "{n} archivos, al menos {size}."
 
-#: portolan_registry_qgis/gui/window.py
+#: portolan_registry_qgis/core/loadable.py
 #, python-brace-format
 msgid "{n} item outside the chosen area is left out."
 msgid_plural "{n} items outside the chosen area are left out."

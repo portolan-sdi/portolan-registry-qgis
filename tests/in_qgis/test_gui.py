@@ -25,10 +25,12 @@ from qgis.PyQt.QtWidgets import QComboBox, QMessageBox
 
 import portolan_registry_qgis
 from portolan_registry_qgis import plugin as plugin_module
+from portolan_registry_qgis.core import facts as facts_module
+from portolan_registry_qgis.core import loadable
 from portolan_registry_qgis.gui import pictures
 from portolan_registry_qgis.gui import window as window_module
 from portolan_registry_qgis.gui.scope import EVERYTHING, FROM_LAYER, MAP_VIEW
-from portolan_registry_qgis.gui.widgets import BADGE_ROLE, ON_MAP_ROLE
+from portolan_registry_qgis.gui.widgets import BADGE_ROLE, ON_MAP_ROLE, ROLE
 from portolan_registry_qgis.gui.window import RegistryWindow
 from portolan_registry_qgis.plugin import BROWSER_URL_SETTING, REGISTRY_URL_SETTING
 from portolan_registry_qgis.qgis_io import mosaic, network, parquet_layer
@@ -159,7 +161,7 @@ def test_tree_details_and_assets(iface, server, catalog):
     # show no STAC type or ID, and no extent coordinates.
     facts = window.facts.text()
     assert ">Publisher<" in facts and "Test catalog" in facts
-    total = sum(asset.size for asset in window._document.assets)
+    total = sum(asset.size for asset in window.document.assets)
     assert ">Size<" in facts and window_module.human_size(total) in facts
     for hidden in (">Type<", ">ID<", ">Extent<", "11.0000"):
         assert hidden not in facts
@@ -212,7 +214,7 @@ def test_pictures_and_navigation(iface, server, catalog):
     wait_for(lambda: window.hero.has_picture)
     # The header brings back the catalog's own details.
     window.header.clicked.emit()
-    wait_for(lambda: window._document is not None and window._document.kind == "catalog")
+    wait_for(lambda: window.document is not None and window.document.kind == "catalog")
     assert "no files of its own" in window.no_assets.text()
     # The catalog lists no sized files, so the registry's total stands in.
     assert "123.5 KB" in window.facts.text()
@@ -311,13 +313,13 @@ def test_two_buttons_say_which_file_to_use(iface, server, catalog):
     # Each tooltip names the format first.
     assert window.view_button.toolTip().startswith("Adds the vector tiles (PMTiles).")
     assert window.load_button.toolTip().startswith("Loads the GeoParquet.")
-    assert window_module.VIEW_TIP in window.view_button.toolTip()
+    assert loadable.VIEW_TIP in window.view_button.toolTip()
     assert "Point tiles (PMTiles)" in window.view_button.toolTip()
-    assert window_module.LOAD_TIP in window.load_button.toolTip()
+    assert loadable.LOAD_TIP in window.load_button.toolTip()
     assert "data (GeoParquet)" in window.load_button.toolTip()
     for name in ("data", "Point tiles", "geojson"):
         tip = asset_row(window, name).toolTip(0)
-        assert window_module.VIEW_TIP not in tip and window_module.LOAD_TIP not in tip
+        assert loadable.VIEW_TIP not in tip and loadable.LOAD_TIP not in tip
     assert window.mosaic_button.isHidden()
     window.disconnect_canvas()
 
@@ -336,6 +338,13 @@ def test_view_on_map_adds_the_tiles_and_load_full_data_the_parquet(iface, server
     window.disconnect_canvas()
 
 
+def add_whole(window, name):
+    """Add the file in row ``name`` with Add selected."""
+    window.assets.clearSelection()
+    asset_row(window, name).setSelected(True)
+    window.add.click()
+
+
 def test_a_layer_outside_the_map_moves_the_map(iface, server, catalog):
     # The partido of Pergamino loaded, but the map showed another place, so
     # the layer looked as if it did not load. QGIS zooms to a new layer only
@@ -345,7 +354,7 @@ def test_a_layer_outside_the_map_moves_the_map(iface, server, catalog):
     QgsProject.instance().addMapLayer(QgsVectorLayer("Point?crs=EPSG:4326", "other", "memory"))
     far = QgsRectangle(100, 0, 101, 1)
     iface.canvas.setExtent(far)
-    window._add_file(asset_row(window, "geojson").data(0, window_module._ROLE).asset)
+    add_whole(window, "geojson")
     added = QgsProject.instance().mapLayersByName("geojson")[0]
     assert iface.canvas.extent().intersects(added.extent())
     assert any("The map moved to show it." in item.text() for item in iface.bar.items())
@@ -354,7 +363,7 @@ def test_a_layer_outside_the_map_moves_the_map(iface, server, catalog):
     view.grow(0.5)
     iface.canvas.setExtent(view)
     before = iface.canvas.extent()
-    window._add_file(asset_row(window, "geojson").data(0, window_module._ROLE).asset)
+    add_whole(window, "geojson")
     assert iface.canvas.extent() == before
     window.disconnect_canvas()
 
@@ -369,7 +378,7 @@ def test_buttons_fall_back_to_other_formats(iface, server, catalog, monkeypatch)
     raw = window_module.fetch_json(href)
     raw["links"] = [link for link in raw["links"] if link["rel"] != "pmtiles"]
     raw["assets"].pop("visual")
-    window._show_document(window_module.read_document(raw, href))
+    window.show_document(window_module.read_document(raw, href))
     assert window.view_button.toolTip().endswith("relief (COG)")
     assert window.load_button.toolTip().endswith("geojson (GeoJSON)")
     assert window.tile_styles.isHidden()
@@ -401,9 +410,9 @@ def test_download_all(iface, server, catalog, tmp_path, asked):
     window = open_window(iface, server, catalog)
     open_collection(window)
     window.header.clicked.emit()
-    wait_for(lambda: window._document is not None and window._document.kind == "catalog")
+    wait_for(lambda: window.document is not None and window.document.kind == "catalog")
     window.download_all.trigger()
-    wait_for(lambda: window._job is None and asked and not window.cancel.isVisible(), timeout=60)
+    wait_for(lambda: not window.is_busy() and asked and not window.cancel.isVisible(), timeout=60)
     assert "could not be read" in asked[0]
     assert (tmp_path / "catalog.json").is_file()
     assert (tmp_path / "points" / "collection.json").is_file()
@@ -430,7 +439,7 @@ def test_cancelled_listing_asks_nothing(iface, server, catalog, tmp_path, monkey
     window = open_window(iface, server, catalog)
     open_collection(window)
     window.header.clicked.emit()
-    wait_for(lambda: window._document is not None and window._document.kind == "catalog")
+    wait_for(lambda: window.document is not None and window.document.kind == "catalog")
     monkeypatch.setattr(window_module, "fetch_json", slow)
     manager = QgsApplication.taskManager()
     window.download_all.trigger()
@@ -441,7 +450,7 @@ def test_cancelled_listing_asks_nothing(iface, server, catalog, tmp_path, monkey
     for _ in range(20):
         QgsApplication.processEvents()
     assert asked == []
-    assert window._job is None
+    assert not window.is_busy()
     window.disconnect_canvas()
 
 
@@ -495,7 +504,7 @@ def test_plugin_restores_saved_parquet(iface, catalog, tmp_path, monkeypatch, pr
         pytest.skip("This QGIS cannot register a path preprocessor")
     plugin = portolan_registry_qgis.classFactory(iface)
     plugin.initGui()
-    assert (plugin._preprocessor is not None) is preprocessor
+    assert (plugin.preprocessor is not None) is preprocessor
     project = QgsProject.instance()
     context = project.transformContext()
     extent = QgsRectangle(11.095, 44.0, 11.305, 45.0)
@@ -534,8 +543,7 @@ def test_lists_show_one_page_at_a_time(iface, server, catalog, monkeypatch):
     window.tree.itemClicked.emit(window.tree.topLevelItem(1), 0)
     assert rows(window.tree) == ["Test points", "Missing"]
     # Five copies of the one registered catalog fill two pages and a half.
-    window._entries = window._entries * 5
-    window._show_catalogs()
+    window.catalog_entries = window.catalog_entries * 5
     assert rows(window.catalogs)[2] == "Show 2 more of 3 publishers"
     window.catalogs.itemClicked.emit(window.catalogs.item(2))
     assert rows(window.catalogs)[2:] == [
@@ -625,7 +633,7 @@ def test_hero_shows_thumbnail_or_extent(iface, server, catalog):
     window = open_window(iface, server, catalog)
     open_catalog(window)
     # The catalog has no thumbnail, so the hero draws its extent.
-    wait_for(lambda: window._document is not None and window._document.kind == "catalog")
+    wait_for(lambda: window.document is not None and window.document.kind == "catalog")
     window.hero.grab()
     assert window.hero.painted_extent
     window.tree.setCurrentItem(window.tree.topLevelItem(0))
@@ -663,7 +671,7 @@ def test_pmtiles_shows_once(iface, server, catalog):
     open_collection(window)
     archive = f"{catalog['base']}/points.pmtiles"
     shown_hrefs = [
-        window.assets.topLevelItem(i).data(0, window_module._ROLE).href
+        window.assets.topLevelItem(i).data(0, ROLE).href
         for i in range(window.assets.topLevelItemCount())
     ]
     assert shown_hrefs.count(archive) == 1
@@ -682,7 +690,7 @@ def test_browser_links_of_the_open_node(iface, server, catalog, monkeypatch):
     )
     wait_for(lambda: rows(window.catalogs) == ["Test catalog"])
     assert window.open_browser.isHidden()
-    entry = window.catalogs.item(0).data(window_module._ROLE)
+    entry = window.catalogs.item(0).data(ROLE)
     # The publisher row's context menu opens the catalog in the browser.
     (action,) = window.catalog_menu(entry).actions()
     assert action.text() == "Open in Portolan browser \u2197"
@@ -701,7 +709,7 @@ def test_browser_links_of_the_open_node(iface, server, catalog, monkeypatch):
     # but not to the raw STAC document. Each is one row of the table.
     facts = window.facts.text()
     assert ">More<" in facts
-    assert window_module.BROWSER_LINK in facts and link in facts
+    assert facts_module.BROWSER_LINK in facts and link in facts
     assert "STAC document" not in facts
     assert "<p>" not in facts
     window.disconnect_canvas()
@@ -724,7 +732,7 @@ def test_details_are_one_list_of_facts(iface, server, catalog):
         {"rel": "license", "href": portal, "title": "License"},
         {"rel": "via", "href": "https://opendataphilly.org/datasets/land-use/"},
     ]
-    window._show_document(window_module.read_document(raw, href))
+    window.show_document(window_module.read_document(raw, href))
     facts = window.facts.text()
     keys = [cell.split("</td>")[0].rsplit(">", 1)[-1] for cell in facts.split("<tr>")[1:]]
     assert keys == ["Publisher", "License", "Size", "Documentation", "Source", "More"]
@@ -803,7 +811,7 @@ def test_scope_area_drives_a_parquet_add(iface, server, catalog):
     open_collection(window)
     area = _polygon_layer(L_SHAPE)
     window.scope_picker.choose(FROM_LAYER)
-    window.scope_picker._layers.setLayer(area)
+    window.scope_picker.layer_combo.setLayer(area)
     assert window.load_button.isEnabled()
     window.load_button.click()
     wait_for(lambda: len(QgsProject.instance().mapLayers()) == 2, timeout=60)
@@ -868,11 +876,11 @@ def test_plain_parquet_is_a_table(iface, server, catalog):
             }
         },
     }
-    window._show_document(window_module.read_document(raw, href))
+    window.show_document(window_module.read_document(raw, href))
     row = asset_row(window, "plain")
     assert row.data(0, BADGE_ROLE)[0] == "Parquet"
     assert window.load_button.text() == "Load table"
-    assert window_module.TABLE_TIP in window.load_button.toolTip()
+    assert loadable.TABLE_TIP in window.load_button.toolTip()
     assert "plain (Parquet)" in window.load_button.toolTip()
     # A table has no geometry, so no area applies to it.
     assert window.scope_row.isHidden()
@@ -889,8 +897,8 @@ def test_item_collection_adds_one_mosaic(iface, server, catalog):
     # The two items show as one row.
     assert collection.child(0).text(0) == "2 files"
     window.tree.setCurrentItem(collection.child(0))
-    wait_for(lambda: window._document is not None)
-    assert window._document.title == "Test tiles"
+    wait_for(lambda: window.document is not None)
+    assert window.document.title == "Test tiles"
     assert not window.mosaic_button.isHidden()
     assert window.view_button.isHidden() and window.load_button.isHidden()
     assert "Add as one layer" in window.no_assets.text()
@@ -912,32 +920,51 @@ def test_one_task_uses_the_progress_bar_at_a_time(iface, server, catalog):
     # download hid the Cancel button of the download.
     window, collection = open_tiles(iface, server, catalog)
     window.tree.setCurrentItem(collection.child(0))
-    wait_for(lambda: window._document is not None and window.mosaic_button.isEnabled())
+    wait_for(lambda: window.document is not None and window.mosaic_button.isEnabled())
     for flag in ("_job", "_listing", "_mosaic_busy"):
         setattr(window, flag, object() if flag == "_job" else True)
-        window._sync_buttons()
+        # The picker's signal updates the buttons.
+        window.scope_picker.changed.emit()
         assert not window.mosaic_button.isEnabled(), flag
         assert not window.download_all.isEnabled(), flag
         assert not window.download_selected.isEnabled(), flag
         # A direct call does nothing either.
-        window._add_mosaic()
-        window._download_all()
+        window.add_mosaic()
+        window.start_download()
         assert window.progress.isHidden(), flag
         setattr(window, flag, None if flag == "_job" else False)
-        window._sync_buttons()
+        window.scope_picker.changed.emit()
     assert window.mosaic_button.isEnabled()
     window.disconnect_canvas()
 
 
-def test_a_busy_window_says_why_a_click_waits(iface, server, catalog):
+def _held_search(monkeypatch):
+    """Hold the mosaic search until Cancel stops it. The event tells that it started."""
+    searching = threading.Event()
+
+    def held(document, scope, fetch_json, executor=None, cancelled=None):
+        searching.set()
+        deadline = time.monotonic() + 10
+        while not cancelled() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        return []
+
+    monkeypatch.setattr(window_module.mosaic, "item_hrefs_in", held)
+    return searching
+
+
+def test_a_busy_window_says_why_a_click_waits(iface, server, catalog, monkeypatch):
     # Before, a click while a task ran did nothing and said nothing.
     window, collection = open_tiles(iface, server, catalog)
     window.tree.setCurrentItem(collection.child(0))
-    wait_for(lambda: window._document is not None and window.mosaic_button.isEnabled())
-    window._mosaic_busy = True
-    window._add_mosaic()
+    wait_for(lambda: window.document is not None and window.mosaic_button.isEnabled())
+    searching = _held_search(monkeypatch)
+    window.add_mosaic()
+    wait_for(searching.is_set)
+    window.add_mosaic()
     assert any("Wait for the mosaic to finish" in item.text() for item in iface.bar.items())
-    window._mosaic_busy = False
+    window.cancel.click()
+    wait_for(lambda: not window.is_busy(), timeout=60)
     window.disconnect_canvas()
 
 
@@ -946,14 +973,14 @@ def test_a_failed_mosaic_search_does_not_leave_the_window_busy(iface, server, ca
     # "Add as one layer" did nothing.
     window, collection = open_tiles(iface, server, catalog)
     window.tree.setCurrentItem(collection.child(0))
-    wait_for(lambda: window._document is not None and window.mosaic_button.isEnabled())
+    wait_for(lambda: window.document is not None and window.mosaic_button.isEnabled())
 
     def broken(*_args):
         raise RuntimeError("broken on purpose")
 
     monkeypatch.setattr(window, "_build_mosaic", broken)
     window.mosaic_button.click()
-    wait_for(lambda: not window._mosaic_busy, timeout=60)
+    wait_for(lambda: not window.is_busy(), timeout=60)
     monkeypatch.undo()
     window.mosaic_button.click()
     wait_for(lambda: len(QgsProject.instance().mapLayers()) == 1, timeout=60)
@@ -979,22 +1006,13 @@ def test_cancel_stops_a_mosaic_search(iface, server, catalog, monkeypatch):
     # showed Cancel for a download only.
     window, collection = open_tiles(iface, server, catalog)
     window.tree.setCurrentItem(collection.child(0))
-    wait_for(lambda: window._document is not None and window.mosaic_button.isEnabled())
-    searching = threading.Event()
-
-    def held(document, scope, fetch_json, executor=None, cancelled=None):
-        searching.set()
-        deadline = time.monotonic() + 10
-        while not cancelled() and time.monotonic() < deadline:
-            time.sleep(0.01)
-        return []
-
-    monkeypatch.setattr(window_module.mosaic, "item_hrefs_in", held)
+    wait_for(lambda: window.document is not None and window.mosaic_button.isEnabled())
+    searching = _held_search(monkeypatch)
     window.mosaic_button.click()
     wait_for(searching.is_set)
     assert not window.cancel.isHidden()
     window.cancel.click()
-    wait_for(lambda: not window._busy(), timeout=60)
+    wait_for(lambda: not window.is_busy(), timeout=60)
     assert window.cancel.isHidden()
     assert any("Stopped the search" in item.text() for item in iface.bar.items())
     assert QgsProject.instance().mapLayers() == {}
@@ -1004,7 +1022,7 @@ def test_cancel_stops_a_mosaic_search(iface, server, catalog, monkeypatch):
 def test_cancel_stops_a_mosaic_build(iface, server, catalog, monkeypatch):
     window, collection = open_tiles(iface, server, catalog)
     window.tree.setCurrentItem(collection.child(0))
-    wait_for(lambda: window._document is not None and window.mosaic_button.isEnabled())
+    wait_for(lambda: window.document is not None and window.mosaic_button.isEnabled())
     building = threading.Event()
 
     def held(hrefs, cancelled, clip=None):
@@ -1019,7 +1037,7 @@ def test_cancel_stops_a_mosaic_build(iface, server, catalog, monkeypatch):
     wait_for(building.is_set, timeout=60)
     wait_for(lambda: not window.cancel.isHidden())
     window.cancel.click()
-    wait_for(lambda: not window._busy(), timeout=60)
+    wait_for(lambda: not window.is_busy(), timeout=60)
     assert window.cancel.isHidden()
     assert any("Stopped the mosaic" in item.text() for item in iface.bar.items())
     window.disconnect_canvas()
@@ -1029,14 +1047,14 @@ def test_cancel_stops_a_download_listing(iface, server, catalog, tmp_path, asked
     window = open_window(iface, server, catalog)
     open_collection(window)
     window.header.clicked.emit()
-    wait_for(lambda: window._document is not None and window._document.kind == "catalog")
+    wait_for(lambda: window.document is not None and window.document.kind == "catalog")
     reading, release = _held_fetch(monkeypatch)
     window.download_all.trigger()
     wait_for(reading.is_set)
     assert not window.cancel.isHidden()
     window.cancel.click()
     release.set()
-    wait_for(lambda: not window._busy(), timeout=60)
+    wait_for(lambda: not window.is_busy(), timeout=60)
     assert window.cancel.isHidden()
     assert asked == []
     assert any("Listing of" in item.text() for item in iface.bar.items())
@@ -1051,7 +1069,7 @@ def test_a_failed_listing_does_not_leave_the_window_busy(
     window = open_window(iface, server, catalog)
     open_collection(window)
     window.header.clicked.emit()
-    wait_for(lambda: window._document is not None and window._document.kind == "catalog")
+    wait_for(lambda: window.document is not None and window.document.kind == "catalog")
 
     def broken(*_args):
         raise RuntimeError("broken on purpose")
@@ -1062,7 +1080,7 @@ def test_a_failed_listing_does_not_leave_the_window_busy(
     window.download_all.trigger()
     wait_for(lambda: logged, timeout=60)
     assert "broken on purpose" in logged[0]
-    assert not window._busy()
+    assert not window.is_busy()
     assert window.download_all.isEnabled()
     window.disconnect_canvas()
 
@@ -1087,7 +1105,7 @@ def test_large_mosaic_asks_first(iface, server, catalog, monkeypatch):
     monkeypatch.setattr(window_module.QMessageBox, "question", question)
     window, collection = open_tiles(iface, server, catalog)
     window.tree.setCurrentItem(collection)
-    wait_for(lambda: window._document is not None)
+    wait_for(lambda: window.document is not None)
     window.mosaic_button.click()
     wait_for(lambda: asked and window.mosaic_button.isEnabled(), timeout=60)
     assert asked[0].startswith("2 files of Test tiles")
@@ -1128,11 +1146,11 @@ def test_saved_project_rebuilds_the_mosaic(iface, catalog, tmp_path, monkeypatch
 def test_download_keeps_the_items_in_the_scope(iface, server, catalog, tmp_path, asked):
     window, collection = open_tiles(iface, server, catalog)
     window.tree.setCurrentItem(collection)
-    wait_for(lambda: window._document is not None)
+    wait_for(lambda: window.document is not None)
     iface.canvas.setExtent(QgsRectangle(10.9, 43.9, 11.5, 44.7))
     window.scope_picker.choose(MAP_VIEW)
     window.download_all.trigger()
-    wait_for(lambda: asked and window._job is None and not window.cancel.isVisible(), timeout=60)
+    wait_for(lambda: asked and not window.is_busy() and not window.cancel.isVisible(), timeout=60)
     assert "1 item outside the chosen area" in asked[0]
     assert (tmp_path / "tiles" / "collection.json").is_file()
     assert (tmp_path / "tiles" / "a" / "a.tif").is_file()
@@ -1145,11 +1163,11 @@ def test_download_clips_the_parquet_to_the_scope(iface, server, catalog, tmp_pat
     open_collection(window)
     area = _polygon_layer(L_SHAPE)
     window.scope_picker.choose(FROM_LAYER)
-    window.scope_picker._layers.setLayer(area)
+    window.scope_picker.layer_combo.setLayer(area)
     # Download in Add to map downloads everything in the area.
     window.download_all.trigger()
     clipped = tmp_path / "points.gpkg"
-    wait_for(lambda: clipped.is_file() and window._job is None, timeout=60)
+    wait_for(lambda: clipped.is_file() and not window.is_busy(), timeout=60)
     wait_for(lambda: any("Wrote 11 features" in item.text() for item in iface.bar.items()))
     assert "1 GeoParquet file downloads as GeoPackage" in asked[0]
     # The GeoJSON downloads whole. The GeoParquet does not download at all.
@@ -1160,25 +1178,19 @@ def test_download_clips_the_parquet_to_the_scope(iface, server, catalog, tmp_pat
     window.disconnect_canvas()
 
 
-def test_clipped_path():
-    root = "https://x.test/catalog.json"
-    assert window_module.clipped_path("https://x.test/a/b.parquet", root) == "a/b.gpkg"
-    assert window_module.clipped_path("https://x.test/b.geoparquet", root) == "b.gpkg"
-
-
 def test_item_collection_lists_its_files(iface, server, catalog, monkeypatch):
     monkeypatch.setattr(window_module, "NODE_PAGE", 1)
     window, collection = open_tiles(iface, server, catalog)
     window.tree.setCurrentItem(collection.child(0))
-    wait_for(lambda: window._document is not None)
+    wait_for(lambda: window.document is not None)
     # One page of the item files, then a row that lists the rest. Add as one
     # layer covers every file, so no row stands for all of them.
     wait_for(lambda: rows(window.assets) == ["a", "Show 1 more of 1 file"])
     # The row holds the COG once the item is read.
-    wait_for(lambda: hasattr(asset_row(window, "a").data(0, window_module._ROLE), "asset"))
+    wait_for(lambda: hasattr(asset_row(window, "a").data(0, ROLE), "asset"))
     a = asset_row(window, "a")
     assert a.data(0, BADGE_ROLE)[:2] == ("COG", "cog")
-    assert a.data(0, window_module._ROLE).href == f"{catalog['base']}/tiles/a/a.tif"
+    assert a.data(0, ROLE).href == f"{catalog['base']}/tiles/a/a.tif"
     # The explanation stays under the list, not in place of it.
     assert not window.no_assets.isHidden() and not window.assets.isHidden()
     window.assets.itemClicked.emit(window.assets.topLevelItem(1), 0)
@@ -1186,7 +1198,7 @@ def test_item_collection_lists_its_files(iface, server, catalog, monkeypatch):
     assert window.assets.selectedItems() == []
     assert not window.add.isEnabled()
     # A single item file adds as its own layer, and its row shows the mark.
-    wait_for(lambda: hasattr(asset_row(window, "b").data(0, window_module._ROLE), "asset"))
+    wait_for(lambda: hasattr(asset_row(window, "b").data(0, ROLE), "asset"))
     asset_row(window, "b").setSelected(True)
     assert window.add.isEnabled() and window.download_selected.isEnabled()
     window.add.click()

@@ -73,13 +73,13 @@ def _run(url: str, baseline: bool, steps: int) -> None:
     from portolan_registry_qgis.qgis_io import layers, network, tileserver
 
     if baseline:
-        tileserver._Handler.protocol_version = "HTTP/1.0"
+        tileserver.TileHandler.protocol_version = "HTTP/1.0"
         tileserver.CACHE_CONTROL = "no-store"
 
     counts = {"reads": 0, "bytes": 0, "connections": 0}
     lock = threading.Lock()
     fetch = network._range
-    setup = tileserver._Handler.setup
+    setup = tileserver.TileHandler.setup
 
     def counted_fetch(url: str, offset: int, length: int) -> tuple[bytes, bytes]:
         body, cache_control = fetch(url, offset, length)
@@ -94,7 +94,7 @@ def _run(url: str, baseline: bool, steps: int) -> None:
         setup(handler)
 
     network._range = counted_fetch
-    tileserver._Handler.setup = counted_setup  # type: ignore[method-assign,assignment]
+    tileserver.TileHandler.setup = counted_setup  # type: ignore[method-assign,assignment]
 
     server = tileserver.TileServer()
     layer = layers.vector_tile_layer(server, tileserver.open_archive(url), "bench")

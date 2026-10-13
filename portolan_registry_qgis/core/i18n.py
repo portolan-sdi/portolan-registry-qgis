@@ -29,7 +29,9 @@ _GROUP = {"en": ",", "es": ".", "fr": " "}
 _DECIMAL = {"en": ".", "es": ",", "fr": ","}
 
 
-class _State:
+class State:
+    """The language and the catalog that the plugin shows."""
+
     language = SOURCE_LANGUAGE
     translation: gettext.NullTranslations = gettext.NullTranslations()
 
@@ -62,23 +64,23 @@ def set_language(locale: str | None, directory: Path = LOCALE_DIR) -> str:
 
 def use(translation: gettext.NullTranslations, code: str) -> None:
     """Show text through ``translation``, with the numbers of language ``code``."""
-    _State.translation = translation
-    _State.language = code if code in _GROUP else SOURCE_LANGUAGE
+    State.translation = translation
+    State.language = code if code in _GROUP else SOURCE_LANGUAGE
 
 
 def language() -> str:
     """Return the code of the language the plugin shows, such as "en"."""
-    return _State.language
+    return State.language
 
 
 def _(message: str) -> str:
     """Return ``message`` in the current language."""
-    return _State.translation.gettext(message)
+    return State.translation.gettext(message)
 
 
 def ngettext(singular: str, plural: str, n: int) -> str:
     """Return the form of a message that fits ``n``, in the current language."""
-    return _State.translation.ngettext(singular, plural, n)
+    return State.translation.ngettext(singular, plural, n)
 
 
 def N_(message: str) -> str:  # noqa: N802 - the gettext name for a deferred mark
@@ -99,13 +101,13 @@ def count(singular: str, plural: str, n: int) -> str:
 
 def number(value: int) -> str:
     """Return ``value`` with the digit groups of the current language."""
-    return f"{value:,}".replace(",", _GROUP[_State.language])
+    return f"{value:,}".replace(",", _GROUP[State.language])
 
 
 def decimal(value: float, digits: int = 1) -> str:
     """Return ``value`` to ``digits`` places, with the separators of the current language."""
     text = f"{value:,.{digits}f}"
     return "".join(
-        _GROUP[_State.language] if c == "," else _DECIMAL[_State.language] if c == "." else c
+        _GROUP[State.language] if c == "," else _DECIMAL[State.language] if c == "." else c
         for c in text
     )

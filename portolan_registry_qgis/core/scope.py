@@ -47,6 +47,25 @@ def bbox_of(scope: Scope) -> Bbox | None:
     return None
 
 
+def clip_wkt(scope: Scope) -> str | None:
+    """Return the polygon that clips a mosaic for ``scope``, as WKT in EPSG:4326.
+
+    A mosaic shows only the data in the area, so a map view clips to the
+    view. Everything clips to nothing.
+    """
+    if isinstance(scope, Area):
+        return scope.wkt
+    if isinstance(scope, MapView):
+        west, south, east, north = scope.bbox
+        # A view across the antimeridian is two boxes, one on each side.
+        spans = [(west, 180.0), (-180.0, east)] if west > east else [(west, east)]
+        boxes = [
+            f"(({w} {south},{e} {south},{e} {north},{w} {north},{w} {south}))" for w, e in spans
+        ]
+        return f"MULTIPOLYGON({','.join(boxes)})"
+    return None
+
+
 def _wrap(longitude: float) -> float:
     """Move a longitude outside [-180, 180] into that range."""
     if -180 <= longitude <= 180:

@@ -330,6 +330,35 @@ def test_tiles_without_styles_use_the_qgis_style(catalog, collection, server):
     assert layer.styleManager().styles() == [layers.DEFAULT_STYLE_NAME]
 
 
+def test_tiles_report_the_archive_extent(catalog, server):
+    """The layer extent is the archive bounds, not the Web Mercator world."""
+    archive = open_archive(f"{catalog['base']}/points.pmtiles")
+    layer = layers.vector_tile_layer(server, archive, "points")
+    world = layer.dataProvider().extent()
+    extent = layer.extent()
+    assert extent.width() < world.width() / 100
+    to_degrees = QgsCoordinateTransform(
+        layer.crs(), QgsCoordinateReferenceSystem("EPSG:4326"), QgsProject.instance()
+    )
+    degrees = to_degrees.transformBoundingBox(extent)
+    west, south, east, north = archive.bounds
+    assert degrees.xMinimum() == pytest.approx(west, abs=1e-6)
+    assert degrees.yMinimum() == pytest.approx(south, abs=1e-6)
+    assert degrees.xMaximum() == pytest.approx(east, abs=1e-6)
+    assert degrees.yMaximum() == pytest.approx(north, abs=1e-6)
+    # A new data source resets the extent to the world. The plugin applies
+    # the bounds again when it reopens the layer of a saved project.
+    layer.setDataSource(layer.source(), layer.name(), layer.providerType())
+    assert layer.extent() == world
+    layers.apply_bounds(layer, archive)
+    assert layer.extent() == extent
+    # An archive without bounds keeps the world extent.
+    layers.apply_bounds(layer, replace(archive, bounds=None))
+    assert layer.extent() == extent
+    bare = layers.vector_tile_layer(server, replace(archive, bounds=None), "points")
+    assert bare.extent() == world
+
+
 def test_unreadable_style_is_skipped_with_a_warning(collection, server):
     red, blue = collection.styles
     broken = replace(red, href=red.href.replace("red", "gone"))

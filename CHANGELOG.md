@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Zoom to Layer** on a PMTiles layer frames the data instead of the whole world. The layer properties show the extent of the archive.
 - The plugin shows its window, messages, and plugin manager description in Spanish and French when QGIS runs in either language. Numbers and file sizes use that language's separators.
 - The documentation site is available in Spanish at `/es/` and in French at `/fr/`, with a language menu in the header.
 

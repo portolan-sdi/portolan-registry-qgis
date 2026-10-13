@@ -1,5 +1,5 @@
 ---
-source_sha256: aeda9e0355eda095003303e738695ee4e07113745adbbc096e1702c9c6ab20b6
+source_sha256: 33a7dd3dbf845ead2ecc44d787cc6339d850b4758d109a8db6c5ba90d896b3a5
 ---
 
 <!-- vale off -->
@@ -20,7 +20,7 @@ Pour la suite QGIS, créez un environnement virtuel sur le Python qui a PyQGIS 
 
 ```bash
 uv venv --python /usr/bin/python3 --system-site-packages .venv-qgis
-VIRTUAL_ENV=.venv-qgis uv pip install pytest pytest-timeout duckdb babel
+VIRTUAL_ENV=.venv-qgis uv pip install pytest pytest-timeout duckdb babel pytest-cov
 QT_QPA_PLATFORM=offscreen .venv-qgis/bin/python -m pytest tests/in_qgis
 ```
 
@@ -35,6 +35,55 @@ QT_QPA_PLATFORM=offscreen .venv-qgis/bin/python \
   scripts/bench_tiles.py
 QT_QPA_PLATFORM=offscreen .venv-qgis/bin/python \
   scripts/bench_tiles.py --baseline
+```
+
+## Contrôles de qualité
+
+Pre-commit exécute ces vérifications, et la CI les exécute de nouveau sur chaque pull request. Une modification doit réussir chacune d'elles.
+
+| Contrôle | Seuil |
+| --- | --- |
+| Ruff | L'ensemble de règles de `pyproject.toml`, avec les règles de pylint, de pytest et de tryceratops. Complexité de McCabe de 10 ou moins. |
+| mypy | Mode strict sur le paquet et sur `scripts`. |
+| vulture | Aucun nom inutilisé avec une confiance de 60 % ou plus. |
+| xenon sur le paquet | Chaque bloc au rang B ou mieux. Chaque module et la moyenne au rang A. |
+| xenon sur les tests et les scripts | Chaque bloc au rang C ou mieux. Chaque module au rang B ou mieux, et la moyenne au rang A. |
+| jscpd | Aucune copie de 50 jetons et 5 lignes ou plus. |
+| import-linter | Le cœur n'importe aucun code de QGIS, de Qt ni de GDAL, ni aucune des couches QGIS. `qgis_io` n'importe rien de `gui`. |
+| Couverture, suite uv | 99 % du cœur. |
+| Couverture, suite QGIS | 87 % de `plugin.py`, `gui` et `qgis_io`. |
+| diff-cover | 90 % des lignes modifiées. Dans la CI seulement. |
+
+Exécutez les contrôles un par un :
+
+```bash
+uv run ruff check .
+uv run mypy
+uv run vulture
+uv run xenon --max-absolute=B --max-modules=A \
+  --max-average=A portolan_registry_qgis
+uv run xenon --max-absolute=C --max-modules=B \
+  --max-average=A tests scripts
+uvx prek run jscpd --all-files
+uv run lint-imports
+uv run pytest -n 4 --cov=portolan_registry_qgis
+```
+
+La suite QGIS lit sa configuration de couverture dans un fichier qui lui est propre :
+
+```bash
+QT_QPA_PLATFORM=offscreen .venv-qgis/bin/python \
+  -m pytest -p no:cacheprovider tests/in_qgis \
+  --cov=portolan_registry_qgis \
+  --cov-config=tests/in_qgis/coverage.ini \
+  --cov-report=term-missing --cov-fail-under=87
+```
+
+Pour exécuter tous les hooks des deux étapes :
+
+```bash
+uvx prek run --all-files
+uvx prek run --all-files --hook-stage pre-push
 ```
 
 ## Traductions

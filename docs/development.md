@@ -14,7 +14,7 @@ For the QGIS suite, make a virtual environment on the Python that has PyQGIS:
 
 ```bash
 uv venv --python /usr/bin/python3 --system-site-packages .venv-qgis
-VIRTUAL_ENV=.venv-qgis uv pip install pytest pytest-timeout duckdb babel
+VIRTUAL_ENV=.venv-qgis uv pip install pytest pytest-timeout duckdb babel pytest-cov
 QT_QPA_PLATFORM=offscreen .venv-qgis/bin/python -m pytest tests/in_qgis
 ```
 
@@ -29,6 +29,55 @@ QT_QPA_PLATFORM=offscreen .venv-qgis/bin/python \
   scripts/bench_tiles.py
 QT_QPA_PLATFORM=offscreen .venv-qgis/bin/python \
   scripts/bench_tiles.py --baseline
+```
+
+## Quality gates
+
+Pre-commit runs these checks, and CI runs them again on each pull request. A change must pass each one.
+
+| Gate | Threshold |
+| --- | --- |
+| Ruff | The rule set in `pyproject.toml`, with the pylint, pytest, and tryceratops rules. McCabe complexity 10 or lower. |
+| mypy | Strict mode on the package and `scripts`. |
+| vulture | No unused name at 60% confidence or more. |
+| xenon on the package | Each block at rank B or better. Each module and the average at rank A. |
+| xenon on the tests and scripts | Each block at rank C or better. Each module at rank B or better, and the average at rank A. |
+| jscpd | No copy of 50 tokens and 5 lines or more. |
+| import-linter | The core imports no QGIS, Qt, or GDAL code, and none of the QGIS layers. `qgis_io` imports nothing from `gui`. |
+| Coverage, uv suite | 99% of the core. |
+| Coverage, QGIS suite | 87% of `plugin.py`, `gui`, and `qgis_io`. |
+| diff-cover | 90% of the changed lines. CI only. |
+
+Run the gates one at a time:
+
+```bash
+uv run ruff check .
+uv run mypy
+uv run vulture
+uv run xenon --max-absolute=B --max-modules=A \
+  --max-average=A portolan_registry_qgis
+uv run xenon --max-absolute=C --max-modules=B \
+  --max-average=A tests scripts
+uvx prek run jscpd --all-files
+uv run lint-imports
+uv run pytest -n 4 --cov=portolan_registry_qgis
+```
+
+The QGIS suite takes its coverage settings from a file of its own:
+
+```bash
+QT_QPA_PLATFORM=offscreen .venv-qgis/bin/python \
+  -m pytest -p no:cacheprovider tests/in_qgis \
+  --cov=portolan_registry_qgis \
+  --cov-config=tests/in_qgis/coverage.ini \
+  --cov-report=term-missing --cov-fail-under=87
+```
+
+To run every hook of both stages:
+
+```bash
+uvx prek run --all-files
+uvx prek run --all-files --hook-stage pre-push
 ```
 
 ## Translations

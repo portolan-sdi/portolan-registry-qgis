@@ -115,6 +115,8 @@ from portolan_registry_qgis.qgis_io.network import (
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from qgis.core import QgsTask
+
     from portolan_registry_qgis.core.registry import CatalogEntry
     from portolan_registry_qgis.core.stac import Bbox
     from portolan_registry_qgis.gui.pictures import Picture
@@ -279,6 +281,9 @@ class RegistryWindow(QDialog):
         self._mosaic_busy = False
         # True while a download lists its files, before the job starts.
         self._listing = False
+        # The task of the mosaic search, the mosaic build, or the listing.
+        # Cancel stops it.
+        self._task: QgsTask | None = None
         # The COG file of each item read for the "All files" list, by item href.
         self._item_files: dict[str, Asset | None] = {}
         self.images = ImageCache(self)
@@ -659,7 +664,7 @@ class RegistryWindow(QDialog):
         self.zoom.clicked.connect(self._zoom)
         self.download_selected.triggered.connect(self._download_selected)
         self.download_all.triggered.connect(self._download_all)
-        self.cancel.clicked.connect(self._cancel_download)
+        self.cancel.clicked.connect(self._cancel)
         self.view_button.clicked.connect(self._view_on_map)
         self.load_button.clicked.connect(self._load_full_data)
         self.mosaic_button.clicked.connect(self._add_mosaic)
@@ -1722,6 +1727,7 @@ class RegistryWindow(QDialog):
             self._build_mosaic(result, title, _clip_of(scope))
 
         task = run_task(_("List the files of {title}").format(title=title), find, found)
+        self._track(task)
 
     def _confirm_mosaic(self, title: str, files: int) -> bool:
         lie = ngettext(
@@ -1744,6 +1750,7 @@ class RegistryWindow(QDialog):
             return mosaic.write_vrt(hrefs, task.isCanceled, clip)
 
         def done(result: object, error: BaseException | None) -> None:
+            self._hide_progress()
             self._mosaic_done()
             if not isinstance(result, Path):
                 if isinstance(error, mosaic.MosaicCancelledError):
@@ -1768,10 +1775,12 @@ class RegistryWindow(QDialog):
             )
             self._info(_zoomed(added.format(n=number(len(hrefs)), name=name), moved))
 
-        self._info(
-            count("Building a mosaic of {n} file…", "Building a mosaic of {n} files…", len(hrefs))
+        self._show_progress(
+            0,
+            0,
+            count("Building a mosaic of {n} file…", "Building a mosaic of {n} files…", len(hrefs)),
         )
-        run_task(_("Build a mosaic of {name}").format(name=name), write, done)
+        self._track(run_task(_("Build a mosaic of {name}").format(name=name), write, done))
 
     def _mosaic_done(self) -> None:
         self._mosaic_busy = False
@@ -1961,6 +1970,7 @@ class RegistryWindow(QDialog):
 
         # Translators: a task in the QGIS task manager that lists the files below {title}.
         task = run_task(_("List {title}").format(title=document.title), build, planned)
+        self._track(task)
 
     def _confirm(self, plan: download.Plan, clipped: int = 0) -> bool:
         files = len(plan.files)
@@ -2020,9 +2030,17 @@ class RegistryWindow(QDialog):
         self._sync_buttons()
         job.start()
 
-    def _cancel_download(self) -> None:
+    def _track(self, task: QgsTask) -> None:
+        """Let Cancel stop ``task``, a search, a listing, or a mosaic build."""
+        self._task = task
+        self.cancel.show()
+
+    def _cancel(self) -> None:
+        """Stop the download, or the task that Cancel tracks."""
         if self._job is not None:
             self._job.cancel()
+        elif self._task is not None:
+            self._task.cancel()
 
     def _downloaded(self, folder: Path, report: DownloadReport) -> None:
         self._job = None
@@ -2061,6 +2079,7 @@ class RegistryWindow(QDialog):
         self.task_bar.show()
 
     def _hide_progress(self) -> None:
+        self._task = None
         self.progress.hide()
         self.cancel.hide()
         self.task_bar.hide()

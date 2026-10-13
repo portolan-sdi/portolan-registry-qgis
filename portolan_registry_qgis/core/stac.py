@@ -14,6 +14,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from portolan_registry_qgis.core.geoparquet import GEOMETRY_NAMES
 from portolan_registry_qgis.core.hrefs import absolute_href, asset_href, folder_name, is_http_url
 from portolan_registry_qgis.core.i18n import _
 
@@ -355,7 +356,6 @@ def _account(raw: dict[str, Any], fallback: str | None) -> str | None:
     return fallback
 
 
-_GEOMETRY_NAMES = frozenset({"geometry", "geom", "the_geom", "wkb_geometry", "shape", "geog"})
 _GEOMETRY_TYPES = (
     "geometry",
     "geography",
@@ -380,7 +380,7 @@ def is_geometry_column(column: object) -> bool:
         return False
     name = str(column.get("name") or "").lower()
     kind = str(column.get("type") or "").lower()
-    return name in _GEOMETRY_NAMES or kind.startswith(_GEOMETRY_TYPES)
+    return name in GEOMETRY_NAMES or kind.startswith(_GEOMETRY_TYPES)
 
 
 def is_tabular(columns: object) -> bool:

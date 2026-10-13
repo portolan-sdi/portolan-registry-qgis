@@ -36,7 +36,9 @@ _INT_TYPES = (
 # digits. These types go to the GeoPackage as DOUBLE.
 _WIDE_TYPES = ("HUGEINT", "UHUGEINT")
 _DOUBLE_TYPES = ("FLOAT", "DOUBLE", "REAL")
-_GEOMETRY_NAMES = ("geometry", "geom", "wkb_geometry", "the_geom")
+# The common names of a WKB geometry column, in lower case. The STAC table
+# columns use the same names.
+GEOMETRY_NAMES = frozenset({"geometry", "geom", "the_geom", "wkb_geometry", "shape", "geog"})
 _MULTI = {
     "Point": "MultiPoint",
     "LineString": "MultiLineString",
@@ -214,7 +216,7 @@ def _pick_geometry(
             info = columns.get(name)
             return name, info if isinstance(info, dict) else {}
     for name, duckdb_type in schema:
-        if name.lower() in _GEOMETRY_NAMES and duckdb_type.upper() == "BLOB":
+        if name.lower() in GEOMETRY_NAMES and duckdb_type.upper() == "BLOB":
             info = columns.get(name)
             return name, info if isinstance(info, dict) else {}
     return None

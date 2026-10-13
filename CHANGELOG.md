@@ -5,6 +5,9 @@
 - **Zoom to Layer** on a PMTiles layer frames the data instead of the whole world. The layer properties show the extent of the archive.
 - The plugin shows its window, messages, and plugin manager description in Spanish and French when QGIS runs in either language. Numbers and file sizes use that language's separators.
 - The documentation site is available in Spanish at `/es/` and in French at `/fr/`, with a language menu in the header.
+- **Load full data** finds the geometry of a GeoParquet file without geo metadata in a WKB column named `shape` or `geog`, the same names that the STAC table columns use.
+- A PMTiles style or sprite on an S3 website endpoint loads over HTTPS, as the catalog itself does.
+- **Cancel** stops the search for the files of a mosaic, the build of the mosaic, and the listing of the files to download. Before, it stopped only a download. The progress bar shows while the mosaic builds.
 
 ## 0.2.0 - 2026-10-11
 

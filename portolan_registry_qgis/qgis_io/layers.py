@@ -15,7 +15,7 @@ import csv
 import json
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import urlsplit
 
 from osgeo import gdal
 from qgis.core import (
@@ -38,6 +38,7 @@ from qgis.PyQt.QtCore import QCoreApplication
 
 from portolan_registry_qgis.core.diagnose import open_failure
 from portolan_registry_qgis.core.hrefs import (
+    absolute_href,
     extension_blocked,
     plain_vsicurl_path,
     url_extension,
@@ -246,7 +247,7 @@ def pmtiles_sources(
             url = url[len(_PMTILES_SCHEME) :]
         elif not urlsplit(url).path.lower().endswith(".pmtiles"):
             continue
-        found[str(source_id)] = urljoin(style_url, url)
+        found[str(source_id)] = absolute_href(url, style_url)
     return found
 
 
@@ -515,7 +516,7 @@ def _sprite(
     base = style.get("sprite")
     if not isinstance(base, str):
         return None
-    root = urljoin(style_url, base)
+    root = absolute_href(base, style_url)
     if root not in cache:
         cache[root] = None
         try:

@@ -151,6 +151,9 @@ def test_type_from_first(row, expected):
         ([("x", "INTEGER"), ("shape", "GEOMETRY('EPSG:3857')")], None, "shape"),
         # A WKB blob with a conventional name.
         ([("wkb_geometry", "BLOB")], None, "wkb_geometry"),
+        # The same names that the STAC table columns accept.
+        ([("id", "INTEGER"), ("shape", "BLOB")], None, "shape"),
+        ([("GEOG", "BLOB")], None, "GEOG"),
         # A primary column missing from the schema falls back to the type.
         ([("g", "GEOMETRY")], {"primary_column": "nope"}, "g"),
     ],

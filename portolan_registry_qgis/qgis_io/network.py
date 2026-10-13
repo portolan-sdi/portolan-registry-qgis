@@ -24,6 +24,7 @@ from qgis.core import (
 from qgis.PyQt.QtCore import QRunnable, Qt, QThreadPool, QUrl
 from qgis.PyQt.QtNetwork import QNetworkRequest
 
+from portolan_registry_qgis.core.hrefs import is_http_url
 from portolan_registry_qgis.core.i18n import _
 
 if TYPE_CHECKING:
@@ -165,7 +166,7 @@ class RemoteRange:
 
 def range_fetcher(location: str) -> Callable[[int, int], bytes]:
     """Return a ``fetch_range(offset, length)`` for a URL or a local path."""
-    if location.startswith(("http://", "https://")):
+    if is_http_url(location):
         return RemoteRange(location)
     path = Path(QUrl(location).toLocalFile() if location.startswith("file:") else location)
 

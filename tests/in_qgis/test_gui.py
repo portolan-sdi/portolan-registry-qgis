@@ -31,7 +31,7 @@ from portolan_registry_qgis.gui.scope import EVERYTHING, FROM_LAYER, MAP_VIEW
 from portolan_registry_qgis.gui.widgets import BADGE_ROLE, ON_MAP_ROLE
 from portolan_registry_qgis.gui.window import RegistryWindow
 from portolan_registry_qgis.plugin import BROWSER_URL_SETTING, REGISTRY_URL_SETTING
-from portolan_registry_qgis.qgis_io import mosaic, parquet_layer
+from portolan_registry_qgis.qgis_io import mosaic, network, parquet_layer
 from portolan_registry_qgis.qgis_io.layers import PMTILES_PROPERTY
 from portolan_registry_qgis.qgis_io.tileserver import TileServer
 
@@ -958,6 +958,113 @@ def test_a_failed_mosaic_search_does_not_leave_the_window_busy(iface, server, ca
     monkeypatch.undo()
     window.mosaic_button.click()
     wait_for(lambda: len(QgsProject.instance().mapLayers()) == 1, timeout=60)
+    window.disconnect_canvas()
+
+
+def _held_fetch(monkeypatch):
+    """Hold each ``fetch_json`` of the window until the test releases it."""
+    real = window_module.fetch_json
+    reading, release = threading.Event(), threading.Event()
+
+    def held(url):
+        reading.set()
+        release.wait(10)
+        return real(url)
+
+    monkeypatch.setattr(window_module, "fetch_json", held)
+    return reading, release
+
+
+def test_cancel_stops_a_mosaic_search(iface, server, catalog, monkeypatch):
+    # Before, the busy message said to cancel the search, but the window
+    # showed Cancel for a download only.
+    window, collection = open_tiles(iface, server, catalog)
+    window.tree.setCurrentItem(collection.child(0))
+    wait_for(lambda: window._document is not None and window.mosaic_button.isEnabled())
+    searching = threading.Event()
+
+    def held(document, scope, fetch_json, executor=None, cancelled=None):
+        searching.set()
+        deadline = time.monotonic() + 10
+        while not cancelled() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        return []
+
+    monkeypatch.setattr(window_module.mosaic, "item_hrefs_in", held)
+    window.mosaic_button.click()
+    wait_for(searching.is_set)
+    assert not window.cancel.isHidden()
+    window.cancel.click()
+    wait_for(lambda: not window._busy(), timeout=60)
+    assert window.cancel.isHidden()
+    assert any("Stopped the search" in item.text() for item in iface.bar.items())
+    assert QgsProject.instance().mapLayers() == {}
+    window.disconnect_canvas()
+
+
+def test_cancel_stops_a_mosaic_build(iface, server, catalog, monkeypatch):
+    window, collection = open_tiles(iface, server, catalog)
+    window.tree.setCurrentItem(collection.child(0))
+    wait_for(lambda: window._document is not None and window.mosaic_button.isEnabled())
+    building = threading.Event()
+
+    def held(hrefs, cancelled, clip=None):
+        building.set()
+        deadline = time.monotonic() + 10
+        while not cancelled() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        raise mosaic.MosaicCancelledError("cancelled")
+
+    monkeypatch.setattr(window_module.mosaic, "write_vrt", held)
+    window.mosaic_button.click()
+    wait_for(building.is_set, timeout=60)
+    wait_for(lambda: not window.cancel.isHidden())
+    window.cancel.click()
+    wait_for(lambda: not window._busy(), timeout=60)
+    assert window.cancel.isHidden()
+    assert any("Stopped the mosaic" in item.text() for item in iface.bar.items())
+    window.disconnect_canvas()
+
+
+def test_cancel_stops_a_download_listing(iface, server, catalog, tmp_path, asked, monkeypatch):
+    window = open_window(iface, server, catalog)
+    open_collection(window)
+    window.header.clicked.emit()
+    wait_for(lambda: window._document is not None and window._document.kind == "catalog")
+    reading, release = _held_fetch(monkeypatch)
+    window.download_all.trigger()
+    wait_for(reading.is_set)
+    assert not window.cancel.isHidden()
+    window.cancel.click()
+    release.set()
+    wait_for(lambda: not window._busy(), timeout=60)
+    assert window.cancel.isHidden()
+    assert asked == []
+    assert any("Listing of" in item.text() for item in iface.bar.items())
+    window.disconnect_canvas()
+
+
+def test_a_failed_listing_does_not_leave_the_window_busy(
+    iface, server, catalog, asked, monkeypatch
+):
+    # An error in the callback must not leave the listing flag set, or every
+    # later download does nothing.
+    window = open_window(iface, server, catalog)
+    open_collection(window)
+    window.header.clicked.emit()
+    wait_for(lambda: window._document is not None and window._document.kind == "catalog")
+
+    def broken(*_args):
+        raise RuntimeError("broken on purpose")
+
+    monkeypatch.setattr(window, "_confirm", broken)
+    logged = []
+    monkeypatch.setattr(network, "report_failure", logged.append)
+    window.download_all.trigger()
+    wait_for(lambda: logged, timeout=60)
+    assert "broken on purpose" in logged[0]
+    assert not window._busy()
+    assert window.download_all.isEnabled()
     window.disconnect_canvas()
 
 

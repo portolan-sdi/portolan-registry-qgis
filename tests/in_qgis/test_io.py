@@ -46,6 +46,7 @@ from portolan_registry_qgis.qgis_io.downloader import DownloadJob, target_path
 from portolan_registry_qgis.qgis_io.network import (
     NetworkError,
     QtExecutor,
+    RemoteRange,
     fetch_bytes,
     fetch_json,
     fetch_range,
@@ -218,6 +219,34 @@ def test_source_without_url_reads_the_only_archive():
     assert layers.pmtiles_sources(style, url, "https://x.test/c/a.pmtiles") == {
         "data": "https://x.test/c/a.pmtiles"
     }
+
+
+_S3_WEBSITE = "http://bucket.s3-website-us-east-1.amazonaws.com"
+_S3_REST = "https://bucket.s3.us-east-1.amazonaws.com"
+
+
+def test_style_urls_upgrade_s3_website_endpoints():
+    style = {
+        "version": 8,
+        "sprite": f"{_S3_WEBSITE}/c/sprites/s",
+        "sources": {"a": {"type": "vector", "url": f"pmtiles://{_S3_WEBSITE}/c/a.pmtiles"}},
+        "layers": [],
+    }
+    url = f"{_S3_REST}/c/styles/s.json"
+    assert layers.pmtiles_sources(style, url) == {"a": f"{_S3_REST}/c/a.pmtiles"}
+    fetched: list[str] = []
+
+    def fetch(target: str) -> bytes:
+        fetched.append(target)
+        raise OSError("offline")
+
+    assert layers._sprite(style, url, fetch, [], {}) is None
+    assert fetched == [f"{_S3_REST}/c/sprites/s.json"]
+
+
+def test_range_fetcher_reads_any_http_scheme(catalog):
+    url = f"{catalog['base']}/catalog.json".replace("http://", "HTTP://", 1)
+    assert isinstance(range_fetcher(url), RemoteRange)
 
 
 def test_parse_style_rejects_non_styles():

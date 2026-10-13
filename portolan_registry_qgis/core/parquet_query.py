@@ -69,7 +69,7 @@ def is_flatpak() -> bool:
     return bool(os.environ.get("FLATPAK_ID")) or sys.prefix.startswith("/app")
 
 
-def install_command(upgrade: bool) -> str:
+def install_command(*, upgrade: bool) -> str:
     """Return the shell command that installs DuckDB for this QGIS."""
     minimum = ".".join(str(part) for part in MINIMUM_DUCKDB)
     flag = "--upgrade " if upgrade else ""

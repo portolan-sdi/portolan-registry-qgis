@@ -90,7 +90,8 @@ def test_item_cog():
         f"{BASE}/a/a.json",
     )
     cog = item_cog(item)
-    assert cog is not None and cog.href == f"{BASE}/a/a.tif"
+    assert cog is not None
+    assert cog.href == f"{BASE}/a/a.tif"
     assert item_cog(_collection()) is None
 
 
@@ -200,7 +201,8 @@ def test_button_state_of_items_while_busy():
         download_all=False,
     )
     nothing = button_state(None, targets, selected=False, ready=True, busy=False)
-    assert not (nothing.mosaic or nothing.download_all)
+    assert not nothing.mosaic
+    assert not nothing.download_all
 
 
 def test_files_hint():

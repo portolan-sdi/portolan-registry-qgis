@@ -237,7 +237,8 @@ def test_walk_uses_a_given_executor_and_leaves_it_open():
         result = plan(fetch, root, how=Walk(executor=executor))
         assert executor.submit(lambda: "open").result() == "open"
     assert [f.url for f in result.files] == [root, *children]
-    assert threads and all(name.startswith("caller") for name in threads)
+    assert threads
+    assert all(name.startswith("caller") for name in threads)
 
 
 def test_walk_without_an_executor_reads_in_the_calling_thread():

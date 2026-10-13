@@ -99,7 +99,7 @@ def format_name(item: Loadable) -> str:
     asset = item.asset
     if asset is None:
         return "PMTiles"
-    return format_label(asset.format, asset.type, asset.href, asset.tabular)
+    return format_label(asset.format, asset.type, asset.href, tabular=asset.tabular)
 
 
 def parquet_name(asset: Asset) -> str:
@@ -273,7 +273,7 @@ def plan_summary(plan: Plan, clipped: int = 0) -> str:
     return "\n".join(lines)
 
 
-def loadable_tip(item: Loadable, on_map: bool = False) -> str:
+def loadable_tip(item: Loadable, *, on_map: bool = False) -> str:
     """Return the tooltip of a file row.
 
     ``on_map`` adds the note that a layer in the project reads the file.

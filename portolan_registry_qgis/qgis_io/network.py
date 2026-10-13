@@ -212,6 +212,7 @@ def run_task(
     description: str,
     function: Callable[[QgsTask], object],
     on_done: Callable[[object, BaseException | None], None],
+    *,
     hidden: bool = False,
 ) -> QgsTask:
     """Run ``function`` in a background task and report back on the main thread.
@@ -293,7 +294,7 @@ class QtExecutor(Executor):
         self._pool.start(_Job(future, lambda: fn(*args, **kwargs)))
         return future
 
-    def shutdown(self, wait: bool = True, *, cancel_futures: bool = False) -> None:
+    def shutdown(self, wait: bool = True, *, cancel_futures: bool = False) -> None:  # noqa: FBT001, FBT002 - the signature of Executor.shutdown
         """Wait for the running functions when ``wait`` is true."""
         if cancel_futures:
             # A cancelled future's job returns at once when its turn comes.

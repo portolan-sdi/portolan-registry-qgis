@@ -304,9 +304,9 @@ def test_the_layer_union_is_kept_until_the_layer_changes(picker, monkeypatch):
     real = scope_module.layer_area
     calls = []
 
-    def counted(*args):
+    def counted(*args, **kwargs):
         calls.append(args)
-        return real(*args)
+        return real(*args, **kwargs)
 
     monkeypatch.setattr(scope_module, "layer_area", counted)
     picker.choose(FROM_LAYER)
@@ -404,4 +404,4 @@ def test_area_of_rejects_what_is_not_a_polygon():
 def test_layer_area_of_an_empty_layer():
     layer = QgsVectorLayer("Polygon?crs=EPSG:4326", "empty", "memory")
     with pytest.raises(ScopeError, match="has no polygon"):
-        layer_area(layer, False)
+        layer_area(layer, selected_only=False)

@@ -160,19 +160,34 @@ def write_vrt(
         raise LayerError(_("No file intersects the area"))
     path = parquet_layer.new_path(".vrt")
     try:
-        _raise_if_blocked(hrefs)
-        by_path = {gdal_path(h): h for h in hrefs}
-        bands, error, skipped = _build_vrt(hrefs, path, cancelled, clip)
-        reasons = _skip_reasons(skipped, by_path)
-        if cancelled is not None and cancelled():
-            # Translators: Why a task stopped. The user cancelled it.
-            raise MosaicCancelledError(_("Cancelled"))
-        if bands == 0 or not path.exists():
-            raise _mosaic_error(len(hrefs), error, reasons)
+        _write_vrt_at(hrefs, path, cancelled, clip)
     except BaseException:
         parquet_layer.discard_path(path)
         raise
     return path
+
+
+def _write_vrt_at(
+    hrefs: list[str],
+    path: Path,
+    cancelled: Callable[[], bool] | None,
+    clip: str | None,
+) -> None:
+    """Write the VRT of ``write_vrt`` at ``path``, and raise when it fails.
+
+    Raises:
+        MosaicCancelledError: ``cancelled`` returned True.
+        LayerError: The GDAL settings block a file, or GDAL cannot build the VRT.
+    """
+    _raise_if_blocked(hrefs)
+    by_path = {gdal_path(h): h for h in hrefs}
+    bands, error, skipped = _build_vrt(hrefs, path, cancelled, clip)
+    reasons = _skip_reasons(skipped, by_path)
+    if cancelled is not None and cancelled():
+        # Translators: Why a task stopped. The user cancelled it.
+        raise MosaicCancelledError(_("Cancelled"))
+    if bands == 0 or not path.exists():
+        raise _mosaic_error(len(hrefs), error, reasons)
 
 
 def _raise_if_blocked(hrefs: list[str]) -> None:

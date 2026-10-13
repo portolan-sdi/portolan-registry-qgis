@@ -513,5 +513,7 @@ def asset_layer(asset: Asset, name: str | None = None) -> QgsMapLayer:
                     url=asset.href, error=explain_open_error(asset.href, summary)
                 )
             )
-        raise LayerError(open_failure(asset.href, summary, is_flatpak(), _provider_invalid()))
+        raise LayerError(
+            open_failure(asset.href, summary, flatpak=is_flatpak(), invalid=_provider_invalid())
+        )
     return layer

@@ -60,7 +60,6 @@ MKDOCS = ROOT / "mkdocs.yml"
 DOCS = ROOT / "docs"
 DOCS_I18N = ROOT / "docs-i18n"
 BUILD = ROOT / "build" / "i18n"
-SITE = ROOT / "site"
 
 PROJECT = "portolan-registry-qgis"
 # A fixed date keeps messages.pot the same from run to run, so the check can

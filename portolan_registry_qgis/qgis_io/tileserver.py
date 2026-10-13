@@ -124,7 +124,7 @@ class TileHandler(BaseHTTPRequestHandler):
     # Close a connection that QGIS leaves idle, so its thread ends.
     timeout = 60
 
-    def do_GET(self) -> None:  # noqa: N802 - name set by BaseHTTPRequestHandler
+    def do_GET(self) -> None:
         parts = self.path.split("?", 1)[0].strip("/").split("/")
         archive = self.server.archives.get(parts[0]) if parts else None
         if archive is None or len(parts) != 4 or not parts[3].endswith(".pbf"):
@@ -154,7 +154,7 @@ class TileHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(tile)
 
-    def log_message(self, format: str, *args: Any) -> None:  # noqa: A002 - base signature
+    def log_message(self, format: str, *args: Any) -> None:
         """Silence per-request logging; QGIS has its own network log."""
 
 

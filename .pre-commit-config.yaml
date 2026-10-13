@@ -114,9 +114,18 @@ repos:
 
       - id: xenon
         name: xenon
-        description: Complexity gate (same thresholds as CI)
-        # Adjust paths per repo (src layout vs flat package dir).
-        entry: uv run xenon --max-absolute=E --max-modules=D --max-average=C portolan_registry_qgis tests
+        description: Complexity gate for the package
+        # No block above B, and every module at A.
+        entry: uv run xenon --max-absolute=B --max-modules=A --max-average=A portolan_registry_qgis
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+
+      - id: xenon-tests
+        name: xenon (tests and scripts)
+        description: Complexity gate for the tests and scripts
+        # A test that builds a catalog may reach C. Modules stay at B.
+        entry: uv run xenon --max-absolute=C --max-modules=B --max-average=A tests scripts
         language: system
         pass_filenames: false
         stages: [pre-push]

@@ -129,7 +129,7 @@ def test_archive_header_and_tiles(catalog):
     assert archive.min_zoom == 0
     assert archive.max_zoom == 8
     assert archive.vector_layers == ("points",)
-    west, south, east, north = archive.bounds
+    west, south, _east, _north = archive.bounds
     assert 10.9 < west < 11.1
     assert 43.9 < south < 44.1
     tile = read_tile(archive, 0, 0, 0)
@@ -680,7 +680,7 @@ def test_download_runs_files_at_the_same_time(tmp_path):
     active = peak = 0
 
     class Gate(BaseHTTPRequestHandler):
-        def do_GET(self):  # noqa: N802
+        def do_GET(self):
             nonlocal active, peak
             with lock:
                 active += 1
@@ -699,7 +699,7 @@ def test_download_runs_files_at_the_same_time(tmp_path):
             self.end_headers()
             self.wfile.write(body)
 
-        def log_message(self, format, *args):  # noqa: A002
+        def log_message(self, format, *args):
             pass
 
     with serve(Gate) as gate:
@@ -1068,7 +1068,7 @@ def test_parquet_without_geometry_loads_as_a_table(catalog):
 
 
 def test_new_path_refuses_other_files():
-    with pytest.raises(ValueError, match="no .txt files"):
+    with pytest.raises(ValueError, match=r"no \.txt files"):
         parquet_layer.new_path(".txt")
 
 

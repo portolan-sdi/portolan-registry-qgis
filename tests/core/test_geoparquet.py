@@ -283,7 +283,7 @@ def test_clip_reads_the_text_of_older_projects():
     assert Clip.from_text("") == WHOLE_FILE
     # A box without four numbers gives no box.
     assert Clip.from_text("1.0,2.0") == WHOLE_FILE
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="could not convert"):
         Clip.from_text("west,south,east,north")
 
 

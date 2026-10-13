@@ -287,7 +287,7 @@ def test_fetch_range_cancels_a_body_longer_than_the_range(tmp_path):
             except (BrokenPipeError, ConnectionResetError):
                 pass
 
-        def log_message(self, format, *args):  # noqa: A002
+        def log_message(self, format, *args):
             pass
 
     def handler(*args, **kwargs):

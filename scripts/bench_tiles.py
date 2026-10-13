@@ -53,13 +53,13 @@ def main() -> int:
     app = QgsApplication([], False)
     app.initQgis()
     try:
-        _run(args.url, args.baseline, args.steps)
+        _run(args.url, baseline=args.baseline, steps=args.steps)
     finally:
         app.exitQgis()
     return 0
 
 
-def _run(url: str, baseline: bool, steps: int) -> None:
+def _run(url: str, *, baseline: bool, steps: int) -> None:
     from qgis.core import (
         QgsCoordinateReferenceSystem,
         QgsCoordinateTransform,

@@ -25,14 +25,14 @@ import pytest
 
 pytest.importorskip("qgis.core")
 
-from osgeo import gdal, ogr, osr  # noqa: E402
-from qgis.core import QgsApplication, QgsCoordinateReferenceSystem, QgsProject  # noqa: E402
-from qgis.gui import QgsMapCanvas, QgsMessageBar  # noqa: E402
-from qgis.PyQt.QtWidgets import QMainWindow  # noqa: E402
+from osgeo import gdal, ogr, osr
+from qgis.core import QgsApplication, QgsCoordinateReferenceSystem, QgsProject
+from qgis.gui import QgsMapCanvas, QgsMessageBar
+from qgis.PyQt.QtWidgets import QMainWindow
 
-from tests.loopback import base_url, serve  # noqa: E402
-from tests.points import write_points  # noqa: E402
-from tests.stac_builders import box_polygon, make_catalog, make_collection, make_item  # noqa: E402
+from tests.loopback import base_url, serve
+from tests.points import write_points
+from tests.stac_builders import box_polygon, make_catalog, make_collection, make_item
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 gdal.UseExceptions()
@@ -43,7 +43,7 @@ _RANGE = re.compile(r"bytes=(\d+)-(\d*)")
 class RangeHandler(SimpleHTTPRequestHandler):
     """Static files with single-range support, which GDAL's /vsicurl/ needs."""
 
-    def send_head(self):  # noqa: D102
+    def send_head(self):
         header = self.headers.get("Range")
         path = Path(self.translate_path(self.path))
         if header is None or not path.is_file():
@@ -69,7 +69,7 @@ class RangeHandler(SimpleHTTPRequestHandler):
         self._remaining = end - start + 1
         return handle
 
-    def copyfile(self, source, outputfile):  # noqa: D102
+    def copyfile(self, source, outputfile):
         remaining = getattr(self, "_remaining", None)
         if remaining is None:
             super().copyfile(source, outputfile)
@@ -82,10 +82,10 @@ class RangeHandler(SimpleHTTPRequestHandler):
             remaining -= len(chunk)
         self._remaining = None
 
-    def log_message(self, format, *args):  # noqa: A002, D102
+    def log_message(self, format, *args):
         pass
 
-    def log_request(self, code="-", size="-"):  # noqa: D102
+    def log_request(self, code="-", size="-"):
         # The tests read this log to count the requests GDAL sends.
         requests = getattr(self.server, "requests", None)
         if requests is not None:

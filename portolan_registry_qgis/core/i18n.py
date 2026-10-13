@@ -25,7 +25,8 @@ SOURCE_LANGUAGE = "en"
 LANGUAGES = ("es", "fr")
 
 # The separators the Unicode CLDR gives each language, as Qt's QLocale uses them.
-_GROUP = {"en": ",", "es": ".", "fr": " "}
+# French groups digits with a narrow no-break space (U+202F).
+_GROUP = {"en": ",", "es": ".", "fr": "\u202f"}
 _DECIMAL = {"en": ".", "es": ",", "fr": ","}
 
 

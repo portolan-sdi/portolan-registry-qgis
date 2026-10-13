@@ -110,7 +110,7 @@ def test_copy_all_rows(con, points, tmp_path):
     assert written == parquet_query.Written(features=200, geometry_type="Point", refused=0)
     rows = _read_back(con, tmp_path / "all.gpkg")
     assert len(rows) == 200
-    fid, ident, name, val, day, wkt = rows[0]
+    _fid, ident, name, val, day, wkt = rows[0]
     assert (ident, name, val) == (0, "n0", 0.0)
     assert day == "2026-01-01"
     assert wkt == "POINT (11 44)"

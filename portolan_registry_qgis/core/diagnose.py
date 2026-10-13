@@ -43,7 +43,7 @@ def _says_more(line: str, invalid: str) -> bool:
     return not (invalid and line.startswith(invalid))
 
 
-def open_failure(href: str, detail: str, flatpak: bool, invalid: str = "") -> str:
+def open_failure(href: str, detail: str, *, flatpak: bool, invalid: str = "") -> str:
     """Return a message that says why ``href`` did not open and what to do.
 
     Args:

@@ -351,10 +351,10 @@ class RegistryWindow(QDialog):
         for asset in assets:
             self._add_file(asset, whole=True)
 
-    def _add_file(self, asset: Asset, whole: bool = False) -> None:
+    def _add_file(self, asset: Asset, *, whole: bool = False) -> None:
         """Add one file. ``whole`` skips the area, as the All files buttons do."""
         if asset.format == "parquet":
-            self._add_parquet(asset, whole)
+            self._add_parquet(asset, whole=whole)
         else:
             self._loader.add_asset(asset)
 
@@ -392,7 +392,7 @@ class RegistryWindow(QDialog):
             return scope, parquet_layer.Limits(area=scope.wkt)
         return scope, parquet_layer.Limits()
 
-    def _add_parquet(self, asset: Asset, whole: bool = False) -> None:
+    def _add_parquet(self, asset: Asset, *, whole: bool = False) -> None:
         if not duckdb_ready(self):
             return
         scoped: tuple[Scope, parquet_layer.Limits] | None = (Everything(), parquet_layer.Limits())

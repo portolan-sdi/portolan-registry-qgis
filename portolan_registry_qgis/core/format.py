@@ -55,7 +55,7 @@ _MEDIA_LABELS = {
 
 
 def format_label(
-    format: str | None, media_type: str | None, href: str, tabular: bool = False
+    format: str | None, media_type: str | None, href: str, *, tabular: bool = False
 ) -> str:
     """Return a short name for an asset's format.
 
@@ -83,7 +83,7 @@ def _media_label(media_type: str | None) -> str | None:
 
 def _extension_label(href: str) -> str | None:
     """Return the file extension of ``href`` in capitals, or None when it has none."""
-    name = href.split("?")[0].split("#")[0].rsplit("/", 1)[-1]
+    name = href.split("?", maxsplit=1)[0].split("#", maxsplit=1)[0].rsplit("/", 1)[-1]
     extension = name.rsplit(".", 1)[-1] if "." in name else ""
     return extension.upper() if 0 < len(extension) <= 8 and extension.isalnum() else None
 

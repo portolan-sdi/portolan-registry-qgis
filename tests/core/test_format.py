@@ -29,23 +29,26 @@ def test_human_size(size, text):
 
 
 @pytest.mark.parametrize(
-    ("args", "label"),
+    ("args", "tabular", "label"),
     [
-        (("parquet", None, "https://x/a.parquet"), "GeoParquet"),
-        (("parquet", None, "https://x/a.parquet", False), "GeoParquet"),
-        (("parquet", None, "https://x/a.parquet", True), "Parquet"),
+        (("parquet", None, "https://x/a.parquet"), False, "GeoParquet"),
+        (("parquet", None, "https://x/a.parquet"), True, "Parquet"),
         # Only Parquet has a tabular name.
-        (("geojson", None, "https://x/a.geojson", True), "GeoJSON"),
-        (("pmtiles", None, "https://x/a.pmtiles"), "PMTiles"),
-        ((None, "application/json; charset=utf-8", "https://x/a"), "JSON"),
-        ((None, "image/svg+xml", "https://x/a"), "SVG"),
-        ((None, None, "https://x/readme.md?raw=1"), "MD"),
-        ((None, None, "https://x/no-extension"), "File"),
-        ((None, None, "https://x/a.not-alnum"), "File"),
+        (("geojson", None, "https://x/a.geojson"), True, "GeoJSON"),
+        (("pmtiles", None, "https://x/a.pmtiles"), False, "PMTiles"),
+        ((None, "application/json; charset=utf-8", "https://x/a"), False, "JSON"),
+        ((None, "image/svg+xml", "https://x/a"), False, "SVG"),
+        ((None, None, "https://x/readme.md?raw=1"), False, "MD"),
+        ((None, None, "https://x/no-extension"), False, "File"),
+        ((None, None, "https://x/a.not-alnum"), False, "File"),
     ],
 )
-def test_format_label(args, label):
-    assert format_label(*args) == label
+def test_format_label(args, tabular, label):
+    assert format_label(*args, tabular=tabular) == label
+
+
+def test_format_label_defaults_to_not_tabular():
+    assert format_label("parquet", None, "https://x/a.parquet") == "GeoParquet"
 
 
 @pytest.mark.parametrize(

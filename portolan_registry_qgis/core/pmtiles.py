@@ -47,7 +47,6 @@ class Header:
     leaf_offset: int
     leaf_length: int
     data_offset: int
-    data_length: int
     internal_compression: str
     tile_compression: str
     tile_type: str
@@ -89,7 +88,6 @@ def parse_header(data: bytes) -> Header:
         leaf_offset=numbers[4],
         leaf_length=numbers[5],
         data_offset=numbers[6],
-        data_length=numbers[7],
         internal_compression=COMPRESSIONS.get(clustered_etc[1], "unknown"),
         tile_compression=COMPRESSIONS.get(clustered_etc[2], "unknown"),
         tile_type=TILE_TYPES.get(clustered_etc[3], "unknown"),

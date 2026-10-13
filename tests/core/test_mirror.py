@@ -185,7 +185,7 @@ def served(tmp_path_factory, con):
 
 
 class _QuietHandler(SimpleHTTPRequestHandler):
-    def log_message(self, format, *args):  # noqa: A002
+    def log_message(self, format, *args):
         pass
 
 

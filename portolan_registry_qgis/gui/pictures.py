@@ -64,7 +64,7 @@ def mix(first: QColor, second: QColor, amount: float) -> QColor:
     )
 
 
-def muted(palette: QPalette, selected: bool = False) -> QColor:
+def muted(palette: QPalette, *, selected: bool = False) -> QColor:
     """Return the color for secondary text."""
     if selected:
         return mix(

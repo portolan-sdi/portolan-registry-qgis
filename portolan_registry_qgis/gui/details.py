@@ -79,7 +79,7 @@ SETTINGS_GROUP = "PortolanRegistry"
 
 
 def section(
-    title: str, name: str, collapsed: bool = False
+    title: str, name: str, *, collapsed: bool = False
 ) -> tuple[QgsCollapsibleGroupBox, QVBoxLayout]:
     """Return a collapsible section and the layout for its content.
 
@@ -173,7 +173,7 @@ class DetailsPanel(QScrollArea):
         layout.addWidget(self._details_section())
         layout.addStretch(1)
         self.hide_actions()
-        self.show_sections(False)
+        self.show_sections(visible=False)
         self.setWidget(body)
         self.setWidgetResizable(True)
         self.setFrameShape(QFrame.Shape.NoFrame)
@@ -348,7 +348,7 @@ class DetailsPanel(QScrollArea):
 
     # ---------- what shows ----------
 
-    def show_sections(self, visible: bool) -> None:
+    def show_sections(self, *, visible: bool) -> None:
         """Show the title and sections, or the hint when no node is chosen."""
         self.empty.setVisible(not visible)
         for widget in (self.title_row, self.about_box, self.files_box, self.details_box):
@@ -377,7 +377,7 @@ class DetailsPanel(QScrollArea):
         self.fit_assets()
         self.hero.show_extent(None)
         self.hero.hide()
-        self.show_sections(True)
+        self.show_sections(visible=True)
 
     def show_failure(self, title: str, href: str, error: BaseException | None) -> None:
         """Say that the document at ``href`` could not be read."""
@@ -430,7 +430,7 @@ class DetailsPanel(QScrollArea):
             if asset is None:
                 row.setData(0, BADGE_ROLE, ("PMTiles", "pmtiles", ""))
             else:
-                badge = format_label(asset.format, asset.type, asset.href, asset.tabular)
+                badge = format_label(asset.format, asset.type, asset.href, tabular=asset.tabular)
                 row.setData(0, BADGE_ROLE, (badge, asset.format, human_size(asset.size)))
             self.assets.addTopLevelItem(row)
         if only_items(document):
@@ -440,7 +440,7 @@ class DetailsPanel(QScrollArea):
         self.mark_on_map()
         self.fit_assets()
         self._show_actions(document, loadable)
-        self.show_sections(True)
+        self.show_sections(visible=True)
 
     def _show_actions(self, document: Document, loadable: tuple[Loadable, ...]) -> None:
         """Show the primary buttons, the style note, and the scope picker that fit the document."""
@@ -540,7 +540,7 @@ class DetailsPanel(QScrollArea):
                 continue
             mapped = is_on_map(item, urls, sources)
             row.setData(0, ON_MAP_ROLE, mapped)
-            row.setToolTip(0, loadable_tip(item, mapped))
+            row.setToolTip(0, loadable_tip(item, on_map=mapped))
 
     def fit_assets(self) -> None:
         """Size the file list to its rows, so the details panel scrolls instead."""

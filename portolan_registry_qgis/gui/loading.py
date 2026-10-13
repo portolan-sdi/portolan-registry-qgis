@@ -46,7 +46,7 @@ CONFIRM_FEATURES = 1_000_000
 CONFIRM_FILES = 500
 
 
-def zoomed(message: str, moved: bool) -> str:
+def zoomed(message: str, *, moved: bool) -> str:
     """Return ``message``, and the note that the map moved when ``moved`` is True."""
     return f"{message} {_('The map moved to show it.')}" if moved else message
 
@@ -150,9 +150,7 @@ class Loader:
                 self._messages.warn(_("Could not add vector tiles: {error}").format(error=error))
                 return
             try:
-                layers, warnings = layer_io.build_pmtiles(
-                    self._server, result, lambda data: QImage.fromData(data)
-                )
+                layers, warnings = layer_io.build_pmtiles(self._server, result, QImage.fromData)
             except layer_io.LayerError as failure:
                 self._messages.warn(str(failure))
                 return
@@ -165,7 +163,7 @@ class Loader:
                 len(layers),
             )
             self._messages.info(
-                zoomed(added.format(n=number(len(layers)), title=document.title), moved)
+                zoomed(added.format(n=number(len(layers)), title=document.title), moved=moved)
             )
 
         run_task(_("Open vector tiles of {title}").format(title=document.title), prepare, done)
@@ -178,7 +176,7 @@ class Loader:
             self._messages.warn(str(failure))
             return
         moved = self._add_layers([layer])
-        self._messages.info(zoomed(_("Added {name}.").format(name=asset.label), moved))
+        self._messages.info(zoomed(_("Added {name}.").format(name=asset.label), moved=moved))
 
     # ---------- GeoParquet ----------
 
@@ -211,16 +209,18 @@ class Loader:
             limited = in_scope and result.plan.has_geometry
             estimate = result.estimate or 0
             if estimate > CONFIRM_FEATURES and not self._confirm_features(
-                name, estimate, limited, has_tiles
+                name, estimate, in_scope=limited, has_tiles=has_tiles
             ):
                 self._messages.info(_("Did not load {name}.").format(name=name))
                 return
-            self._copy_parquet(result, name, extension_dir, limited)
+            self._copy_parquet(result, name, extension_dir, in_scope=limited)
 
         self._messages.info(_("Reading {name} with DuckDB…").format(name=name))
         run_task(_("Read {url} with DuckDB").format(url=asset.href), read, planned)
 
-    def _confirm_features(self, name: str, estimate: int, in_scope: bool, has_tiles: bool) -> bool:
+    def _confirm_features(
+        self, name: str, estimate: int, *, in_scope: bool, has_tiles: bool
+    ) -> bool:
         if in_scope:
             holds = ngettext(
                 "{name} holds about {n} feature in the chosen area. DuckDB copies them to a "
@@ -245,7 +245,7 @@ class Loader:
         return answer == QMessageBox.StandardButton.Yes
 
     def _copy_parquet(
-        self, planned: parquet_layer.Planned, name: str, extension_dir: str, in_scope: bool
+        self, planned: parquet_layer.Planned, name: str, extension_dir: str, *, in_scope: bool
     ) -> None:
         def copy(task: Any) -> parquet_layer.Prepared:
             return parquet_layer.prepare(planned, extension_dir, cancelled=task.isCanceled)
@@ -261,7 +261,7 @@ class Loader:
                         )
                     )
                 return
-            self._show_copy(planned, result, name, in_scope)
+            self._show_copy(planned, result, name, in_scope=in_scope)
 
         self._messages.info(_copying(planned, name))
         run_task(_("Copy {url} with DuckDB").format(url=planned.url), copy, done)
@@ -271,6 +271,7 @@ class Loader:
         planned: parquet_layer.Planned,
         prepared: parquet_layer.Prepared,
         name: str,
+        *,
         in_scope: bool,
     ) -> None:
         """Add the layer of a finished copy, and say how many features it holds."""
@@ -290,7 +291,9 @@ class Loader:
             return
         moved = self._add_layers([layer])
         notes = [
-            zoomed(_added_rows(planned, features).format(n=number(features), name=name), moved)
+            zoomed(
+                _added_rows(planned, features).format(n=number(features), name=name), moved=moved
+            )
         ]
         if refused:
             notes.append(_no_geometry(prepared, refused))
@@ -307,7 +310,7 @@ class Loader:
                 document, scope, fetch_json, executor, cancelled=task.isCanceled
             )
 
-        def found(result: object, error: BaseException | None, cancelled: bool) -> None:
+        def found(result: object, error: BaseException | None, *, cancelled: bool) -> None:
             hrefs = self._mosaic_files(result, error, title, cancelled=cancelled)
             if hrefs is None:
                 self._tasks.finish(Busy.MOSAIC)
@@ -391,7 +394,7 @@ class Loader:
                 "Added {n} files of {name} as one layer.",
                 len(hrefs),
             )
-            self._messages.info(zoomed(added.format(n=number(len(hrefs)), name=name), moved))
+            self._messages.info(zoomed(added.format(n=number(len(hrefs)), name=name), moved=moved))
 
         self._tasks.show_progress(
             0,

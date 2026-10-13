@@ -53,12 +53,16 @@ jobs:
         # uv.lock.
         run: |
           python3 -m venv --system-site-packages /tmp/venv
-          /tmp/venv/bin/pip install pytest==9.1.1 pytest-timeout==2.4.0 duckdb==1.5.6 babel==2.18.0
+          /tmp/venv/bin/pip install pytest==9.1.1 pytest-timeout==2.4.0 duckdb==1.5.6 babel==2.18.0 pytest-cov==7.1.0 coverage==7.16.2
 
       - name: Run the QGIS tests
         # The thread method stops a test that hangs inside Qt, GDAL, or a
         # network call, where the signal method cannot reach it. It prints
         # the stack of every thread, so the log shows where the test hung.
+        # Coverage counts plugin.py, gui, and qgis_io only. The uv suite in
+        # ci.yml measures the core.
         run: >-
           /tmp/venv/bin/python -m pytest tests/in_qgis -p no:cacheprovider
           --timeout 120 --timeout-method=thread
+          --cov=portolan_registry_qgis --cov-config=tests/in_qgis/coverage.ini
+          --cov-report=term-missing --cov-fail-under=87

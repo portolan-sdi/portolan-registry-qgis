@@ -356,7 +356,8 @@ def test_two_buttons_say_which_file_to_use(iface, server, catalog):
     assert "data (GeoParquet)" in window.details.load_button.toolTip()
     for name in ("data", "Point tiles", "geojson"):
         tip = asset_row(window, name).toolTip(0)
-        assert loadable.VIEW_TIP not in tip and loadable.LOAD_TIP not in tip
+        assert loadable.VIEW_TIP not in tip
+        assert loadable.LOAD_TIP not in tip
     assert window.details.mosaic_button.isHidden()
     window.disconnect_canvas()
 
@@ -735,7 +736,8 @@ def test_browser_links_of_the_open_node(iface, server, catalog, monkeypatch):
     # but not to the raw STAC document. Each is one row of the table.
     facts = window.details.facts.text()
     assert ">More<" in facts
-    assert facts_module.BROWSER_LINK in facts and link in facts
+    assert facts_module.BROWSER_LINK in facts
+    assert link in facts
     assert "STAC document" not in facts
     assert "<p>" not in facts
     window.disconnect_canvas()
@@ -764,8 +766,10 @@ def test_details_are_one_list_of_facts(iface, server, catalog):
     assert keys == ["Publisher", "License", "Size", "Documentation", "Source", "More"]
     assert facts.count(">License<") == 1
     assert "Custom terms: " in facts
-    assert facts.count(portal) == 1 and facts.count(html_escape(terms)) == 1
-    assert ">opendataphilly.org<" in facts and ">metadata.phila.gov<" in facts
+    assert facts.count(portal) == 1
+    assert facts.count(html_escape(terms)) == 1
+    assert ">opendataphilly.org<" in facts
+    assert ">metadata.phila.gov<" in facts
     assert ">Human-readable documentation<" in facts
     # The publisher's original page is the Source row, named by its host.
     assert 'opendataphilly.org/datasets/land-use/">opendataphilly.org<' in facts
@@ -926,7 +930,8 @@ def test_item_collection_adds_one_mosaic(iface, server, catalog):
     wait_for(lambda: window.document is not None)
     assert window.document.title == "Test tiles"
     assert not window.details.mosaic_button.isHidden()
-    assert window.details.view_button.isHidden() and window.details.load_button.isHidden()
+    assert window.details.view_button.isHidden()
+    assert window.details.load_button.isHidden()
     assert "Add as one layer" in window.details.no_assets.text()
     # The map view covers item a only.
     iface.canvas.setExtent(QgsRectangle(10.9, 43.9, 11.5, 44.7))
@@ -1108,7 +1113,7 @@ def test_cancel_stops_a_mosaic_build(iface, server, catalog, monkeypatch):
     window.disconnect_canvas()
 
 
-def test_cancel_stops_a_download_listing(iface, server, catalog, tmp_path, asked, monkeypatch):
+def test_cancel_stops_a_download_listing(iface, server, catalog, asked, monkeypatch):
     window = open_window(iface, server, catalog)
     release = _start_held_listing(window, monkeypatch)
     assert not window.tasks.cancel.isHidden()
@@ -1255,7 +1260,8 @@ def test_item_collection_lists_its_files(iface, server, catalog, monkeypatch):
     assert a.data(0, BADGE_ROLE)[:2] == ("COG", "cog")
     assert a.data(0, ROLE).href == f"{catalog['base']}/tiles/a/a.tif"
     # The explanation stays under the list, not in place of it.
-    assert not window.details.no_assets.isHidden() and not window.details.assets.isHidden()
+    assert not window.details.no_assets.isHidden()
+    assert not window.details.assets.isHidden()
     window.details.assets.itemClicked.emit(window.details.assets.topLevelItem(1), 0)
     wait_for(lambda: rows(window.details.assets) == ["a", "b"])
     assert window.details.assets.selectedItems() == []
@@ -1263,7 +1269,8 @@ def test_item_collection_lists_its_files(iface, server, catalog, monkeypatch):
     # A single item file adds as its own layer, and its row shows the mark.
     wait_for(lambda: hasattr(asset_row(window, "b").data(0, ROLE), "asset"))
     asset_row(window, "b").setSelected(True)
-    assert window.details.add.isEnabled() and window.details.download_selected.isEnabled()
+    assert window.details.add.isEnabled()
+    assert window.details.download_selected.isEnabled()
     window.details.add.click()
     wait_for(lambda: len(QgsProject.instance().mapLayers()) == 1, timeout=60)
     assert asset_row(window, "b").data(0, ON_MAP_ROLE)

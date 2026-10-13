@@ -126,7 +126,7 @@ def area_of(geometry: QgsGeometry, crs: QgsCoordinateReferenceSystem) -> Area:
     flat = shape.get()
     flat.dropZValue()
     flat.dropMValue()
-    crossing = _split_at_antimeridian(shape, projected)
+    crossing = _split_at_antimeridian(shape, projected=projected)
     if crossing is not None:
         return crossing
     rect = shape.boundingBox()
@@ -154,7 +154,7 @@ def _to_wgs84(geometry: QgsGeometry, crs: QgsCoordinateReferenceSystem) -> QgsGe
     return shape
 
 
-def _split_at_antimeridian(shape: QgsGeometry, projected: bool) -> Area | None:
+def _split_at_antimeridian(shape: QgsGeometry, *, projected: bool) -> Area | None:
     """Return the area cut in two at 180°, or None when it does not cross it.
 
     ``core.scope.crosses_antimeridian`` names the cases. The area becomes a
@@ -185,7 +185,7 @@ def _side(shape: QgsGeometry, box: tuple[float, float, float, float], shift: flo
     return part
 
 
-def layer_area(layer: QgsVectorLayer, selected_only: bool) -> Area:
+def layer_area(layer: QgsVectorLayer, *, selected_only: bool) -> Area:
     """Join the polygons of a layer into one ``Area`` in EPSG:4326.
 
     Raises:
@@ -435,7 +435,7 @@ class ScopePicker(QWidget):
             self._follow_layer()
             if self._layer_area is None:
                 try:
-                    self._layer_area = layer_area(layer, self.selected.isChecked())
+                    self._layer_area = layer_area(layer, selected_only=self.selected.isChecked())
                 except ScopeError as error:
                     self._layer_area = error
             if isinstance(self._layer_area, ScopeError):

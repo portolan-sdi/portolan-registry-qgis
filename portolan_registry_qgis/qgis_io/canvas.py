@@ -51,7 +51,7 @@ def zoom_to(canvas: Any, bbox: Bbox) -> None:
     )
     try:
         extent = transform.transformBoundingBox(QgsRectangle(*bbox))
-    except Exception as error:  # noqa: BLE001 - see canvas_bbox
+    except Exception as error:
         raise CanvasError(str(error)) from error
     canvas.setExtent(extent)
     canvas.refresh()

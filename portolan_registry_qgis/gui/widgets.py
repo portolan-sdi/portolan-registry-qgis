@@ -229,7 +229,7 @@ class CatalogDelegate(QStyledItemDelegate):
         """Draw the row."""
         entry = index.data(ROLE)
         if not isinstance(entry, CatalogEntry):
-            _paint_note(painter, option, index, isinstance(entry, More))
+            _paint_note(painter, option, index, more=isinstance(entry, More))
             return
         rect = option.rect
         palette = option.palette
@@ -290,7 +290,7 @@ class CatalogDelegate(QStyledItemDelegate):
             )
             shift = metrics.horizontalAdvance(status + "  ")
             second.adjust(shift, 0, 0, 0)
-        painter.setPen(muted(option.palette, selected))
+        painter.setPen(muted(option.palette, selected=selected))
         summary = catalog_summary(entry.collection_count, entry.total_size_bytes, entry.licenses)
         painter.drawText(
             second,
@@ -300,7 +300,7 @@ class CatalogDelegate(QStyledItemDelegate):
 
 
 def _paint_note(
-    painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex, more: bool
+    painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex, *, more: bool
 ) -> None:
     """Draw a row that holds no catalog: the "more" row, or a note such as an error."""
     painter.save()
@@ -349,7 +349,7 @@ class AssetDelegate(QStyledItemDelegate):
         metrics = option.fontMetrics
         rect = option.rect
         painter.setFont(option.font)
-        right = _paint_trailing(painter, option, bool(index.data(ON_MAP_ROLE)), size)
+        right = _paint_trailing(painter, option, on_map=bool(index.data(ON_MAP_ROLE)), size=size)
         left = int(box.right()) + 10
         painter.setPen(_text_color(option))
         title = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
@@ -394,7 +394,7 @@ class AssetDelegate(QStyledItemDelegate):
 
 
 def _paint_trailing(
-    painter: QPainter, option: QStyleOptionViewItem, on_map: bool, size: str
+    painter: QPainter, option: QStyleOptionViewItem, *, on_map: bool, size: str
 ) -> int:
     """Draw the on-map mark and the size at the right of an asset row.
 
@@ -415,7 +415,7 @@ def _paint_trailing(
         right -= mark_width + 10
     if size:
         size_width = metrics.horizontalAdvance(size)
-        painter.setPen(muted(option.palette, _selected(option)))
+        painter.setPen(muted(option.palette, selected=_selected(option)))
         painter.drawText(
             QRect(right - size_width, rect.top(), size_width, rect.height()),
             Qt.AlignmentFlag.AlignVCenter,

@@ -26,7 +26,7 @@ class DocumentCache:
         self._documents: dict[str, Document] = {}
         self._reading: dict[str, list[Opened]] = {}
 
-    def open(self, href: str, then: Opened, quiet: bool = False) -> None:
+    def open(self, href: str, then: Opened, *, quiet: bool = False) -> None:
         """Call ``then`` with the document at ``href``, or with None and the error.
 
         A kept document calls ``then`` at once. Otherwise ``then`` runs on the

@@ -131,7 +131,7 @@ class PortolanRegistryPlugin:
             0,
         )
 
-    def _toggle(self, visible: bool) -> None:
+    def _toggle(self, visible: bool) -> None:  # noqa: FBT001 - the toggled(bool) signal gives the value by position
         if self.window is None:
             from portolan_registry_qgis.core.hrefs import BROWSER_URL
             from portolan_registry_qgis.core.registry import REGISTRY_URL
@@ -149,7 +149,7 @@ class PortolanRegistryPlugin:
             self.window.raise_()
             self.window.activateWindow()
 
-    def _window_visibility(self, visible: bool) -> None:
+    def _window_visibility(self, visible: bool) -> None:  # noqa: FBT001 - the visibility_changed(bool) signal gives the value by position
         if self.action is not None and self.action.isChecked() != visible:
             self.action.setChecked(visible)
 

@@ -43,8 +43,10 @@ def test_license_cell():
     ]
     many = license_cell(_document(links, license="other"))
     assert many.startswith("Custom terms: ")
-    assert many.count(PORTAL) == 1 and many.count(escape(TERMS)) == 1
-    assert ">opendataphilly.org<" in many and ">metadata.phila.gov<" in many
+    assert many.count(PORTAL) == 1
+    assert many.count(escape(TERMS)) == 1
+    assert ">opendataphilly.org<" in many
+    assert ">metadata.phila.gov<" in many
     assert license_cell(_document(links)).startswith("<a ")
 
 
@@ -62,7 +64,8 @@ def test_facts_are_one_row_each_in_order():
     assert ">Human-readable documentation<" in table
     assert 'opendataphilly.org/datasets/land-use/">opendataphilly.org<' in table
     assert f'<a href="{browser}">{BROWSER_LINK}</a>' in table
-    assert table.startswith("<table>") and table.endswith("</table>")
+    assert table.startswith("<table>")
+    assert table.endswith("</table>")
 
 
 def test_facts_leave_out_what_is_not_known():

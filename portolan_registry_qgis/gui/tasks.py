@@ -9,7 +9,7 @@ changes, so the window can enable its buttons again.
 from __future__ import annotations
 
 from enum import Enum, auto
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from qgis.core import Qgis
 from qgis.PyQt.QtCore import pyqtSignal
@@ -31,7 +31,13 @@ if TYPE_CHECKING:
     from portolan_registry_qgis.qgis_io.log import Messages
 
     Walk = Callable[[QgsTask, QtExecutor], object]
-    Walked = Callable[[object, BaseException | None, bool], None]
+
+
+class Walked(Protocol):
+    """The function that receives the end of a walk on the main thread."""
+
+    def __call__(self, result: object, error: BaseException | None, *, cancelled: bool) -> None:
+        """Receive the result, the error, and whether the user cancelled the walk."""
 
 
 class Busy(Enum):
@@ -129,7 +135,7 @@ class TaskController(QFrame):
             # ``task`` is bound below, before the walk can end.
             try:
                 self.hide_progress()
-                on_done(result, error, task.isCanceled())
+                on_done(result, error, cancelled=task.isCanceled())
             except BaseException:
                 # The flag must not stay set, or every later click does nothing.
                 self.finish(busy)

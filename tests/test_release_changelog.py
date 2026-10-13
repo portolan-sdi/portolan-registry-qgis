@@ -32,7 +32,7 @@ def test_release_of_the_last_section():
 
 
 def test_empty_notes_stop_the_release():
-    with pytest.raises(ChangelogError, match="Add the changes in 0.1.1"):
+    with pytest.raises(ChangelogError, match=r"Add the changes in 0\.1\.1"):
         release("# Changelog\n\n## Unreleased\n\n## 0.1.0 - 2026-10-07\n\n- x\n", "0.1.1", DATE)
 
 

@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from portolan_registry_qgis.core.stac import Bbox
 
-WORLD: Bbox = (-180.0, -90.0, 180.0, 90.0)
 Rect = tuple[float, float, float, float]
 
 

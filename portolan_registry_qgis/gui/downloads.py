@@ -92,7 +92,7 @@ class Downloads:
             walk = download.Walk(cancelled=task.isCanceled, executor=executor)
             return download.plan(fetch_json, document.href, root, walk, scope=scope)
 
-        def planned(result: object, error: BaseException | None, cancelled: bool) -> None:
+        def planned(result: object, error: BaseException | None, *, cancelled: bool) -> None:
             self._tasks.finish(Busy.LISTING)
             # A cancelled walk returns the partial plan it has. Drop it.
             if cancelled:

@@ -39,7 +39,7 @@ from portolan_registry_qgis.core.loadable import (
     has_parquet,
     is_on_map,
     is_table,
-    item_cog,
+    item_file,
     loadable_tip,
     only_items,
     pick_targets,
@@ -467,12 +467,11 @@ class DetailsPanel(QScrollArea):
     def _add_item_rows(self, document: Document, nodes: tuple[Node, ...]) -> None:
         """Add one page of item rows, and a row that lists the rest.
 
-        Each row shows the COG file of its item after the item is read.
+        Each row shows the data file of its item after the item is read.
         """
         page = widgets.NODE_PAGE
         for node in nodes[:page]:
             row = QTreeWidgetItem([node.title])
-            row.setData(0, BADGE_ROLE, ("COG", "cog", ""))
             row.setData(0, ROLE, node)
             row.setToolTip(0, _("Reading…"))
             self.assets.addTopLevelItem(row)
@@ -491,23 +490,23 @@ class DetailsPanel(QScrollArea):
     def _item_read(
         self, document: Document, row: QTreeWidgetItem
     ) -> Callable[[object, BaseException | None], None]:
-        """Return a callback that shows the COG file of a read item in ``row``."""
+        """Return a callback that shows the data file of a read item in ``row``."""
 
         def opened(item: object, _error: BaseException | None) -> None:
             if self._current() is not document:
                 return
             read = item if isinstance(item, Document) else None
-            cog = item_cog(read) if read is not None else None
-            if read is None or cog is None:
-                # The item has no COG to add, or it cannot be read.
+            found = item_file(read) if read is not None else None
+            if found is None or found.asset is None:
+                # The item has no file to add, or it cannot be read.
                 index = self.assets.indexOfTopLevelItem(row)
                 if index >= 0:
                     self.assets.takeTopLevelItem(index)
             else:
-                loadable = Loadable(cog.href, read.title, "cog", asset=cog)
-                row.setData(0, ROLE, loadable)
-                badge = format_label(cog.format, cog.type, cog.href)
-                row.setData(0, BADGE_ROLE, (badge, "cog", human_size(cog.size)))
+                asset = found.asset
+                row.setData(0, ROLE, found)
+                badge = format_label(asset.format, asset.type, asset.href, tabular=asset.tabular)
+                row.setData(0, BADGE_ROLE, (badge, asset.format, human_size(asset.size)))
             self.mark_on_map()
             self.fit_assets()
             self.state_changed.emit()

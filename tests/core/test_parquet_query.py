@@ -83,6 +83,18 @@ def test_extensions_fall_back_to_the_given_folder(monkeypatch, tmp_path):
         parquet_query.close()
 
 
+@pytest.mark.parametrize(("flatpak", "client"), [(True, "httplib"), (False, "default")])
+def test_the_flatpak_reads_with_httplib(monkeypatch, flatpak, client):
+    monkeypatch.setattr(parquet_query, "is_flatpak", lambda: flatpak)
+    parquet_query.close()
+    try:
+        con = parquet_query.connection()
+        setting = "SELECT current_setting('httpfs_client_implementation')"
+        assert con.execute(setting).fetchone() == (client,)
+    finally:
+        parquet_query.close()
+
+
 def test_old_versions_are_rejected(monkeypatch):
     import duckdb
 
@@ -336,7 +348,7 @@ def test_cancel_stops_the_copy(con, tmp_path):
     target = tmp_path / "cancel.gpkg"
     with pytest.raises(duckdb.InterruptException):
         parquet_query.write_gpkg(
-            con, str(source), plan, Target(str(target)), cancelled=lambda: True
+            con, str(source), plan, Target(str(target)), parquet_query.Watch(lambda: True)
         )
 
 
@@ -380,6 +392,35 @@ def test_watcher_interrupts_once_cancelled():
     assert watched.interrupted
 
 
+def test_watcher_reports_the_progress_duckdb_knows():
+    stop = threading.Event()
+    reported = []
+
+    class Running(_Cursor):
+        def __init__(self):
+            super().__init__()
+            self.values = iter([-1.0, 40.0, 100.0])
+
+        def query_progress(self):
+            value = next(self.values)
+            if value == 100.0:
+                stop.set()
+            return value
+
+    parquet_query.interrupt_when(None, Running(), stop, reported.append)
+    assert reported == [0.4, 1.0]
+
+
+def test_a_cursor_with_progress_turns_the_progress_bar_on(con):
+    reported = []
+    with parquet_query.cursor(con, progress=reported.append) as cur:
+        setting = "SELECT current_setting('enable_progress_bar')"
+        assert cur.execute(setting).fetchone() == (True,)
+        assert cur.execute("SELECT current_setting('enable_progress_bar_print')").fetchone() == (
+            False,
+        )
+
+
 def test_a_file_with_no_geometry_layer_is_left_alone(tmp_path):
     path = tmp_path / "empty.gpkg"
     with contextlib.closing(sqlite3.connect(path)) as gpkg:
@@ -396,3 +437,42 @@ def test_a_file_with_no_geometry_layer_is_left_alone(tmp_path):
 def test_close_is_idempotent():
     parquet_query.close()
     parquet_query.close()
+
+
+@pytest.fixture
+def live():
+    """The shared connection, opened again after ``test_close_is_idempotent`` closed it."""
+    return parquet_query.connection()
+
+
+def test_a_glob_and_a_list_read_as_one_table(live, tmp_path):
+    con = live
+    for part in ("a", "b"):
+        folder = tmp_path / f"zone={part}"
+        folder.mkdir()
+        write_points(con, folder / "points.parquet", "'n' || i AS name")
+    glob = str(tmp_path / "zone=*" / "*.parquet")
+    files = parquet_query.list_files(con, glob)
+    assert [path.rsplit("/", 2)[-2] for path in files] == ["zone=a", "zone=b"]
+    plan = parquet_query.read_plan(con, glob)
+    assert "zone" in [column.name for column in plan.columns]
+    assert parquet_query.estimate(con, glob, plan) == 400
+    listed = parquet_query.read_plan(con, files)
+    assert parquet_query.estimate(con, files, listed) == 400
+
+
+def test_a_dotted_bucket_gets_a_path_style_secret(live):
+    con = live
+    parquet_query.use_bucket(con, ["s3://us-west-2.data.test/a/*.parquet", "s3://plain/a.parquet"])
+    parquet_query.use_bucket(con, "https://x.test/a.parquet")
+    rows = con.execute(
+        "SELECT name, scope FROM duckdb_secrets() WHERE name LIKE 'bucket_%'"
+    ).fetchall()
+    assert rows == [("bucket_us_west_2_data_test", ["s3://us-west-2.data.test"])]
+
+
+@pytest.mark.parametrize(
+    "source", ["https://x.test/a.parquet", ["https://x.test/a", "https://x.test/b"]]
+)
+def test_source_text_round_trips(source):
+    assert parquet_query.source_from_text(parquet_query.source_text(source)) == source

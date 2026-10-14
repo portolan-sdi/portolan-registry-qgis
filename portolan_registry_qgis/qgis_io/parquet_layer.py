@@ -102,7 +102,7 @@ class Limits:
 class Planned:
     """A GeoParquet file's read plan, ready to copy."""
 
-    url: str
+    url: parquet_query.Source
     plan: ReadPlan
     crs: QgsCoordinateReferenceSystem
     # The part of the file the copy keeps, in the file's CRS.
@@ -114,7 +114,7 @@ class Planned:
 class Prepared:
     """A GeoPackage that holds the features, ready to become a layer."""
 
-    url: str
+    url: parquet_query.Source
     path: Path
     written: parquet_query.Written
     clip: Clip = WHOLE_FILE
@@ -187,32 +187,33 @@ def file_area(
 
 
 def plan(
-    url: str,
+    url: parquet_query.Source,
     context: QgsCoordinateTransformContext,
     limits: Limits | None = None,
     extension_dir: str | None = None,
-    cancelled: Callable[[], bool] | None = None,
+    watch: parquet_query.Watch | None = None,
 ) -> Planned:
     """Read a GeoParquet file's schema and estimate its features. Safe off the main thread.
 
-    ``limits`` None reads the whole file. ``cancelled`` returning True stops
-    the query with ``duckdb.InterruptException``. Raise DuckDBMissingError,
-    GeoParquetError, or ValueError for a bad file or area.
+    ``limits`` None reads the whole file. ``watch`` cancels the queries with
+    ``duckdb.InterruptException`` and receives the estimate's progress. Raise
+    DuckDBMissingError, GeoParquetError, or ValueError for a bad file or area.
     """
     limits = limits or Limits()
+    watch = watch or parquet_query.Watch()
     con = parquet_query.connection(extension_dir)
-    read = parquet_query.read_plan(con, url, cancelled)
+    read = parquet_query.read_plan(con, url, watch.cancelled)
     crs = crs_for(read)
     if limits.area is None:
         clip = Clip(file_bbox(limits.extent, limits.extent_crs, crs, context))
     else:
         clip = file_area(limits.area, crs, context)
-    count = parquet_query.estimate(con, url, read, clip, cancelled)
+    count = parquet_query.estimate(con, url, read, clip, watch)
     return Planned(url, read, crs, clip, count)
 
 
 def planner(
-    url: str, limits: Limits, extension_dir: str | None = None
+    url: parquet_query.Source, limits: Limits, extension_dir: str | None = None
 ) -> Callable[[QgsTask], Planned]:
     """Return a task function that runs ``plan`` on ``url``. Call on the main thread.
 
@@ -222,9 +223,14 @@ def planner(
     context = QgsProject.instance().transformContext()
 
     def read(task: QgsTask) -> Planned:
-        return plan(url, context, limits, extension_dir, task.isCanceled)
+        return plan(url, context, limits, extension_dir, task_watch(task))
 
     return read
+
+
+def task_watch(task: QgsTask) -> parquet_query.Watch:
+    """Return a ``Watch`` that cancels with ``task`` and shows the query's progress on it."""
+    return parquet_query.Watch(task.isCanceled, lambda done: task.setProgress(done * 100))
 
 
 def is_interrupt(error: BaseException | None) -> bool:
@@ -240,18 +246,18 @@ def is_interrupt(error: BaseException | None) -> bool:
 def prepare(
     planned: Planned,
     extension_dir: str | None = None,
-    cancelled: Callable[[], bool] | None = None,
+    watch: parquet_query.Watch | None = None,
 ) -> Prepared:
     """Copy the planned features into a new GeoPackage. Safe off the main thread.
 
-    ``cancelled`` works as for ``plan``.
+    ``watch`` works as for ``plan``.
     """
     con = parquet_query.connection(extension_dir)
     path = new_path(".gpkg")
     srs = planned.crs.authid() or planned.plan.crs or None
     try:
         target = parquet_query.Target(str(path), planned.clip, srs)
-        written = parquet_query.write_gpkg(con, planned.url, planned.plan, target, cancelled)
+        written = parquet_query.write_gpkg(con, planned.url, planned.plan, target, watch)
     except BaseException:
         discard_path(path)
         raise
@@ -275,7 +281,7 @@ def build(prepared: Prepared, name: str) -> tuple[QgsVectorLayer, int]:
             )
         )
     release_path(prepared.path)
-    layer.setCustomProperty(SOURCE_PROPERTY, prepared.url)
+    layer.setCustomProperty(SOURCE_PROPERTY, parquet_query.source_text(prepared.url))
     bbox, area = prepared.clip.to_text()
     layer.setCustomProperty(BBOX_PROPERTY, bbox)
     layer.setCustomProperty(AREA_PROPERTY, area)
@@ -382,10 +388,11 @@ def restore(
     ``AREA_PROPERTY`` values. The area is already in the file's CRS.
     """
     con = parquet_query.connection(extension_dir)
-    read = parquet_query.read_plan(con, layer_url, cancelled)
+    source = parquet_query.source_from_text(layer_url)
+    read = parquet_query.read_plan(con, source, cancelled)
     clip = Clip.from_text(bbox_text, area_text)
-    planned = Planned(layer_url, read, crs_for(read), clip, None)
-    return prepare(planned, extension_dir, cancelled)
+    planned = Planned(source, read, crs_for(read), clip, None)
+    return prepare(planned, extension_dir, parquet_query.Watch(cancelled))
 
 
 def saved_copy(layer: QgsVectorLayer) -> tuple[str, str, str]:

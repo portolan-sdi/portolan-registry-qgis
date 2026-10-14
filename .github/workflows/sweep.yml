@@ -1,0 +1,62 @@
+# Runs the plugin's read path against every catalog in the live registry, and
+# uploads the failure report. The registry changes without a change here, so
+# the job runs on a schedule and never blocks a merge.
+name: Registry sweep
+
+on:
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    name: Core read path
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - name: Sweep the registry
+        # The script exits 1 when any check fails. The report is the result.
+        run: uv run python scripts/sweep_registry.py --out sweep || true
+      - name: Show the summary
+        run: head -n 30 sweep/sweep.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sweep-core
+          path: sweep/
+
+  qgis:
+    name: QGIS layers
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    container:
+      # qgis/qgis:3.44, digest as of 2026-09-27
+      image: qgis/qgis@sha256:bacafbaf899bb2af5d99dd8a138e0438733aac252ddd5f29d089ad34641bb059
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install DuckDB
+        run: |
+          python3 -m venv --system-site-packages /tmp/venv
+          /tmp/venv/bin/pip install duckdb==1.5.6 babel==2.18.0
+      - name: Sweep the registry in QGIS
+        run: /tmp/venv/bin/python scripts/sweep_qgis.py --out sweep-qgis || true
+      - name: Show the summary
+        run: head -n 30 sweep-qgis/sweep.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sweep-qgis
+          path: sweep-qgis/

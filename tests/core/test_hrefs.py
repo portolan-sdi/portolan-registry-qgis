@@ -9,9 +9,13 @@ from portolan_registry_qgis.core.hrefs import (
     absolute_href,
     asset_href,
     browser_url,
+    bucket_region,
+    bucket_url,
     catalog_href,
     extension_blocked,
     folder_name,
+    glob_root,
+    is_glob,
     is_http_url,
     plain_vsicurl_path,
     url_extension,
@@ -255,3 +259,80 @@ def test_browser_url_on_a_bare_host():
 def test_browser_url_needs_an_http_url(href):
     with pytest.raises(ValueError, match="http"):
         browser_url(href)
+
+
+@pytest.mark.parametrize(
+    ("href", "expected"),
+    [
+        ("gs://bucket/c/d.parquet", "https://storage.googleapis.com/bucket/c/d.parquet"),
+        ("s3://my.bucket/d.parquet", "https://s3.amazonaws.com/my.bucket/d.parquet"),
+        (
+            "s3://us-west-2.data.test/d.parquet",
+            "https://s3.us-west-2.amazonaws.com/us-west-2.data.test/d.parquet",
+        ),
+        ("s3://us-west-2.opendata.source.coop/a/b.parquet", "https://data.source.coop/a/b.parquet"),
+    ],
+)
+def test_asset_href_of_gcs_and_dotted_s3_buckets(href, expected):
+    assert asset_href(href, "https://x.test/c/collection.json") == expected
+
+
+@pytest.mark.parametrize(
+    ("href", "expected"),
+    [
+        ("https://x.test/c/*.parquet", True),
+        ("https://x.test/c/zone=?/a.parquet", False),
+        ("https://x.test/c/[ab].parquet", True),
+        ("https://x.test/c/a.parquet?v=*", False),
+        ("https://x.test/c/a.parquet", False),
+    ],
+)
+def test_is_glob_reads_the_path_only(href, expected):
+    assert is_glob(href) is expected
+
+
+@pytest.mark.parametrize(
+    ("href", "expected"),
+    [
+        ("s3://b/k/*.parquet", "s3://b/k/*.parquet"),
+        ("gs://b/k/*.parquet", "gs://b/k/*.parquet"),
+        (
+            "https://data.source.coop/a/r/*.parquet",
+            "s3://us-west-2.opendata.source.coop/a/r/*.parquet",
+        ),
+        ("https://storage.googleapis.com/b/k/*.parquet", "gs://b/k/*.parquet"),
+        ("https://b.s3.amazonaws.com/k/*.parquet", "s3://b/k/*.parquet"),
+        ("https://b.s3.eu-west-1.amazonaws.com/k/*", "s3://b/k/*"),
+        ("https://s3.us-west-2.amazonaws.com/my.bucket/k/*", "s3://my.bucket/k/*"),
+        ("https://s3.amazonaws.com/onlybucket", None),
+        ("https://storage.googleapis.com/onlybucket", None),
+        ("https://pub-1.r2.dev/t/*.parquet", None),
+        ("http://b.s3.amazonaws.com/k/*", None),
+        ("s3:///k", None),
+    ],
+)
+def test_bucket_url(href, expected):
+    assert bucket_url(href) == expected
+
+
+def test_asset_href_and_bucket_url_round_trip():
+    for href in ("s3://b/k/*.parquet", "gs://b/k/*.parquet", "s3://my.bucket/k/*"):
+        assert bucket_url(asset_href(href, "https://x.test/")) == href
+
+
+def test_bucket_region():
+    assert bucket_region("us-west-2.opendata.source.coop") == "us-west-2"
+    assert bucket_region("us-gov-west-1.data") == "us-gov-west-1"
+    assert bucket_region("my.bucket") is None
+
+
+@pytest.mark.parametrize(
+    ("href", "root"),
+    [
+        ("https://x.test/c/2020/zone=*/utm*.parquet", "https://x.test/c/2020"),
+        ("https://x.test/c/*/b_*.parquet", "https://x.test/c"),
+        ("s3://b/k/*.parquet", "s3://b/k"),
+    ],
+)
+def test_glob_root(href, root):
+    assert glob_root(href) == root

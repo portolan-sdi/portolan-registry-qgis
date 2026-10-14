@@ -17,6 +17,7 @@ from portolan_registry_qgis.core.download import (
     split_collisions,
 )
 from portolan_registry_qgis.core.scope import Area, Everything, MapView
+from portolan_registry_qgis.core.stac import Fetched
 from tests.stac_builders import make_catalog, make_collection, make_item
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "anncsu"
@@ -300,3 +301,79 @@ def test_clipped_path():
     assert clipped_path(f"{BASE}/a/b.parquet", ROOT) == "a/b.gpkg"
     assert clipped_path(f"{BASE}/b.GeoParquet", ROOT) == "b.gpkg"
     assert clipped_path(f"{BASE}/notes.txt", ROOT) == "notes.txt.gpkg"
+
+
+SC = "https://data.source.coop/acct/repo"
+SC_BUCKET = "s3://us-west-2.opendata.source.coop/acct/repo"
+
+
+def _partitioned_catalog(glob_href):
+    collection = make_collection(
+        "col",
+        assets={"data": {"href": glob_href, "roles": ["data"]}},
+    )
+    return {f"{SC}/col/collection.json": collection}
+
+
+def test_plan_lists_the_files_of_a_partitioned_asset():
+    asked = []
+
+    def list_glob(url):
+        asked.append(url)
+        return [f"{SC_BUCKET}/col/zone=1/a.parquet", f"{SC_BUCKET}/col/zone=2/b.parquet"]
+
+    documents = _partitioned_catalog("./zone=*/*.parquet")
+    result = plan(
+        fake_fetch(documents),
+        f"{SC}/col/collection.json",
+        root=f"{SC}/catalog.json",
+        how=Walk(list_glob=list_glob),
+    )
+    assert asked == [f"{SC_BUCKET}/col/zone=*/*.parquet"]
+    assert [f.path for f in result.files] == [
+        "col/collection.json",
+        "col/zone=1/a.parquet",
+        "col/zone=2/b.parquet",
+    ]
+    assert result.files[1].url == f"{SC}/col/zone=1/a.parquet"
+    assert result.unlisted == []
+
+
+def test_plan_reports_a_glob_it_cannot_list():
+    https_only = {
+        "https://pub.test/col/collection.json": make_collection(
+            "col", assets={"data": {"href": "./*.parquet", "roles": ["data"]}}
+        )
+    }
+    result = plan(fake_fetch(https_only), "https://pub.test/col/collection.json")
+    assert [f.path for f in result.files] == ["collection.json"]
+    assert result.failures == []
+    ((glob, reason),) = result.unlisted
+    assert glob == "https://pub.test/col/*.parquet"
+    assert "HTTPS" in reason
+    no_duckdb = plan(fake_fetch(_partitioned_catalog("./*.parquet")), f"{SC}/col/collection.json")
+    assert "DuckDB" in no_duckdb.unlisted[0][1]
+
+    def broken(_url):
+        raise OSError("listing refused")
+
+    failed = plan(
+        fake_fetch(_partitioned_catalog("./*.parquet")),
+        f"{SC}/col/collection.json",
+        how=Walk(list_glob=broken),
+    )
+    assert failed.unlisted[0][1] == "listing refused"
+
+
+def test_plan_resolves_against_the_url_after_a_redirect():
+    collection = make_collection("col", assets={"data": {"href": "./a.parquet", "roles": ["data"]}})
+
+    def fetch(url):
+        return Fetched(collection, "https://real.test/x/col/collection.json")
+
+    result = plan(fetch, "https://short.test/abc", root="https://real.test/x/catalog.json")
+    assert result.files[-1].url == "https://real.test/x/col/a.parquet"
+
+
+def test_clipped_path_of_a_glob_names_the_partition_folder():
+    assert clipped_path(f"{BASE}/col/zone=*/a*.parquet", ROOT) == "col/col.gpkg"

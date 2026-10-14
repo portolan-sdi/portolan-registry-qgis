@@ -27,12 +27,14 @@ import portolan_registry_qgis
 from portolan_registry_qgis import plugin as plugin_module
 from portolan_registry_qgis.core import facts as facts_module
 from portolan_registry_qgis.core import loadable, parquet_query
+from portolan_registry_qgis.core import stac as stac_module
 from portolan_registry_qgis.core.format import human_size
 from portolan_registry_qgis.core.stac import read_document
 from portolan_registry_qgis.gui import downloads as downloads_module
 from portolan_registry_qgis.gui import loading as loading_module
 from portolan_registry_qgis.gui import pictures
 from portolan_registry_qgis.gui import registry_list as registry_list_module
+from portolan_registry_qgis.gui import tasks as tasks_module
 from portolan_registry_qgis.gui import widgets as widgets_module
 from portolan_registry_qgis.gui import window as window_module
 from portolan_registry_qgis.gui.scope import EVERYTHING, FROM_LAYER, MAP_VIEW
@@ -922,6 +924,90 @@ def test_plain_parquet_is_a_table(iface, server, catalog):
     window.disconnect_canvas()
 
 
+def test_an_https_glob_disables_load_full_data(iface, server, catalog):
+    # Partitions that only HTTPS serves cannot be listed, so the button says why.
+    window = open_window(iface, server, catalog)
+    window.registry_list.catalogs.itemClicked.emit(window.registry_list.catalogs.item(0))
+    raw = {
+        "type": "Collection",
+        "id": "parted",
+        "title": "Parted",
+        "links": [],
+        "assets": {"data": {"href": "./zone=*/*.parquet", "roles": ["data"]}},
+    }
+    window.show_document(read_document(raw, f"{catalog['base']}/table/collection.json"))
+    assert not window.details.load_button.isHidden()
+    assert not window.details.load_button.isEnabled()
+    tip = window.details.load_button.toolTip()
+    assert f"{catalog['base']}/table/zone=*/*.parquet" in tip
+    assert "s3://" in tip
+    window.disconnect_canvas()
+
+
+def _show_glob(window, catalog):
+    """Show a collection whose data asset is a glob over the GeoParquet items' files."""
+    raw = {
+        "type": "Collection",
+        "id": "globbed",
+        "title": "Globbed",
+        "links": [],
+        "assets": {"data": {"href": "./*/*.parquet", "roles": ["data"]}},
+    }
+    window.show_document(read_document(raw, f"{catalog['base']}/parts/collection.json"))
+
+
+@pytest.fixture
+def listed_glob(catalog, monkeypatch):
+    """Name a bucket for the loopback glob, and list its two files. Return the catalog."""
+    base = catalog["base"]
+    monkeypatch.setattr(stac_module, "bucket_url", lambda href: "s3://test/parts/*/*.parquet")
+    files = [f"{base}/parts/a/a.parquet", f"{base}/parts/b/b.parquet"]
+    monkeypatch.setattr(parquet_query, "list_files", lambda con, url: files)
+    return catalog
+
+
+def test_a_listed_glob_downloads_each_partition(iface, server, listed_glob, asked, tmp_path):
+    window = open_window(iface, server, listed_glob)
+    open_catalog(window)
+    _show_glob(window, listed_glob)
+    assert window.details.load_button.isEnabled()
+    asset_row(window, "data").setSelected(True)
+    window.details.download_selected.trigger()
+    wait_for((tmp_path / "parts" / "b" / "b.parquet").is_file, timeout=60)
+    assert (tmp_path / "parts" / "a" / "a.parquet").is_file()
+    window.disconnect_canvas()
+
+
+def test_an_unlisted_glob_says_why_it_neither_adds_nor_downloads(iface, server, catalog, asked):
+    window = open_window(iface, server, catalog)
+    open_catalog(window)
+    _show_glob(window, catalog)
+    asset_row(window, "data").setSelected(True)
+    window.details.add.click()
+    window.details.download_selected.trigger()
+    wait_for(lambda: sum("cannot list" in item.text() for item in iface.bar.items()) == 2)
+    assert QgsProject.instance().mapLayers() == {}
+    window.disconnect_canvas()
+
+
+def test_geoparquet_items_add_as_one_layer(iface, server, catalog):
+    window = open_window(iface, server, catalog)
+    open_catalog(window)
+    href = f"{catalog['base']}/parts/collection.json"
+    window.show_document(read_document(network.fetch_json(href), href))
+    wait_for(lambda: rows(window.details.assets) == ["a", "b"])
+    # Each item row shows its GeoParquet file once the item is read.
+    wait_for(lambda: hasattr(asset_row(window, "b").data(0, ROLE), "asset"))
+    assert asset_row(window, "b").data(0, BADGE_ROLE)[:2] == ("GeoParquet", "parquet")
+    wait_for(window.details.mosaic_button.isEnabled)
+    window.details.mosaic_button.click()
+    wait_for(lambda: len(QgsProject.instance().mapLayers()) == 1, timeout=60)
+    (layer,) = QgsProject.instance().mapLayers().values()
+    assert layer.name() == "Test parts"
+    assert layer.featureCount() == 400
+    window.disconnect_canvas()
+
+
 def test_item_collection_adds_one_mosaic(iface, server, catalog):
     window, collection = open_tiles(iface, server, catalog)
     # The two items show as one row.
@@ -967,6 +1053,43 @@ def _check_waits(window, iface, reason):
     assert any(reason in item.text() for item in iface.bar.items())
 
 
+def test_the_bar_shows_a_task_share_and_the_time_left(iface, server, catalog, monkeypatch):
+    window = open_window(iface, server, catalog)
+    tasks = window.tasks
+    started = threading.Event()
+    release = threading.Event()
+
+    step = threading.Event()
+
+    def work(task):
+        task.setProgress(10.0)
+        started.set()
+        step.wait(10)
+        task.setProgress(55.0)
+        release.wait(10)
+        return True
+
+    task = network.run_task("progress", work, lambda *_args: None)
+    # The time left counts from the first report, which comes at 1000 s.
+    monkeypatch.setattr(tasks_module.time, "monotonic", lambda: 1000.0)
+    tasks.follow(task, "Copying")
+    wait_for(started.is_set)
+    wait_for(lambda: tasks.progress.format() == "Copying 10%")
+    monkeypatch.setattr(tasks_module.time, "monotonic", lambda: 1010.0)
+    step.set()
+    wait_for(lambda: "55%" in tasks.progress.format())
+    assert tasks.progress.format() == "Copying 55%, about 10 s left"
+    # A second task does not take the bar.
+    other = network.run_task("other", lambda _task: True, lambda *_args: None)
+    tasks.follow(other, "Other")
+    tasks.release(other)
+    assert not tasks.progress.isHidden()
+    tasks.release(task)
+    assert tasks.progress.isHidden()
+    release.set()
+    window.disconnect_canvas()
+
+
 def test_one_task_uses_the_progress_bar_at_a_time(iface, server, catalog, asked, monkeypatch):
     # A mosaic search during a download keeps the download's Cancel button.
     window = open_item_files(iface, server, catalog)
@@ -1002,7 +1125,7 @@ def _held_search(monkeypatch):
     """Hold the mosaic search until Cancel stops it. The event tells that it started."""
     searching = threading.Event()
 
-    def held(document, scope, fetch_json, executor=None, cancelled=None):
+    def held(document, scope, fetch_document, executor=None, cancelled=None):
         searching.set()
         deadline = time.monotonic() + 10
         while not cancelled() and time.monotonic() < deadline:
@@ -1044,8 +1167,8 @@ def test_a_failed_mosaic_search_does_not_leave_the_window_busy(iface, server, ca
 
 
 def _held_fetch(monkeypatch):
-    """Hold each ``fetch_json`` of the window until the test releases it."""
-    real = downloads_module.fetch_json
+    """Hold each ``fetch_document`` of the window until the test releases it."""
+    real = downloads_module.fetch_document
     reading, release = threading.Event(), threading.Event()
 
     def held(url):
@@ -1053,7 +1176,7 @@ def _held_fetch(monkeypatch):
         release.wait(10)
         return real(url)
 
-    monkeypatch.setattr(downloads_module, "fetch_json", held)
+    monkeypatch.setattr(downloads_module, "fetch_document", held)
     return reading, release
 
 
@@ -1090,7 +1213,7 @@ def test_cancel_stops_a_mosaic_build(iface, server, catalog, monkeypatch):
     window = open_item_files(iface, server, catalog)
     building = threading.Event()
 
-    def held(hrefs, cancelled, clip=None):
+    def held(hrefs, cancelled, clip=None, progress=None):
         building.set()
         deadline = time.monotonic() + 10
         while not cancelled() and time.monotonic() < deadline:

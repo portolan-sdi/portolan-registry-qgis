@@ -398,16 +398,13 @@ class RegistryWindow(QDialog):
             self.messages.warn(_("Could not transform the extent: {error}").format(error=error))
 
     def add_mosaic(self) -> None:
-        """Add the COG files of the open collection's items in the scope as one layer."""
+        """Add the files of the open collection's items in the scope as one layer."""
         document = self._document
         if document is None or not only_items(document) or self.tasks.refuse_when_busy():
             return
-        try:
-            scope = self.details.scope()
-        except ScopeError as error:
-            self.messages.warn(str(error))
-            return
-        self._loader.add_mosaic(document, scope)
+        scoped = self._parquet_scope()
+        if scoped is not None:
+            self._loader.add_mosaic(document, *scoped)
 
     def _root_url(self, document: Document) -> str:
         """Return the URL that download paths start from."""

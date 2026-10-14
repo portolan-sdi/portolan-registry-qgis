@@ -31,6 +31,21 @@ QT_QPA_PLATFORM=offscreen .venv-qgis/bin/python \
   scripts/bench_tiles.py --baseline
 ```
 
+## Registry sweeps
+
+The tests use catalogs the plugin builds. The sweep scripts run the plugin against every catalog in the live registry instead, and report each check that fails.
+
+- `scripts/sweep_registry.py` runs the core read path under uv. For each collection, it probes the files behind **View on map** and **Load full data**, and plans the GeoParquet read with DuckDB. It also reads the styles, the thumbnail, and the download paths.
+- `scripts/sweep_qgis.py` adds the targets of each collection as QGIS layers with their styles, then renders each layer. It reports invalid layers, blank renders, and style warnings.
+
+```bash
+uv run python scripts/sweep_registry.py --out sweep
+QT_QPA_PLATFORM=offscreen .venv-qgis/bin/python \
+  scripts/sweep_qgis.py --out sweep-qgis
+```
+
+Each script writes `sweep.md` and `sweep.json` to its output folder. Use `--only` with catalog IDs to sweep a few catalogs. The Registry sweep workflow runs both scripts each night and uploads the reports. A failure there does not block a merge.
+
 ## Quality gates
 
 Pre-commit runs these checks, and CI runs them again on each pull request. A change must pass each one.

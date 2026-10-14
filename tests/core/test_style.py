@@ -8,6 +8,7 @@ from portolan_registry_qgis.core.stac import read_document
 from portolan_registry_qgis.core.style import (
     DEFAULT_STYLE_NAME,
     archive_urls,
+    match_archive,
     parse_style,
     pmtiles_sources,
     read_sprite,
@@ -77,6 +78,41 @@ def test_source_without_url_reads_the_only_archive():
     assert pmtiles_sources(style, STYLE_URL, "https://x.test/c/a.pmtiles") == {
         "data": "https://x.test/c/a.pmtiles"
     }
+
+
+def test_a_pmtiles_tile_template_names_its_archive():
+    template = "pmtiles://https://cdn.test/base.pmtiles/{z}/{x}/{y}"
+    style = {
+        "version": 8,
+        "sources": {
+            "overture": {"type": "vector", "tiles": [template]},
+            "relative": {"type": "vector", "tiles": ["pmtiles://../a.pmtiles/{z}/{x}/{y}.mvt"]},
+            "xyz": {"type": "vector", "tiles": ["https://tiles.test/{z}/{x}/{y}.pbf"]},
+        },
+        "layers": [],
+    }
+    assert pmtiles_sources(style, STYLE_URL, "https://x.test/c/only.pmtiles") == {
+        "overture": "https://cdn.test/base.pmtiles",
+        "relative": "https://x.test/c/a.pmtiles",
+    }
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("https://x.test/c/a.pmtiles", "https://x.test/c/a.pmtiles"),
+        ("https://cdn.test/mirror/a.pmtiles", "https://x.test/c/a.pmtiles"),
+        ("https://x.test/c/z.pmtiles", None),
+        ("https://x.test/other/b.pmtiles", None),
+    ],
+)
+def test_match_archive_by_url_then_unique_file_name(url, expected):
+    archives = [
+        "https://x.test/c/a.pmtiles",
+        "https://x.test/c/b.pmtiles",
+        "https://x.test/d/b.pmtiles",
+    ]
+    assert match_archive(url, archives) == expected
 
 
 def test_style_urls_upgrade_s3_website_endpoints():

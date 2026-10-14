@@ -11,20 +11,23 @@ import posixpath
 import re
 from collections import deque
 from concurrent.futures import FIRST_COMPLETED, Executor, Future, wait
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 from urllib.parse import unquote, urlsplit
 
+from portolan_registry_qgis.core.hrefs import asset_href, glob_root, is_glob
+from portolan_registry_qgis.core.i18n import _
 from portolan_registry_qgis.core.scope import intersects
-from portolan_registry_qgis.core.stac import Document, StacError, read_document
+from portolan_registry_qgis.core.stac import Document, StacError, read_fetched
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
     from portolan_registry_qgis.core.scope import Scope
-    from portolan_registry_qgis.core.stac import Node
+    from portolan_registry_qgis.core.stac import Asset, Node
 
     FetchJson = Callable[[str], object]
+    ListGlob = Callable[[str], list[str]]
     Read = Callable[[str], Document | tuple[str, str] | None]
 
 _UNSAFE = re.compile(r"[^A-Za-z0-9._@+=-]")
@@ -51,6 +54,8 @@ class Plan:
     truncated: bool = False
     # The items the plan leaves out, because they lie outside the scope.
     outside: int = 0
+    # Each partition glob whose files could not be listed, and the reason.
+    unlisted: list[tuple[str, str]] = field(default_factory=list)
 
     @property
     def known_bytes(self) -> int:
@@ -95,7 +100,11 @@ def clipped_path(href: str, root: str) -> str:
     """Return where the GeoPackage of a clipped GeoParquet file goes in the download folder.
 
     It keeps the file's place in the catalog layout, with a ``.gpkg`` suffix.
+    A glob writes one file named after the folder that holds its partitions.
     """
+    if is_glob(href):
+        folder = glob_root(href)
+        href = f"{folder}/{posixpath.basename(folder) or 'partitions'}.parquet"
     path = local_path(href, root)
     folder, _sep, name = path.rpartition("/")
     stem = name
@@ -116,7 +125,7 @@ def files_of(document: Document, root: str) -> list[PlannedFile]:
     files.extend(
         PlannedFile(asset.href, local_path(asset.href, root), asset.size, asset.checksum)
         for asset in document.assets
-        if asset.href.startswith(("http://", "https://"))
+        if asset.href.startswith(("http://", "https://")) and asset.glob is None
     )
     shared = document.pmtiles_duplicates
     files.extend(
@@ -141,6 +150,25 @@ class Walk:
     cancelled: Callable[[], bool] | None = None
     # Runs the reads in parallel.
     executor: Executor | None = None
+    # Lists the files of a bucket glob. Without it, partitioned assets are left out.
+    list_glob: ListGlob | None = None
+
+
+def partition_files(
+    asset: Asset, root: str, list_glob: ListGlob | None
+) -> tuple[list[PlannedFile], str | None]:
+    """Return the files of a partitioned asset, or the reason they cannot be listed."""
+    url = asset.read_url
+    if url is None:
+        return [], _("HTTPS cannot list the files of {glob}").format(glob=asset.glob)
+    if list_glob is None:
+        return [], _("Listing the files of {glob} needs DuckDB").format(glob=asset.glob)
+    try:
+        found = list_glob(url)
+    except Exception as error:  # noqa: BLE001 - DuckDB raises its own error types
+        return [], str(error)
+    hrefs = [asset_href(listed, listed) for listed in found]
+    return [PlannedFile(href, local_path(href, root)) for href in hrefs], None
 
 
 def walk(
@@ -161,7 +189,7 @@ def walk(
         if cancelled is not None and cancelled():
             return None
         try:
-            return read_document(fetch_json(href), href)
+            return read_fetched(fetch_json(href), href)
         except (OSError, ValueError, StacError) as error:
             return (href, str(error))
 
@@ -315,6 +343,7 @@ def plan(
     how = how or Walk()
     base = root or start
     failures: list[tuple[str, str]] = []
+    unlisted: list[tuple[str, str]] = []
     files: dict[str, PlannedFile] = {}
     reads = outside = 0
     for document in walk(fetch_json, start, failures, how):
@@ -324,5 +353,24 @@ def plan(
             continue
         for planned in files_of(document, base):
             files.setdefault(planned.url, planned)
+        _add_partitions(document, base, how.list_glob, files, unlisted)
     truncated = reads + len(failures) >= how.max_documents
-    return Plan(list(files.values()), failures, truncated=truncated, outside=outside)
+    return Plan(list(files.values()), failures, truncated, outside, unlisted)
+
+
+def _add_partitions(
+    document: Document,
+    root: str,
+    list_glob: ListGlob | None,
+    files: dict[str, PlannedFile],
+    unlisted: list[tuple[str, str]],
+) -> None:
+    """Add the files of each partitioned asset of ``document`` to ``files``."""
+    for asset in document.assets:
+        if asset.glob is None:
+            continue
+        listed, reason = partition_files(asset, root, list_glob)
+        if reason is not None:
+            unlisted.append((asset.glob, reason))
+        for planned in listed:
+            files.setdefault(planned.url, planned)

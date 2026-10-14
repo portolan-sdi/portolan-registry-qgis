@@ -1,5 +1,5 @@
 ---
-source_sha256: da90f101b8a18645586273bdf33ad0a29409d9391de914f37513f95558d5f303
+source_sha256: c2fe4741641d76cda598415a7e7cb22bc3f4138244a3b7082762da4258456484
 ---
 
 <!-- vale off -->
@@ -36,6 +36,21 @@ QT_QPA_PLATFORM=offscreen .venv-qgis/bin/python \
 QT_QPA_PLATFORM=offscreen .venv-qgis/bin/python \
   scripts/bench_tiles.py --baseline
 ```
+
+## Balayages du registre
+
+Les tests utilisent des catalogues que l'extension construit. Les scripts de balayage, eux, exécutent l'extension sur chaque catalogue du registre en direct, et signalent chaque vérification qui échoue.
+
+- `scripts/sweep_registry.py` exécute le chemin de lecture du cœur sous uv. Pour chaque collection, il sonde les fichiers derrière **Voir sur la carte** et **Charger toutes les données**, et planifie la lecture du GeoParquet avec DuckDB. Il lit aussi les styles, la vignette et les chemins de téléchargement.
+- `scripts/sweep_qgis.py` ajoute les cibles de chaque collection en couches QGIS avec leurs styles, puis effectue le rendu de chaque couche. Il signale les couches non valides, les rendus vides et les avertissements de style.
+
+```bash
+uv run python scripts/sweep_registry.py --out sweep
+QT_QPA_PLATFORM=offscreen .venv-qgis/bin/python \
+  scripts/sweep_qgis.py --out sweep-qgis
+```
+
+Chaque script écrit `sweep.md` et `sweep.json` dans son dossier de sortie. Utilisez `--only` avec des identifiants de catalogue pour balayer quelques catalogues. Le workflow Registry sweep exécute les deux scripts chaque nuit et téléverse les rapports. Un échec à cet endroit ne bloque pas une fusion.
 
 ## Contrôles de qualité
 

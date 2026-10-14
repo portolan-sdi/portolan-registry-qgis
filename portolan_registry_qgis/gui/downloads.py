@@ -23,7 +23,7 @@ from portolan_registry_qgis.core.loadable import (
 from portolan_registry_qgis.gui.loading import duckdb_ready
 from portolan_registry_qgis.gui.tasks import Busy
 from portolan_registry_qgis.qgis_io import parquet_layer
-from portolan_registry_qgis.qgis_io.network import fetch_json, run_task
+from portolan_registry_qgis.qgis_io.network import fetch_document, run_task
 
 if TYPE_CHECKING:
     from qgis.PyQt.QtWidgets import QWidget
@@ -32,6 +32,23 @@ if TYPE_CHECKING:
     from portolan_registry_qgis.core.stac import Asset, Document
     from portolan_registry_qgis.gui.tasks import TaskController
     from portolan_registry_qgis.qgis_io.log import Messages
+
+
+def _list_glob(skip: set[str]) -> download.ListGlob | None:
+    """Return a function that lists the files of a bucket glob with DuckDB, or None without it.
+
+    The function returns no file for a glob in ``skip``, which downloads clipped instead.
+    """
+    if not parquet_query.duckdb_status()[0]:
+        return None
+    extension_dir = parquet_layer.extension_directory()
+
+    def list_glob(url: str) -> list[str]:
+        if url in skip:
+            return []
+        return parquet_query.list_files(parquet_query.connection(extension_dir), url)
+
+    return list_glob
 
 
 @dataclass(frozen=True)
@@ -57,17 +74,47 @@ class Downloads:
         return Path(folder) if folder else None
 
     def download_files(self, root: str, tiles: list[str], assets: list[Asset]) -> None:
-        """Download ``tiles`` and ``assets`` whole, to their paths below ``root``."""
+        """Download ``tiles`` and ``assets`` whole, to their paths below ``root``.
+
+        A partitioned asset first lists its files with DuckDB, in a background task.
+        """
         files = [
             download.PlannedFile(a.href, download.local_path(a.href, root), a.size, a.checksum)
             for a in assets
+            if a.glob is None
         ]
         files += [download.PlannedFile(url, download.local_path(url, root)) for url in tiles]
-        if not files:
+        globs = [a for a in assets if a.glob is not None]
+        if not files and not globs:
             return
         folder = self._choose_folder()
-        if folder is not None:
+        if folder is None:
+            return
+        if not globs:
             self._tasks.start_job(folder, files)
+            return
+        list_glob = _list_glob(set())
+
+        def listing(_task: Any) -> tuple[list[download.PlannedFile], list[str]]:
+            found: list[download.PlannedFile] = []
+            reasons: list[str] = []
+            for asset in globs:
+                listed, reason = download.partition_files(asset, root, list_glob)
+                found += listed
+                reasons += [reason] if reason else []
+            return found, reasons
+
+        def listed(result: object, error: BaseException | None) -> None:
+            if not isinstance(result, tuple):
+                self._messages.warn(_("Could not list the partitions: {error}").format(error=error))
+                return
+            found, reasons = result
+            for reason in reasons:
+                self._messages.warn(reason)
+            if files or found:
+                self._tasks.start_job(folder, files + found)
+
+        run_task(_("List the partitions"), listing, listed)
 
     def download_all(
         self, document: Document, root: str, scope: Scope, limits: parquet_layer.Limits
@@ -85,9 +132,13 @@ class Downloads:
             return
         title = document.title
 
+        clipped = {asset.read_url for asset in clip if asset.read_url is not None}
+
         def build(task: Any, executor: Any) -> download.Plan:
-            walk = download.Walk(cancelled=task.isCanceled, executor=executor)
-            return download.plan(fetch_json, document.href, root, walk, scope=scope)
+            walk = download.Walk(
+                cancelled=task.isCanceled, executor=executor, list_glob=_list_glob(clipped)
+            )
+            return download.plan(fetch_document, document.href, root, walk, scope=scope)
 
         def planned(result: object, error: BaseException | None, *, cancelled: bool) -> None:
             self._tasks.finish(Busy.LISTING)
@@ -115,7 +166,7 @@ class Downloads:
         if whole.files:
             self._tasks.start_job(listed.folder, whole.files)
         for asset in listed.clip:
-            target = listed.folder / download.clipped_path(asset.href, listed.root)
+            target = listed.folder / download.clipped_path(asset.glob or asset.href, listed.root)
             self._download_clipped(asset, target, listed.limits)
 
     def _confirm(self, plan: download.Plan, clipped: int = 0) -> bool:
@@ -131,12 +182,12 @@ class Downloads:
         holds every row.
         """
         extension_dir = parquet_layer.extension_directory()
-        plan = parquet_layer.planner(asset.href, limits, extension_dir)
+        plan = parquet_layer.planner(asset.read_url or asset.href, limits, extension_dir)
         name = parquet_name(asset)
 
         def write(task: Any) -> parquet_query.Written:
             planned = plan(task)
-            prepared = parquet_layer.prepare(planned, extension_dir, cancelled=task.isCanceled)
+            prepared = parquet_layer.prepare(planned, extension_dir, parquet_layer.task_watch(task))
             try:
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.move(str(prepared.path), str(target))

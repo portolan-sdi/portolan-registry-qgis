@@ -278,6 +278,42 @@ def _tables(root: Path) -> None:
     con.close()
 
 
+def _parquet_items(root: Path) -> None:
+    """Write a collection of two items, each with one GeoParquet file of 200 points."""
+    folder = root / "parts"
+    for key in ("a", "b"):
+        (folder / key).mkdir(parents=True)
+        _parquet(folder / key / f"{key}.parquet")
+        bbox = [11.0, 44.0, 13.0, 45.0]
+        item = make_item(
+            key,
+            bbox,
+            [{"rel": "collection", "href": "../collection.json"}],
+            geometry=box_polygon(bbox),
+            properties={"datetime": "2026-01-01T00:00:00Z"},
+            assets={
+                "data": {
+                    "href": f"./{key}.parquet",
+                    "type": "application/vnd.apache.parquet",
+                    "roles": ["data"],
+                }
+            },
+        )
+        (folder / key / f"{key}.json").write_text(json.dumps(item))
+    parts = make_collection(
+        "parts",
+        ["./a/a.json", "./b/b.json"],
+        title="Test parts",
+        description="Two GeoParquet items.",
+        license="CC-BY-4.0",
+        extent={
+            "spatial": {"bbox": [[11.0, 44.0, 13.0, 45.0]]},
+            "temporal": {"interval": [[None, None]]},
+        },
+    )
+    (folder / "collection.json").write_text(json.dumps(parts))
+
+
 def _parquet(path: Path) -> None:
     """Write 200 points as GeoParquet with a bbox covering column, as DuckDB does.
 
@@ -345,6 +381,7 @@ def _build(root: Path) -> dict:
     _raster(collection / "relief.tif")
     _parquet(root / "points.parquet")
     _tiles(root)
+    _parquet_items(root)
     _tables(root)
     _images(root, collection)
     style = {

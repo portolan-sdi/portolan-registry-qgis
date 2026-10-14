@@ -14,8 +14,10 @@ from portolan_registry_qgis.core.loadable import (
     format_name,
     has_parquet,
     is_on_map,
+    is_readable,
     is_table,
     item_cog,
+    item_file,
     loadable_tip,
     only_items,
     parquet_name,
@@ -249,12 +251,15 @@ def test_plan_summary_of_a_plain_plan():
 def test_plan_summary_names_each_gap():
     files = [PlannedFile(f"{BASE}/{n}", n, 1000) for n in ("a", "b")]
     files.append(PlannedFile(f"{BASE}/c", "c"))
-    plan = Plan(files, [("x", "gone"), ("y", "gone")], truncated=True, outside=1)
+    plan = Plan(
+        files, [("x", "gone"), ("y", "gone")], truncated=True, outside=1, unlisted=[("g", "why")]
+    )
     assert plan_summary(plan, clipped=2).split("\n") == [
         "3 files, at least 2.0 KB.",
         "2 GeoParquet files download as GeoPackage, with the features in the area only.",
         "1 file does not declare a size.",
         "2 documents could not be read and are left out.",
+        "The files of 1 partitioned dataset could not be listed and are left out.",
         "The listing stopped at its document limit.",
         "1 item outside the chosen area is left out.",
     ]
@@ -271,3 +276,77 @@ def test_loadable_tip():
         "A layer in the project already reads this file.",
     ]
     assert loadable_tip(_file("geojson", roles=())) == f"{BASE}/file.geojson"
+
+
+GLOB_BASE = "https://pub.test/points/collection.json"
+
+
+def _glob_collection(href):
+    raw = {
+        "type": "Collection",
+        "id": "points",
+        "title": "Points",
+        "links": [],
+        "assets": {"data": {"href": "./zone=*/a*.parquet", "roles": ["data"]}},
+    }
+    return read_document(raw, href)
+
+
+def test_an_https_glob_disables_load_full_data_and_says_why():
+    document = _glob_collection(GLOB_BASE)
+    targets = pick_targets(document.loadable(), duckdb_ok=True)
+    assert targets.load is not None
+    assert not is_readable(targets.load)
+    state = button_state(document, targets, selected=False, ready=True, busy=False)
+    assert not state.load
+    tip = button_tip(targets.load, view=False)
+    assert "https://pub.test/points/zone=*/a*.parquet" in tip
+    assert "s3://" in tip
+    assert parquet_to_clip(document, MapView((0, 0, 1, 1))) == []
+
+
+def test_a_bucket_glob_loads_and_names_its_folder():
+    document = _glob_collection("https://data.source.coop/acct/points/collection.json")
+    targets = pick_targets(document.loadable(), duckdb_ok=True)
+    assert targets.load is not None
+    assert is_readable(targets.load)
+    assert button_state(document, targets, selected=False, ready=True, busy=False).load
+    assert "zone=*/a*.parquet" in button_tip(targets.load, view=False)
+    asset = targets.load.asset
+    assert asset is not None
+    assert parquet_name(asset) == "points"
+    assert is_on_map(targets.load, {asset.read_url}, [])
+    assert parquet_to_clip(document, MapView((0, 0, 1, 1))) == [asset]
+
+
+def test_item_file_takes_any_data_format():
+    item = read_document(
+        make_item_doc({"data": {"href": "./a.parquet", "roles": ["data"]}}),
+        f"{BASE}/a/a.json",
+    )
+    found = item_file(item)
+    assert found is not None
+    assert found.format == "parquet"
+    assert found.title == "Item a"
+    tif = read_document(
+        make_item_doc(
+            {
+                "data": {"href": "./a.parquet", "roles": ["data"]},
+                "image": {"href": "./a.tif", "roles": ["data"]},
+            }
+        ),
+        f"{BASE}/a/a.json",
+    )
+    assert item_file(tif).format == "cog"
+    assert item_file(read_document(make_item_doc({}), f"{BASE}/a/a.json")) is None
+
+
+def make_item_doc(assets):
+    return {
+        "type": "Feature",
+        "id": "a",
+        "properties": {"title": "Item a"},
+        "geometry": None,
+        "links": [],
+        "assets": assets,
+    }

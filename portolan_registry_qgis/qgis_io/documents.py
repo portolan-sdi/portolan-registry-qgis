@@ -10,8 +10,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from portolan_registry_qgis.core.i18n import _
-from portolan_registry_qgis.core.stac import Document, read_document
-from portolan_registry_qgis.qgis_io.network import fetch_json, run_task
+from portolan_registry_qgis.core.stac import Document, read_fetched
+from portolan_registry_qgis.qgis_io.network import fetch_document, run_task
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -43,7 +43,7 @@ class DocumentCache:
             return
 
         def read(_task: object) -> Document:
-            return read_document(fetch_json(href), href)
+            return read_fetched(fetch_document(href), href)
 
         def done(result: object, error: BaseException | None) -> None:
             if isinstance(result, Document):

@@ -10,16 +10,17 @@ from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtGui import QImage
 from qgis.PyQt.QtWidgets import QMessageBox
 
-from portolan_registry_qgis.core import parquet_query
+from portolan_registry_qgis.core import mirror, parquet_query
 from portolan_registry_qgis.core.i18n import _, count, ngettext, number
 from portolan_registry_qgis.core.loadable import parquet_name
 from portolan_registry_qgis.core.scope import Everything, clip_wkt
+from portolan_registry_qgis.core.style import archive_urls
 from portolan_registry_qgis.gui.tasks import Busy
 from portolan_registry_qgis.qgis_io import layers as layer_io
 from portolan_registry_qgis.qgis_io import mosaic, parquet_layer
 from portolan_registry_qgis.qgis_io.canvas import add_layers
 from portolan_registry_qgis.qgis_io.log import log
-from portolan_registry_qgis.qgis_io.network import fetch_bytes, fetch_json, run_task
+from portolan_registry_qgis.qgis_io.network import fetch_bytes, fetch_document, run_task
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -183,20 +184,37 @@ class Loader:
         the advice to view the vector tiles to the question about a large
         load. Call ``duckdb_ready`` first.
         """
+        source = asset.read_url
+        if source is None:
+            self._messages.warn(
+                _("QGIS cannot list the files of {glob} over HTTPS.").format(glob=asset.glob)
+            )
+            return
+        self.add_parquet_source(source, parquet_name(asset), scope, limits, has_tiles=has_tiles)
+
+    def add_parquet_source(
+        self,
+        source: parquet_query.Source,
+        name: str,
+        scope: Scope,
+        limits: parquet_layer.Limits,
+        *,
+        has_tiles: bool,
+    ) -> None:
+        """Copy the features of ``source`` within ``limits`` to one layer named ``name``."""
         extension_dir = parquet_layer.extension_directory()
-        read = parquet_layer.planner(asset.href, limits, extension_dir)
-        name = parquet_name(asset)
+        read = parquet_layer.planner(source, limits, extension_dir)
         in_scope = not isinstance(scope, Everything)
 
         def planned(result: object, error: BaseException | None) -> None:
+            # ``task`` is bound below, before the read can end.
+            self._tasks.release(task)
             if not isinstance(result, parquet_layer.Planned):
                 if parquet_layer.is_interrupt(error):
                     self._messages.info(_("Stopped reading {name}.").format(name=name))
                 else:
                     self._messages.warn(
-                        _("DuckDB could not read {url}: {error}").format(
-                            url=asset.href, error=error
-                        )
+                        _("DuckDB could not read {url}: {error}").format(url=source, error=error)
                     )
                 return
             # A table has no geometry, so the scope does not limit it.
@@ -210,7 +228,8 @@ class Loader:
             self._copy_parquet(result, name, extension_dir, in_scope=limited)
 
         self._messages.info(_("Reading {name} with DuckDB…").format(name=name))
-        run_task(_("Read {url} with DuckDB").format(url=asset.href), read, planned)
+        task = run_task(_("Read {url} with DuckDB").format(url=source), read, planned)
+        self._tasks.follow(task, _("Counting the features of {name}…").format(name=name))
 
     def _confirm_features(
         self, name: str, estimate: int, *, in_scope: bool, has_tiles: bool
@@ -242,9 +261,11 @@ class Loader:
         self, planned: parquet_layer.Planned, name: str, extension_dir: str, *, in_scope: bool
     ) -> None:
         def copy(task: Any) -> parquet_layer.Prepared:
-            return parquet_layer.prepare(planned, extension_dir, cancelled=task.isCanceled)
+            return parquet_layer.prepare(planned, extension_dir, parquet_layer.task_watch(task))
 
         def done(result: object, error: BaseException | None) -> None:
+            # ``task`` is bound below, before the copy can end.
+            self._tasks.release(task)
             if not isinstance(result, parquet_layer.Prepared):
                 if parquet_layer.is_interrupt(error):
                     self._messages.info(_("Stopped the copy of {name}.").format(name=name))
@@ -258,7 +279,8 @@ class Loader:
             self._show_copy(planned, result, name, in_scope=in_scope)
 
         self._messages.info(_copying(planned, name))
-        run_task(_("Copy {url} with DuckDB").format(url=planned.url), copy, done)
+        task = run_task(_("Copy {url} with DuckDB").format(url=planned.url), copy, done)
+        self._tasks.follow(task, _("Copying the features of {name}…").format(name=name))
 
     def _show_copy(
         self,
@@ -295,21 +317,28 @@ class Loader:
 
     # ---------- mosaics ----------
 
-    def add_mosaic(self, document: Document, scope: Scope) -> None:
-        """Add the COG files of the items of ``document`` in ``scope`` as one layer."""
+    def add_mosaic(self, document: Document, scope: Scope, limits: parquet_layer.Limits) -> None:
+        """Add the files of the items of ``document`` in ``scope`` as one layer.
+
+        COGs become a VRT. GeoParquet files become one GeoPackage, clipped to ``limits``.
+        """
         title = document.title
 
         def find(task: Any, executor: Any) -> list[str]:
             return mosaic.item_hrefs_in(
-                document, scope, fetch_json, executor, cancelled=task.isCanceled
+                document, scope, fetch_document, executor, cancelled=task.isCanceled
             )
 
         def found(result: object, error: BaseException | None, *, cancelled: bool) -> None:
             hrefs = self._mosaic_files(result, error, title, cancelled=cancelled)
-            if hrefs is None:
+            cogs, tables = mirror.split_files(hrefs or [])
+            if hrefs is None or not cogs:
                 self._tasks.finish(Busy.MOSAIC)
-                return
-            self._build_mosaic(hrefs, title, clip_wkt(scope))
+            if tables and not cogs and duckdb_ready(self._parent):
+                has_tiles = bool(archive_urls(document))
+                self.add_parquet_source(tables, title, scope, limits, has_tiles=has_tiles)
+            if cogs:
+                self._build_mosaic(cogs, title, clip_wkt(scope))
 
         self._tasks.run_walk(
             Busy.MOSAIC,
@@ -339,7 +368,7 @@ class Loader:
             return None
         if not result:
             self._messages.info(
-                _("No COG file of {title} lies in the chosen area.").format(title=title)
+                _("No file of {title} lies in the chosen area.").format(title=title)
             )
             return None
         if len(result) > CONFIRM_FILES and not self._confirm_mosaic(title, len(result)):
@@ -390,10 +419,10 @@ class Loader:
             )
             self._messages.info(zoomed(added.format(n=number(len(hrefs)), name=name), moved=moved))
 
-        self._tasks.show_progress(
-            0,
-            0,
-            count("Building a mosaic of {n} file…", "Building a mosaic of {n} files…", len(hrefs)),
-        )
         description = _("Build a mosaic of {name}").format(name=name)
-        self._tasks.track(mosaic.start_vrt(description, hrefs, clip, done))
+        self._tasks.follow(
+            mosaic.start_vrt(description, hrefs, clip, done),
+            count(
+                "Opening {n} COG for the mosaic…", "Opening {n} COGs for the mosaic…", len(hrefs)
+            ),
+        )

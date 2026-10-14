@@ -42,6 +42,7 @@ from portolan_registry_qgis.core.style import (
     DEFAULT_STYLE_NAME,
     Sprite,
     archive_urls,
+    match_archive,
     parse_style,
     read_sprite,
     split_style,
@@ -328,13 +329,14 @@ def _styles_by_archive(
             )
             continue
         styled = split_style(style, asset.href, fallback)
-        used = [url for url in styled.by_source if url in by_archive]
-        if not used:
+        used = {source: match_archive(source, urls) for source in styled.by_source}
+        if not any(used.values()):
             continue
         warnings.extend(_style_notes(asset.label, styled.warnings))
         sprite = read_sprite(style, asset.href, fetch_bytes, warnings, sprites)
-        for url in used:
-            by_archive[url].append(TileStyle(asset.label, styled.by_source[url], sprite))
+        for source, url in used.items():
+            if url is not None:
+                by_archive[url].append(TileStyle(asset.label, styled.by_source[source], sprite))
     return by_archive
 
 

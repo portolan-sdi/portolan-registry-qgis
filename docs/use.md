@@ -12,7 +12,7 @@ The list shows 25 publishers at a time. Select **Show 25 more** at the end of th
 
 Select a publisher to open its catalog. The header shows the catalog, and the tree below lists its collections. Each collection shows its own icon when the catalog publishes one. The tree lists 50 entries at a time, with a **Show 50 more** row for the rest. **All publishers** goes back to the list.
 
-A collection whose children are all items, such as a set of image tiles, shows one row such as **240 files** instead of one row per item. Select the collection or that row, then use **Add as one layer** under **Add to map**. **All files** lists the COG file of each item, 50 at a time, with a **Show more** row. Select one to add or download that file alone.
+A collection whose children are all items, such as a set of image tiles, shows one row such as **240 files** instead of one row per item. Select the collection or that row, then use **Add as one layer** under **Add to map**. **All files** lists the data file of each item, such as a COG or a GeoParquet file, 50 at a time, with a **Show more** row. Select one to add or download that file alone.
 
 ## See the details
 
@@ -44,7 +44,7 @@ To add a different file, open **All files**, select one or more rows, then selec
 
 A PMTiles layer gets every MapLibre style in the collection that draws its archive, each as a named QGIS style. The collection's default style is current. To switch styles, right-click the layer, then select one under **Styles**. **QGIS default style** draws the tiles without a catalog style. A project saves every style with the layer.
 
-In a style, `sources.<id>.url` references the archive. The plugin accepts a path relative to the style file, such as `../tiles.pmtiles`. The `pmtiles://` prefix is optional. A vector source with no `url` reads the collection's archive when the collection has only one.
+In a style, `sources.<id>.url` references the archive. The plugin accepts a path relative to the style file, such as `../tiles.pmtiles`. The `pmtiles://` prefix is optional. A source with a `tiles` template such as `pmtiles://https://host/tiles.pmtiles/{z}/{x}/{y}` references the archive too. A vector source with no `url` reads the collection's archive when the collection has only one. When a style references the archive at another URL, the plugin matches the archive by its file name.
 
 A CSV opens as points in EPSG:4326 when its first line has a longitude column (`lon`, `lng`, `longitude`, or `x`) and a latitude column (`lat`, `latitude`, or `y`). The names ignore case.
 
@@ -67,17 +67,27 @@ When the area is not complete, the window says why under the choice and turns of
 
 DuckDB copies the GeoParquet features into a GeoPackage in the QGIS profile folder, and the layer reads that file. With a map extent or an area, DuckDB copies only the features that intersect it. DuckDB copies a feature that crosses the edge of the area in full. When a file has a GeoParquet `bbox` column, DuckDB uses its statistics to skip row groups outside the area. A drawn or layer polygon then tests each feature against the polygon itself, not its bounding box.
 
+The bar at the bottom of the window shows how much of the count and the copy DuckDB has done, and the time left. DuckDB reports its progress in steps, so the bar can wait at 0% while DuckDB reads the file metadata. **Cancel** stops the read or the copy.
+
 Loads have no feature limit. For an estimate of more than 1,000,000 features, the window asks first, because the copy takes time and disk space. The estimate counts the features in the area's bounding box, so the copy can hold fewer. To stop a read or a copy, select **Cancel** in the QGIS task manager.
 
 A layer stores one geometry type. When a feature has another type, it keeps its attributes and has no geometry, and the window reports how many features this affects. A Parquet file with no geometry column loads as a table with every row, whatever the area.
 
 The plugin deletes a GeoPackage when you remove the last layer that reads it. A saved project keeps each GeoParquet layer as a link to its source file and its area. When the project opens, the plugin copies the features again. The new copy drops your edits, so export the layer to keep them.
 
+## Load partitioned GeoParquet
+
+A large dataset can split into many GeoParquet files, which the catalog describes with one glob such as `s3://bucket/data/country=*/*.parquet`. The plugin reads the glob from the collection's `partition:glob`, or from a data asset whose href holds `*`. DuckDB then reads every file as one table, and adds the partition keys, such as `country`, as columns.
+
+HTTPS cannot list the files of a folder, so DuckDB needs the glob as an `s3://` or `gs://` URL. The plugin converts the HTTPS addresses of Amazon S3, Google Cloud Storage, and Source Cooperative to these forms. When the catalog gives only another HTTPS glob, **Load full data** is off, and its tooltip says why. Add single files from **All files** instead.
+
 PMTiles layers read through a loopback server that the plugin runs on `127.0.0.1`. A saved project reconnects them when it reopens.
 
-## Add many COG files as one layer
+## Add the files of many items as one layer
 
-For a collection whose children are all items, **Add to map** shows **Add as one layer**. The plugin finds the items that intersect the area of interest and builds a GDAL VRT over the first COG of each item. With a map extent or an area, the VRT clips the mosaic to it, so the layer shows only the pixels inside. The clip keeps the CRS and the pixels of the COGs. QGIS adds the VRT as one raster layer and reads only the tiles on screen.
+For a collection whose children are all items, **Add to map** shows **Add as one layer**. The plugin finds the items that intersect the area of interest and reads the first COG of each item, else its GeoParquet file. DuckDB copies GeoParquet items into one GeoPackage, as **Load full data** does. For COG items, the plugin builds a GDAL VRT. With a map extent or an area, the VRT clips the mosaic to it, so the layer shows only the pixels inside. The clip keeps the CRS and the pixels of the COGs. QGIS adds the VRT as one raster layer and reads only the tiles on screen.
+
+While GDAL opens the COGs, the bar shows the share of files opened and the time left.
 
 When the collection has a `collection-mirror` asset in stac-geoparquet, DuckDB reads the item extents from it in one query. Without it, or without DuckDB, the plugin reads each item document. Above 500 files, the window asks first, because GDAL opens each file to build the VRT.
 
@@ -88,6 +98,10 @@ The VRT goes into the same scratch folder as the GeoPackages, and the plugin del
 **Download** under **Add to map** saves the chosen node and everything below it in the area of interest, after it shows the file count and the known size. It leaves out each item whose extent lies outside the area, and it says how many it left out. With a map extent or an area, it saves each GeoParquet file as a GeoPackage that contains only the features in the area. The GeoPackage takes the file's name with a `.gpkg` extension.
 
 **Download selected** under **All files** saves the files you selected, whole, whatever the area.
+
+A partitioned GeoParquet asset downloads as each file its glob matches, which DuckDB lists first. With a map extent or an area, it downloads as one GeoPackage, named after the folder that contains the partitions.
+
+The bar counts the bytes downloaded when the catalog gives the size of every file, and the files otherwise. It shows the time left.
 
 The plugin saves each file in the folder you pick, at the same relative path as in the catalog, so the copy opens as a local STAC catalog. After each download, the plugin checks the file against its `file:checksum` when the catalog gives one. A second run skips files that are already complete, so it resumes an interrupted download.
 

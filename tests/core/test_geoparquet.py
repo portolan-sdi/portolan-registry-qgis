@@ -69,10 +69,11 @@ def test_copy_uses_the_covering_column():
     sql, params = build_copy(
         plan, "/tmp/x.gpkg", "MultiPolygon", Clip((-75.17, 39.94, -75.15, 39.96))
     )
-    assert '"bbox"."xmin" <= ?' in sql
+    assert '"bbox"."xmin" <= -75.15 AND "bbox"."xmax" >= -75.17' in sql
+    assert '"geometry" IS NOT NULL' in sql
     assert "ST_Intersects" in sql
     assert "LIMIT" not in sql
-    assert params == [-75.15, -75.17, 39.96, 39.94, -75.17, 39.94, -75.15, 39.96]
+    assert params == [-75.17, 39.94, -75.15, 39.96]
     assert 'CAST("c_dig1desc" AS VARCHAR) AS "c_dig1desc"' in sql
     # The layer is multi, so single polygons are promoted. Points get a NULL geometry.
     assert "IN ('POLYGON', 'MULTIPOLYGON') THEN ST_Multi(\"geometry\") END AS" in sql
@@ -125,9 +126,11 @@ def test_estimate():
     assert params == []
     sql, params = build_estimate(plan, Clip((0, 1, 2, 3)))
     # Only the covering column filters, so DuckDB reads no geometry.
-    assert '"bbox"."xmin" <= ?' in sql
+    assert '"bbox"."xmin" <= 2.0 AND "bbox"."xmax" >= 0.0' in sql
+    assert '"bbox"."ymin" <= 3.0 AND "bbox"."ymax" >= 1.0' in sql
     assert "ST_Intersects" not in sql
-    assert params == [2, 0, 3, 1]
+    assert "IS NOT NULL" not in sql
+    assert params == []
     without = plan_read([("geometry", "GEOMETRY")], None)
     assert build_estimate(without, Clip((0, 1, 2, 3))) is None
 
@@ -228,12 +231,12 @@ def test_copy_in_an_area():
     plan = plan_read(LAND_USE_SCHEMA, LAND_USE_GEO)
     sql, params = build_copy(plan, "x.gpkg", "MultiPolygon", AREA_CLIP)
     # The covering column skips row groups by the envelope, then the polygon tests each geometry.
-    assert '"bbox"."xmin" <= ?' in sql
+    assert '"bbox"."xmin" <= -75.15' in sql
     assert 'ST_Intersects("geometry", ST_GeomFromText(?))' in sql
     assert "ST_MakeEnvelope" not in sql
     # The WKT is a parameter, never part of the SQL.
     assert AREA not in sql
-    assert params == [-75.15, -75.17, 39.96, 39.94, AREA]
+    assert params == [AREA]
 
 
 def test_area_without_a_covering_column():

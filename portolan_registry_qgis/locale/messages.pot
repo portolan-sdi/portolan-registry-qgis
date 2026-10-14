@@ -112,6 +112,10 @@ msgstr ""
 msgid "All files and metadata in the Portolan browser"
 msgstr ""
 
+#: portolan_registry_qgis/core/stac.py
+msgid "All partitions"
+msgstr ""
+
 #: portolan_registry_qgis/gui/catalog_tree.py
 msgid "All publishers"
 msgstr ""
@@ -155,13 +159,6 @@ msgstr ""
 #, python-brace-format
 msgid "Build the mosaic {name} again"
 msgstr ""
-
-#: portolan_registry_qgis/gui/loading.py
-#, python-brace-format
-msgid "Building a mosaic of {n} file…"
-msgid_plural "Building a mosaic of {n} files…"
-msgstr[0] ""
-msgstr[1] ""
 
 #: portolan_registry_qgis/gui/tasks.py
 msgid "Cancel"
@@ -246,6 +243,11 @@ msgstr ""
 
 #: portolan_registry_qgis/gui/loading.py
 #, python-brace-format
+msgid "Copying the features of {name}…"
+msgstr ""
+
+#: portolan_registry_qgis/gui/loading.py
+#, python-brace-format
 msgid "Could not add vector tiles: {error}"
 msgstr ""
 
@@ -283,6 +285,11 @@ msgstr ""
 #: portolan_registry_qgis/gui/loading.py
 #, python-brace-format
 msgid "Could not list the files of {title}: {error}"
+msgstr ""
+
+#: portolan_registry_qgis/gui/downloads.py
+#, python-brace-format
+msgid "Could not list the partitions: {error}"
 msgstr ""
 
 #: portolan_registry_qgis/gui/downloads.py
@@ -349,6 +356,11 @@ msgstr ""
 #: portolan_registry_qgis/gui/downloads.py
 #, python-brace-format
 msgid "Could not write {path}: {error}"
+msgstr ""
+
+#: portolan_registry_qgis/gui/loading.py
+#, python-brace-format
+msgid "Counting the features of {name}…"
 msgstr ""
 
 #: portolan_registry_qgis/core/format.py
@@ -531,6 +543,11 @@ msgstr ""
 msgid "GeoParquet needs DuckDB {minimum} or newer, and it is not installed."
 msgstr ""
 
+#: portolan_registry_qgis/core/download.py
+#, python-brace-format
+msgid "HTTPS cannot list the files of {glob}"
+msgstr ""
+
 #: mkdocs.yml
 msgctxt "docs"
 msgid "Home"
@@ -568,6 +585,10 @@ msgstr ""
 msgid "List the files of {title}"
 msgstr ""
 
+#: portolan_registry_qgis/gui/downloads.py
+msgid "List the partitions"
+msgstr ""
+
 #. a task in the QGIS task manager that lists the files below {title}.
 #: portolan_registry_qgis/gui/downloads.py
 #, python-brace-format
@@ -582,6 +603,11 @@ msgstr ""
 #: portolan_registry_qgis/gui/downloads.py
 #, python-brace-format
 msgid "Listing of {title} cancelled."
+msgstr ""
+
+#: portolan_registry_qgis/core/download.py
+#, python-brace-format
+msgid "Listing the files of {glob} needs DuckDB"
 msgstr ""
 
 #. The about line of the QGIS plugin manager.
@@ -650,16 +676,16 @@ msgid "More"
 msgstr ""
 
 #: portolan_registry_qgis/gui/loading.py
-#, python-brace-format
-msgid "No COG file of {title} lies in the chosen area."
-msgstr ""
-
-#: portolan_registry_qgis/gui/loading.py
 msgid "No feature intersects the chosen area."
 msgstr ""
 
 #: portolan_registry_qgis/qgis_io/mosaic.py
 msgid "No file intersects the area"
+msgstr ""
+
+#: portolan_registry_qgis/gui/loading.py
+#, python-brace-format
+msgid "No file of {title} lies in the chosen area."
 msgstr ""
 
 #: portolan_registry_qgis/gui/registry_list.py
@@ -709,6 +735,13 @@ msgstr ""
 msgid "Open vector tiles of {title}"
 msgstr ""
 
+#: portolan_registry_qgis/gui/loading.py
+#, python-brace-format
+msgid "Opening {n} COG for the mosaic…"
+msgid_plural "Opening {n} COGs for the mosaic…"
+msgstr[0] ""
+msgstr[1] ""
+
 #. The symbol for petabytes in a file size. French writes "Po", for pétaoctet.
 #: portolan_registry_qgis/core/format.py
 msgid "PB"
@@ -729,6 +762,11 @@ msgstr ""
 
 #: portolan_registry_qgis/core/facts.py
 msgid "Publisher"
+msgstr ""
+
+#: portolan_registry_qgis/gui/loading.py
+#, python-brace-format
+msgid "QGIS cannot list the files of {glob} over HTTPS."
 msgstr ""
 
 #: portolan_registry_qgis/qgis_io/mosaic.py
@@ -848,6 +886,11 @@ msgstr ""
 #: portolan_registry_qgis/gui/catalog_tree.py
 #: portolan_registry_qgis/gui/details.py
 msgid "Reading…"
+msgstr ""
+
+#: portolan_registry_qgis/core/loadable.py
+#, python-brace-format
+msgid "Reads every file that matches {glob}."
 msgstr ""
 
 #. A catalog status. The catalog is gone from its address.
@@ -983,6 +1026,14 @@ msgstr ""
 msgid "The area is not a polygon."
 msgstr ""
 
+#: portolan_registry_qgis/core/loadable.py
+#, python-brace-format
+msgid ""
+"The catalog splits this data into many files at {glob}. QGIS cannot list "
+"files over HTTPS, and the catalog gives no s3:// or gs:// address. Add "
+"single files from All files instead."
+msgstr ""
+
 #: portolan_registry_qgis/qgis_io/mosaic.py
 msgid "The clip is not WKT"
 msgstr ""
@@ -998,6 +1049,13 @@ msgstr ""
 #: portolan_registry_qgis/core/geoparquet.py
 msgid "The file has no geometry column that its metadata names"
 msgstr ""
+
+#: portolan_registry_qgis/core/loadable.py
+#, python-brace-format
+msgid "The files of {n} partitioned dataset could not be listed and are left out."
+msgid_plural "The files of {n} partitioned datasets could not be listed and are left out."
+msgstr[0] ""
+msgstr[1] ""
 
 #: portolan_registry_qgis/core/stac.py
 msgid "The link did not return a STAC document"
@@ -1139,6 +1197,25 @@ msgstr ""
 msgid "Zoom to"
 msgstr ""
 
+#: portolan_registry_qgis/core/progress.py
+#, python-brace-format
+msgid "about {n} hour left"
+msgid_plural "about {n} hours left"
+msgstr[0] ""
+msgstr[1] ""
+
+#: portolan_registry_qgis/core/progress.py
+#, python-brace-format
+msgid "about {n} min left"
+msgid_plural "about {n} min left"
+msgstr[0] ""
+msgstr[1] ""
+
+#: portolan_registry_qgis/core/progress.py
+#, python-brace-format
+msgid "about {n} s left"
+msgstr ""
+
 #: portolan_registry_qgis/qgis_io/layers.py
 #, python-brace-format
 msgid "the server answered HTTP {status}"
@@ -1169,6 +1246,18 @@ msgstr ""
 #: portolan_registry_qgis/qgis_io/mosaic.py
 #, python-brace-format
 msgid "{layer} keeps no mosaic sources"
+msgstr ""
+
+#. {message} says what runs, and {percent} how much of it is done.
+#: portolan_registry_qgis/core/progress.py
+#, python-brace-format
+msgid "{message} {percent}%"
+msgstr ""
+
+#. {left} is a time left, such as "about 15 s left".
+#: portolan_registry_qgis/core/progress.py
+#, python-brace-format
+msgid "{message} {percent}%, {left}"
 msgstr ""
 
 #: portolan_registry_qgis/gui/loading.py

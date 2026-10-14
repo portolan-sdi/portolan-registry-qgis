@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from portolan_registry_qgis.core.stac import (
+    Fetched,
     Loadable,
     StacError,
     asset_format,
@@ -24,6 +25,7 @@ from portolan_registry_qgis.core.stac import (
     is_tabular,
     links_of,
     read_document,
+    read_fetched,
     str_or_none,
 )
 from tests.stac_builders import make_catalog, make_collection, make_item
@@ -472,3 +474,83 @@ def test_json_value_helpers():
     assert str_or_none("", empty_ok=False) is None
     assert str_or_none("a", empty_ok=False) == "a"
     assert str_or_none(1) is None
+
+
+COLLECTION = "https://data.source.coop/acct/repo/col/collection.json"
+PARQUET = "application/vnd.apache.parquet"
+
+
+def _partitioned(**fields):
+    return read_document(make_collection("col", **fields), COLLECTION)
+
+
+def test_a_glob_href_marks_the_asset_partitioned():
+    document = _partitioned(
+        assets={"data": {"href": "./zone=*/a*.parquet", "type": PARQUET, "roles": ["data"]}}
+    )
+    (asset,) = document.assets
+    assert asset.glob == "https://data.source.coop/acct/repo/col/zone=*/a*.parquet"
+    assert asset.read_url == "s3://us-west-2.opendata.source.coop/acct/repo/col/zone=*/a*.parquet"
+
+
+def test_an_asset_partition_glob_names_its_bucket():
+    raw = {
+        "href": "./h3=*/*.parquet",
+        "type": PARQUET,
+        "roles": ["data"],
+        "partition:glob": "s3://bucket/col/h3=*/*.parquet",
+    }
+    (asset,) = _partitioned(assets={"data": raw}).assets
+    assert asset.read_url == "s3://bucket/col/h3=*/*.parquet"
+
+
+def test_a_collection_glob_replaces_an_asset_glob_that_https_cannot_list():
+    document = read_document(
+        make_collection(
+            "col",
+            assets={"data": {"href": "./*.parquet", "type": PARQUET, "roles": ["data"]}},
+            **{"partition:glob": "gs://bucket/col/*.parquet"},
+        ),
+        "https://cdn.test/col/collection.json",
+    )
+    (asset,) = document.assets
+    assert asset.read_url == "gs://bucket/col/*.parquet"
+
+
+def test_a_collection_glob_without_parquet_data_adds_one_asset():
+    document = _partitioned(**{"partition:glob": "./state=*/*.parquet"})
+    (loadable,) = document.loadable()
+    assert loadable.format == "parquet"
+    assert loadable.asset is not None
+    assert loadable.asset.key == "partition:glob"
+    assert loadable.asset.read_url is not None
+
+
+def test_a_collection_glob_beside_a_whole_file_adds_nothing():
+    document = _partitioned(
+        assets={"data": {"href": "./all.parquet", "type": PARQUET, "roles": ["data"]}},
+        **{"partition:glob": "s3://bucket/col/state=*/*.parquet"},
+    )
+    assert [asset.key for asset in document.assets] == ["data"]
+    assert document.assets[0].glob is None
+
+
+def test_a_glob_only_https_serves_has_no_read_url():
+    document = read_document(
+        make_collection("col", **{"partition:glob": "./h3=*/*.parquet"}),
+        "https://pub-1.r2.dev/col/collection.json",
+    )
+    assert document.assets[0].read_url is None
+
+
+def test_hrefs_resolve_against_the_url_after_a_redirect():
+    collection = make_collection(
+        "col", assets={"data": {"href": "./a.parquet", "type": PARQUET, "roles": ["data"]}}
+    )
+    fetched = Fetched(collection, "https://bucket.test/real/col/collection.json")
+    document = read_fetched(fetched, "https://short.test/abc")
+    assert document.href == "https://short.test/abc"
+    assert document.assets[0].href == "https://bucket.test/real/col/a.parquet"
+    assert (
+        read_fetched(collection, COLLECTION).assets[0].href.startswith("https://data.source.coop/")
+    )

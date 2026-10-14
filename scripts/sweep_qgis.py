@@ -9,15 +9,16 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from sweep_registry import ROOT, Result, Sweep, fetch, markdown
+from sweep_registry import ROOT, Result, Sweep, registry_entries, write_report
 
 sys.path.insert(0, str(ROOT))
 
@@ -34,13 +35,15 @@ from qgis.core import (
 from qgis.PyQt.QtCore import QSize
 from qgis.PyQt.QtGui import QColor, QImage
 
-from portolan_registry_qgis.core import registry
 from portolan_registry_qgis.core.loadable import pick_targets
 from portolan_registry_qgis.core.stac import Document, read_document
 from portolan_registry_qgis.core.style import archive_urls
 from portolan_registry_qgis.qgis_io import layers
 from portolan_registry_qgis.qgis_io.network import fetch_bytes, fetch_json
 from portolan_registry_qgis.qgis_io.tileserver import TileServer
+
+if TYPE_CHECKING:
+    from portolan_registry_qgis.core import registry
 
 WORLD = 40_075_016.686
 MERCATOR = QgsCoordinateReferenceSystem("EPSG:3857")
@@ -153,39 +156,76 @@ class QgisSweep(Sweep):
         return str(layer.providerType())
 
 
+def sweep(entries: list[registry.CatalogEntry], out: Path, max_documents: int) -> None:
+    """Sweep each catalog in QGIS, and save its results as soon as it ends.
+
+    A catalog that already has a result file is skipped, so a stopped run resumes.
+    """
+    app = QgsApplication([], False)
+    app.initQgis()
+    todo = [entry for entry in entries if not (out / f"{entry.id}.json").exists()]
+    with ThreadPoolExecutor(8) as pool:
+        walked = list(pool.map(lambda e: collections(e, max_documents), todo))
+    server = TileServer()
+    try:
+        for entry, urls in zip(todo, walked, strict=True):
+            found = QgisSweep(entry.id, server)
+            for url in urls:
+                found.collection(url)
+            rows = [asdict(r) for r in found.results]
+            (out / f"{entry.id}.json").write_text(json.dumps(rows, indent=1))
+            failed = sum(not r.ok for r in found.results)
+            print(f"{entry.id}: {len(urls)} collections, {failed} failures", flush=True)
+    finally:
+        server.stop()
+        QgsProject.instance().clear()
+        app.exitQgis()
+
+
+def spawn(entries: list[registry.CatalogEntry], out: Path, jobs: int, max_documents: int) -> None:
+    """Sweep the catalogs in ``jobs`` QGIS processes at the same time."""
+    groups = [entries[i::jobs] for i in range(jobs)]
+    procs = [
+        subprocess.Popen(  # noqa: S603 - this script, with catalog ids from the registry
+            [
+                sys.executable,
+                __file__,
+                "--out",
+                str(out.parent),
+                "--max-documents",
+                str(max_documents),
+                "--only",
+                *[entry.id for entry in group],
+            ]
+        )
+        for group in groups
+        if group
+    ]
+    for proc in procs:
+        proc.wait()
+
+
 def main(argv: list[str] | None = None) -> int:
     """Walk the registry, then add each collection's targets in QGIS."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, default=Path("sweep-qgis"))
     parser.add_argument("--only", nargs="*", default=None, help="catalog ids to sweep")
     parser.add_argument("--max-documents", type=int, default=300)
+    parser.add_argument("--jobs", type=int, default=1, help="QGIS processes to run at once")
     args = parser.parse_args(argv)
-    app = QgsApplication([], False)
-    app.initQgis()
-    body, _final, _headers = fetch(registry.REGISTRY_URL)
-    entries = registry.parse_registry(json.loads(body))
-    if args.only:
-        entries = [entry for entry in entries if entry.id in args.only]
-    with ThreadPoolExecutor(8) as pool:
-        walked = list(pool.map(lambda e: collections(e, args.max_documents), entries))
-    server = TileServer()
-    results: list[Result] = []
-    try:
-        for entry, urls in zip(entries, walked, strict=True):
-            sweep = QgisSweep(entry.id, server)
-            for url in urls:
-                sweep.collection(url)
-            results.extend(sweep.results)
-            failed = sum(not r.ok for r in sweep.results)
-            print(f"{entry.id}: {len(urls)} collections, {failed} failures", file=sys.stderr)
-    finally:
-        server.stop()
-    args.out.mkdir(parents=True, exist_ok=True)
-    (args.out / "sweep.json").write_text(json.dumps([asdict(r) for r in results], indent=1))
-    (args.out / "sweep.md").write_text(markdown(results))
-    QgsProject.instance().clear()
-    app.exitQgis()
-    return 1 if any(not r.ok for r in results) else 0
+    entries = registry_entries(args.only)
+    catalogs = args.out / "catalogs"
+    catalogs.mkdir(parents=True, exist_ok=True)
+    if args.jobs > 1:
+        spawn(entries, catalogs, args.jobs, args.max_documents)
+    else:
+        sweep(entries, catalogs, args.max_documents)
+    results = [
+        Result(**row)
+        for path in sorted(catalogs.glob("*.json"))
+        for row in json.loads(path.read_text())
+    ]
+    return write_report(args.out, results)
 
 
 if __name__ == "__main__":

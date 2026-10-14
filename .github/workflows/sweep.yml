@@ -53,7 +53,7 @@ jobs:
           python3 -m venv --system-site-packages /tmp/venv
           /tmp/venv/bin/pip install duckdb==1.5.6 babel==2.18.0
       - name: Sweep the registry in QGIS
-        run: /tmp/venv/bin/python scripts/sweep_qgis.py --out sweep-qgis || true
+        run: /tmp/venv/bin/python scripts/sweep_qgis.py --jobs 4 --out sweep-qgis || true
       - name: Show the summary
         run: head -n 30 sweep-qgis/sweep.md >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

@@ -283,6 +283,21 @@ def markdown(results: list[Result]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def registry_entries(only: list[str] | None) -> list[registry.CatalogEntry]:
+    """Return the registered catalogs, or those whose ids are in ``only``."""
+    body, _final, _headers = fetch(registry.REGISTRY_URL)
+    entries = registry.parse_registry(json.loads(body))
+    return [entry for entry in entries if entry.id in only] if only else entries
+
+
+def write_report(out: Path, results: list[Result]) -> int:
+    """Write ``sweep.json`` and ``sweep.md`` to ``out``. Return 1 when a check failed."""
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "sweep.json").write_text(json.dumps([asdict(r) for r in results], indent=1))
+    (out / "sweep.md").write_text(markdown(results))
+    return 1 if any(not r.ok for r in results) else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Sweep the registry and write the report."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -291,10 +306,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-documents", type=int, default=300)
     parser.add_argument("--workers", type=int, default=8)
     args = parser.parse_args(argv)
-    body, _final, _headers = fetch(registry.REGISTRY_URL)
-    entries = registry.parse_registry(json.loads(body))
-    if args.only:
-        entries = [entry for entry in entries if entry.id in args.only]
+    entries = registry_entries(args.only)
     con = parquet_query.connection()
     lock = threading.Lock()
     results: list[Result] = []
@@ -307,10 +319,7 @@ def main(argv: list[str] | None = None) -> int:
 
     with ThreadPoolExecutor(args.workers) as pool:
         list(pool.map(run, entries))
-    args.out.mkdir(parents=True, exist_ok=True)
-    (args.out / "sweep.json").write_text(json.dumps([asdict(r) for r in results], indent=1))
-    (args.out / "sweep.md").write_text(markdown(results))
-    return 1 if any(not r.ok for r in results) else 0
+    return write_report(args.out, results)
 
 
 if __name__ == "__main__":

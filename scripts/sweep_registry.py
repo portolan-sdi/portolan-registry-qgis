@@ -155,17 +155,12 @@ class Sweep:
             self.record(document.href, "mirror", lambda: self.parquet(mirror))
 
     def raw_hrefs(self, document: Document, raw: dict[str, Any]) -> None:
-        """Flag raw hrefs and spec fields the plugin drops or misreads."""
-        glob = raw.get("partition:glob")
-        if glob:
-            self.flag(document.href, "partition:glob", f"plugin ignores partition:glob {glob!r}")
+        """Flag the assets the plugin drops, and a collection with nothing to load."""
         kept = {asset.key for asset in document.assets}
         for key, asset in (raw.get("assets") or {}).items():
             href = asset.get("href", "") if isinstance(asset, dict) else ""
             if key not in kept:
                 self.flag(document.href, "asset dropped", f"{key}: {href}")
-            elif is_glob(href):
-                self.flag(document.href, "glob href", f"{key}: {href}")
         if document.kind == "collection" and not document.loadable() and not document.children:
             self.flag(document.href, "no data", "nothing to load and no items")
 
@@ -178,8 +173,11 @@ class Sweep:
             )
         if load is None:
             return
-        if load.format == "parquet":
-            self.record(document.href, "load parquet", lambda: self.parquet(load.href))
+        if load.format == "parquet" and load.asset is not None and load.asset.read_url is None:
+            self.flag(document.href, "load parquet", f"HTTPS cannot list {load.asset.glob}")
+        elif load.format == "parquet":
+            url = load.asset.read_url if load.asset is not None else load.href
+            self.record(document.href, "load parquet", lambda: self.parquet(url or load.href))
         else:
             self.record(
                 document.href, f"load {load.format}", lambda: self.probe(load.href, load.format)

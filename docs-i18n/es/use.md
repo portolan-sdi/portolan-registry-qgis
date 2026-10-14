@@ -1,5 +1,5 @@
 ---
-source_sha256: a74e71aad387298607085ad06ff3aa425cf33416b5fa3b1917da12883fa7c367
+source_sha256: b8ac4443d839fa6692fb26a2edfccc091884052243370a8bcca225f999a3497d
 ---
 
 <!-- vale off -->
@@ -85,7 +85,7 @@ El complemento elimina un GeoPackage cuando usted quita la última capa que lo l
 
 Un conjunto de datos grande puede dividirse en muchos archivos GeoParquet, que el catálogo describe con un solo patrón glob como `s3://bucket/data/country=*/*.parquet`. El complemento lee el glob del `partition:glob` de la colección, o de un recurso de datos cuyo href contiene `*`. Después, DuckDB lee todos los archivos como una sola tabla y añade las claves de partición, como `country`, como columnas.
 
-HTTPS no puede listar los archivos de una carpeta, así que DuckDB necesita el glob como una URL `s3://` o `gs://`. El complemento convierte las direcciones HTTPS de Amazon S3, Google Cloud Storage y Source Cooperative a estas formas. Cuando el catálogo da solo otro glob HTTPS, **Cargar datos completos** está desactivado, y su descripción emergente indica por qué. En su lugar, añada archivos sueltos desde **Todos los archivos**.
+HTTPS no puede listar los archivos de una carpeta, así que DuckDB necesita el glob como una URL `s3://` o `gs://`. El complemento convierte las direcciones HTTPS de Amazon S3, Google Cloud Storage y Source Cooperative a estas formas. Un producto de Source Cooperative puede guardar sus archivos en una carpeta del bucket que su dirección no muestra, así que el complemento lee esa carpeta de la API de Source Cooperative. Cuando el catálogo da solo otro glob HTTPS, **Cargar datos completos** está desactivado, y su descripción emergente indica por qué. En su lugar, añada archivos sueltos desde **Todos los archivos**.
 
 Las capas PMTiles leen a través de un servidor local que el complemento ejecuta en `127.0.0.1`. Un proyecto guardado las vuelve a conectar al reabrirse.
 

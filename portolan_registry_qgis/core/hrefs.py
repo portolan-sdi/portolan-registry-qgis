@@ -16,6 +16,9 @@ _GLOB = re.compile(r"[*\[]")
 # Source Cooperative serves the bucket below at data.source.coop.
 _SOURCE_COOP_HOST = "data.source.coop"  # i18n: skip - a host
 _SOURCE_COOP_BUCKET = "us-west-2.opendata.source.coop"  # i18n: skip - a bucket
+# A product's files sit under the prefix of its mirror in that bucket, which the API names.
+_SOURCE_COOP_API = "https://source.coop/api/v1/products/"  # i18n: skip - a URL
+_SOURCE_COOP_MIRROR = "aws-opendata-us-west-2"  # i18n: skip - a mirror id
 _GCS_HOST = "storage.googleapis.com"  # i18n: skip - a host
 # bucket.s3.amazonaws.com, bucket.s3.region.amazonaws.com, bucket.s3-region.amazonaws.com
 _S3_VIRTUAL = re.compile(r"^(.+)\.s3(?:[.-]([a-z0-9-]+))?\.amazonaws\.com$", re.IGNORECASE)
@@ -136,6 +139,42 @@ def bucket_url(href: str) -> str | None:
     if host == _SOURCE_COOP_HOST:
         return f"s3://{_SOURCE_COOP_BUCKET}{path}"
     return _https_bucket(host, path)
+
+
+def source_coop_product(url: str) -> str | None:
+    """Return the ``account/product/`` path of an ``s3://`` URL in the Source Cooperative bucket."""
+    parts = urlsplit(url)
+    if parts.scheme != "s3" or parts.hostname != _SOURCE_COOP_BUCKET:
+        return None
+    segments = parts.path.split("/")
+    if len(segments) < 4 or not segments[1] or not segments[2]:
+        return None
+    return f"{segments[1]}/{segments[2]}/"
+
+
+def source_coop_api(product: str) -> str:
+    """Return the Source Cooperative API URL that describes ``product``, an ``account/product/`` path."""
+    return _SOURCE_COOP_API + product.rstrip("/")
+
+
+def mirror_prefix(answer: object) -> str | None:
+    """Return the bucket prefix of a product from its Source Cooperative API answer, or None."""
+    metadata = answer.get("metadata") if isinstance(answer, dict) else None
+    mirrors = metadata.get("mirrors") if isinstance(metadata, dict) else None
+    mirror = mirrors.get(_SOURCE_COOP_MIRROR) if isinstance(mirrors, dict) else None
+    prefix = mirror.get("prefix") if isinstance(mirror, dict) else None
+    if not isinstance(prefix, str) or not prefix.strip("/"):
+        return None
+    return prefix.strip("/") + "/"
+
+
+def replace_product(url: str, old: str, new: str) -> str:
+    """Return ``url`` with the bucket path ``old`` at its start replaced by ``new``."""
+    parts = urlsplit(url)
+    if not parts.path.startswith("/" + old):
+        return url
+    path = "/" + new + parts.path[len(old) + 1 :]
+    return urlunsplit((parts.scheme, parts.netloc, path, parts.query, parts.fragment))
 
 
 def _https_bucket(host: str, path: str) -> str | None:

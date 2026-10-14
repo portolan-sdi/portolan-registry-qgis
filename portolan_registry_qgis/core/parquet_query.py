@@ -6,6 +6,7 @@ QGIS does not ship DuckDB, so every function imports it inside the function.
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import re
 import sqlite3
@@ -29,7 +30,13 @@ from portolan_registry_qgis.core.geoparquet import (
     quote,
     type_from_first,
 )
-from portolan_registry_qgis.core.hrefs import bucket_region
+from portolan_registry_qgis.core.hrefs import (
+    bucket_region,
+    mirror_prefix,
+    replace_product,
+    source_coop_api,
+    source_coop_product,
+)
 from portolan_registry_qgis.core.i18n import _
 
 if TYPE_CHECKING:
@@ -47,6 +54,8 @@ _EXTENSIONS = ("httpfs", "spatial")
 _STAGED = "portolan_staged"
 _lock = threading.Lock()
 _connection: Any = None
+# The bucket prefix of each Source Cooperative product, or None when the API gives none.
+_prefixes: dict[str, str | None] = {}
 
 
 class DuckDBMissingError(ImportError):
@@ -206,14 +215,49 @@ def use_bucket(con: Any, source: Source) -> None:
         )
 
 
+def _product_prefix(con: Any, product: str) -> str | None:
+    """Return the bucket prefix of a Source Cooperative product, read once from its API."""
+    with _lock:
+        if product in _prefixes:
+            return _prefixes[product]
+    try:
+        with cursor(con) as cur:
+            rows = cur.execute("SELECT content FROM read_text(?)", [source_coop_api(product)])
+            prefix = mirror_prefix(json.loads(rows.fetchone()[0]))
+    except Exception:  # noqa: BLE001 - DuckDB raises its own error types
+        prefix = None
+    with _lock:
+        _prefixes[product] = prefix
+    return prefix
+
+
+def locate(con: Any, source: Source) -> Source:
+    """Return ``source`` with each Source Cooperative product path replaced by its bucket prefix.
+
+    A product's files can sit under a prefix other than ``account/product/``.
+    A URL outside that bucket, or a product the API does not describe, stays the same.
+    """
+    if isinstance(source, list):
+        return [str(locate(con, url)) for url in source]
+    product = source_coop_product(source)
+    prefix = _product_prefix(con, product) if product else None
+    if product is None or prefix is None:
+        return source
+    return replace_product(source, product, prefix)
+
+
 def list_files(con: Any, url: str, cancelled: Callable[[], bool] | None = None) -> list[str]:
-    """Return the files that a bucket glob matches, in order."""
-    use_bucket(con, url)
+    """Return the files that a bucket glob matches, in order, under the same path as ``url``."""
+    located = str(locate(con, url))
+    use_bucket(con, located)
     with cursor(con, cancelled) as cur:
-        return [
-            str(row[0])
-            for row in cur.execute("SELECT file FROM glob(?) ORDER BY file", [url]).fetchall()
-        ]
+        rows = cur.execute("SELECT file FROM glob(?) ORDER BY file", [located]).fetchall()
+    found = [str(row[0]) for row in rows]
+    product = source_coop_product(url)
+    prefix = _product_prefix(con, product) if product else None
+    if product is None or prefix is None:
+        return found
+    return [replace_product(file, prefix, product) for file in found]
 
 
 def read_plan(con: Any, url: Source, cancelled: Callable[[], bool] | None = None) -> ReadPlan:
@@ -221,6 +265,7 @@ def read_plan(con: Any, url: Source, cancelled: Callable[[], bool] | None = None
 
     ``url`` may be a bucket glob or a list of URLs, which DuckDB reads as one table.
     """
+    url = locate(con, url)
     use_bucket(con, url)
     with cursor(con, cancelled) as cur:
         schema = [
@@ -257,6 +302,7 @@ def estimate(
     if query is None:
         return None
     sql, params = query
+    url = locate(con, url)
     watch = watch or Watch()
     with cursor(con, watch.cancelled, watch.progress) as cur:
         return int(cur.execute(sql, [url, *params]).fetchone()[0])
@@ -320,6 +366,7 @@ def write_gpkg(
     A feature of another geometry type gets a NULL geometry and counts as
     refused. A table becomes an attribute table.
     """
+    url = locate(con, url)
     watch = watch or Watch()
     with cursor(con, watch.cancelled, watch.progress) as cur:
         layer_type = plan.geometry_type

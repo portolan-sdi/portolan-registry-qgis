@@ -1,5 +1,5 @@
 ---
-source_sha256: a74e71aad387298607085ad06ff3aa425cf33416b5fa3b1917da12883fa7c367
+source_sha256: b8ac4443d839fa6692fb26a2edfccc091884052243370a8bcca225f999a3497d
 ---
 
 <!-- vale off -->
@@ -85,7 +85,7 @@ L'extension supprime un GeoPackage quand vous retirez la dernière couche qui le
 
 Un grand jeu de données peut se diviser en de nombreux fichiers GeoParquet, que le catalogue décrit avec un seul motif glob comme `s3://bucket/data/country=*/*.parquet`. L'extension lit le glob dans le `partition:glob` de la collection, ou dans une ressource de données dont le href contient `*`. DuckDB lit ensuite tous les fichiers comme une seule table, et ajoute les clés de partition, comme `country`, en colonnes.
 
-HTTPS ne peut pas lister les fichiers d'un dossier, donc DuckDB a besoin du glob sous forme d'URL `s3://` ou `gs://`. L'extension convertit les adresses HTTPS d'Amazon S3, de Google Cloud Storage et de Source Cooperative vers ces formes. Quand le catalogue ne donne qu'un autre glob HTTPS, **Charger toutes les données** est désactivé, et son info-bulle en indique la raison. Ajoutez plutôt des fichiers isolés depuis **Tous les fichiers**.
+HTTPS ne peut pas lister les fichiers d'un dossier, donc DuckDB a besoin du glob sous forme d'URL `s3://` ou `gs://`. L'extension convertit les adresses HTTPS d'Amazon S3, de Google Cloud Storage et de Source Cooperative vers ces formes. Un produit de Source Cooperative peut garder ses fichiers dans un dossier du bucket que son adresse ne montre pas, donc l'extension lit ce dossier dans l'API de Source Cooperative. Quand le catalogue ne donne qu'un autre glob HTTPS, **Charger toutes les données** est désactivé, et son info-bulle en indique la raison. Ajoutez plutôt des fichiers isolés depuis **Tous les fichiers**.
 
 Les couches PMTiles lisent par un serveur local que l'extension exécute sur `127.0.0.1`. Un projet enregistré les reconnecte à sa réouverture.
 

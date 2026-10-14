@@ -22,6 +22,8 @@ PARTITIONED = [
     "https://data.source.coop/cholmes/portolan-nl/rvo/brp_gewaspercelen/collection.json",
     # Absolute HTTPS glob on the asset, relative partition:glob, hive keys.
     "https://data.source.coop/ftw/global-data-2e/vector/2020/collection.json",
+    # HTTPS glob in a product whose bucket prefix is not its account and name.
+    "https://data.source.coop/ftw/global-data/predictions/vectors/collection.json",
 ]
 
 

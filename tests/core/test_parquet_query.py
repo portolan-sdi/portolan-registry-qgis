@@ -476,3 +476,69 @@ def test_a_dotted_bucket_gets_a_path_style_secret(live):
 )
 def test_source_text_round_trips(source):
     assert parquet_query.source_from_text(parquet_query.source_text(source)) == source
+
+
+class _Rows:
+    """A DuckDB cursor stand-in that answers every query with ``rows``."""
+
+    def __init__(self, rows):
+        self.rows = rows
+        self.queries = []
+
+    def execute(self, sql, params=None):
+        self.queries.append((sql, params))
+        return self
+
+    def fetchall(self):
+        return self.rows
+
+    def cursor(self):
+        return self
+
+    def close(self):
+        pass
+
+
+_COOP = "s3://us-west-2.opendata.source.coop"
+
+
+def test_locate_reads_the_product_prefix_once(live, tmp_path, monkeypatch):
+    answer = tmp_path / "product.json"
+    answer.write_text(
+        json.dumps({"metadata": {"mirrors": {"aws-opendata-us-west-2": {"prefix": "labs/ftw/"}}}})
+    )
+    calls = []
+
+    def api(product):
+        calls.append(product)
+        return str(answer)
+
+    monkeypatch.setattr(parquet_query, "source_coop_api", api)
+    monkeypatch.setattr(parquet_query, "_prefixes", {})
+    glob = f"{_COOP}/ftw/data/*.parquet"
+    assert parquet_query.locate(live, glob) == f"{_COOP}/labs/ftw/*.parquet"
+    assert parquet_query.locate(live, [glob, "https://x.test/a.parquet"]) == [
+        f"{_COOP}/labs/ftw/*.parquet",
+        "https://x.test/a.parquet",
+    ]
+    assert calls == ["ftw/data/"]
+
+
+def test_locate_keeps_the_url_when_the_api_fails(live, tmp_path, monkeypatch):
+    monkeypatch.setattr(parquet_query, "source_coop_api", lambda _p: str(tmp_path / "none"))
+    prefixes: dict[str, str | None] = {}
+    monkeypatch.setattr(parquet_query, "_prefixes", prefixes)
+    glob = f"{_COOP}/ftw/data/*.parquet"
+    assert parquet_query.locate(live, glob) == glob
+    assert prefixes == {"ftw/data/": None}
+
+
+def test_list_files_returns_the_files_under_the_catalog_path(monkeypatch):
+    monkeypatch.setattr(parquet_query, "_prefixes", {"ftw/data/": "labs/ftw/"})
+    con = _Rows([(f"{_COOP}/labs/ftw/k=a/a.parquet",), (f"{_COOP}/labs/ftw/k=b/b.parquet",)])
+    files = parquet_query.list_files(con, f"{_COOP}/ftw/data/k=*/*.parquet")
+    assert files == [f"{_COOP}/ftw/data/k=a/a.parquet", f"{_COOP}/ftw/data/k=b/b.parquet"]
+    assert con.queries[-1] == (
+        "SELECT file FROM glob(?) ORDER BY file",
+        [f"{_COOP}/labs/ftw/k=*/*.parquet"],
+    )

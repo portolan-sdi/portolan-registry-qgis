@@ -79,7 +79,7 @@ The plugin deletes a GeoPackage when you remove the last layer that reads it. A 
 
 A large dataset can split into many GeoParquet files, which the catalog describes with one glob such as `s3://bucket/data/country=*/*.parquet`. The plugin reads the glob from the collection's `partition:glob`, or from a data asset whose href holds `*`. DuckDB then reads every file as one table, and adds the partition keys, such as `country`, as columns.
 
-HTTPS cannot list the files of a folder, so DuckDB needs the glob as an `s3://` or `gs://` URL. The plugin converts the HTTPS addresses of Amazon S3, Google Cloud Storage, and Source Cooperative to these forms. When the catalog gives only another HTTPS glob, **Load full data** is off, and its tooltip says why. Add single files from **All files** instead.
+HTTPS cannot list the files of a folder, so DuckDB needs the glob as an `s3://` or `gs://` URL. The plugin converts the HTTPS addresses of Amazon S3, Google Cloud Storage, and Source Cooperative to these forms. A Source Cooperative product can keep its files under a bucket folder that its address does not show, so the plugin reads that folder from the Source Cooperative API. When the catalog gives only another HTTPS glob, **Load full data** is off, and its tooltip says why. Add single files from **All files** instead.
 
 PMTiles layers read through a loopback server that the plugin runs on `127.0.0.1`. A saved project reconnects them when it reopens.
 

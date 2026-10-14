@@ -17,7 +17,11 @@ from portolan_registry_qgis.core.hrefs import (
     glob_root,
     is_glob,
     is_http_url,
+    mirror_prefix,
     plain_vsicurl_path,
+    replace_product,
+    source_coop_api,
+    source_coop_product,
     url_extension,
     vsicurl_path,
 )
@@ -332,7 +336,62 @@ def test_bucket_region():
         ("https://x.test/c/2020/zone=*/utm*.parquet", "https://x.test/c/2020"),
         ("https://x.test/c/*/b_*.parquet", "https://x.test/c"),
         ("s3://b/k/*.parquet", "s3://b/k"),
+        ("https://x.test/c/a.parquet", "https://x.test/c/a.parquet"),
     ],
 )
 def test_glob_root(href, root):
     assert glob_root(href) == root
+
+
+_COOP = "s3://us-west-2.opendata.source.coop"
+
+
+@pytest.mark.parametrize(
+    ("url", "product"),
+    [
+        (f"{_COOP}/ftw/global-data/a/*.parquet", "ftw/global-data/"),
+        (f"{_COOP}/ftw/", None),
+        (f"{_COOP}//global-data/a.parquet", None),
+        ("s3://other/ftw/global-data/a.parquet", None),
+        ("https://data.source.coop/ftw/global-data/a.parquet", None),
+    ],
+)
+def test_source_coop_product(url, product):
+    assert source_coop_product(url) == product
+
+
+def test_source_coop_api_names_the_product():
+    assert source_coop_api("ftw/global-data/") == (
+        "https://source.coop/api/v1/products/ftw/global-data"
+    )
+
+
+@pytest.mark.parametrize(
+    ("answer", "prefix"),
+    [
+        (
+            {"metadata": {"mirrors": {"aws-opendata-us-west-2": {"prefix": "labs/ftw/"}}}},
+            "labs/ftw/",
+        ),
+        (
+            {"metadata": {"mirrors": {"aws-opendata-us-west-2": {"prefix": "labs/ftw"}}}},
+            "labs/ftw/",
+        ),
+        ({"metadata": {"mirrors": {"aws-opendata-us-west-2": {"prefix": "/"}}}}, None),
+        ({"metadata": {"mirrors": {"other": {"prefix": "labs/ftw/"}}}}, None),
+        ({"metadata": None}, None),
+        ([], None),
+    ],
+)
+def test_mirror_prefix(answer, prefix):
+    assert mirror_prefix(answer) == prefix
+
+
+def test_replace_product_swaps_the_start_of_the_path_only():
+    url = f"{_COOP}/ftw/global-data/ftw/global-data/a.parquet"
+    assert replace_product(url, "ftw/global-data/", "labs/ftw/") == (
+        f"{_COOP}/labs/ftw/ftw/global-data/a.parquet"
+    )
+    assert replace_product(f"{_COOP}/x/y/a.parquet", "ftw/global-data/", "labs/ftw/") == (
+        f"{_COOP}/x/y/a.parquet"
+    )

@@ -1,32 +1,9 @@
 #!/usr/bin/env python3
 """Keep the Spanish and French translations level with the English source.
 
-English is the source language. Its text is the key of every translation, so a
-change to an English string leaves the old translation unmatched. This script
-finds that gap and fails until a translation fills it.
-
-Commands:
-
-    update      Extract the English messages into messages.pot, merge them
-                into each language's messages.po, compile messages.mo, and
-                write the translated lines of metadata.txt.
-    check       Fail when any translation lags the English. Pre-commit and CI
-                run this.
-    build-docs  Build the English documentation site into site/ and each
-                translation into site/<code>/.
-
-The English messages come from three sources:
-
-- The plugin's Python code: the arguments of _(), N_(), ngettext(), and
-  count() from portolan_registry_qgis.core.i18n.
-- The description and about lines of metadata.txt, which the QGIS plugin
-  manager shows. QGIS reads description[es] and about[es] for Spanish.
-- The site_description and navigation titles of mkdocs.yml.
-
-Each English page in docs/ has a translation at docs-i18n/<code>/<same path>.
-Its front matter records the SHA-256 of the English page it translates. A
-change to the English page changes the hash, and the check fails until the
-translation is updated and records the new hash.
+update: extract messages, merge each messages.po, and compile messages.mo.
+check: fail when any translation lags the English.
+build-docs: build the English site into site/ and each translation into site/<code>/.
 """
 
 from __future__ import annotations
@@ -60,7 +37,6 @@ MKDOCS = ROOT / "mkdocs.yml"
 DOCS = ROOT / "docs"
 DOCS_I18N = ROOT / "docs-i18n"
 BUILD = ROOT / "build" / "i18n"
-SITE = ROOT / "site"
 
 PROJECT = "portolan-registry-qgis"
 # A fixed date keeps messages.pot the same from run to run, so the check can

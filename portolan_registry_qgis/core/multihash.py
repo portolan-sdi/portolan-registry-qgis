@@ -1,10 +1,4 @@
-"""Verify downloaded files against a STAC ``file:checksum``.
-
-The file extension stores checksums as hex-encoded multihash: a varint hash
-function code, a varint digest length, then the digest. Portolan requires that
-encoding (``specs/portolan/core.md``), and most catalogs use sha2-256, which
-appears as the ``1220`` prefix.
-"""
+"""Verify downloaded files against a STAC ``file:checksum`` multihash."""
 
 from __future__ import annotations
 
@@ -112,12 +106,7 @@ def file_matches(
 ) -> bool:
     """Return whether the file at ``path`` hashes to ``checksum``.
 
-    Args:
-        path: The file to hash.
-        checksum: The asset's ``file:checksum``.
-        progress: Called with the number of bytes read so far.
-        cancelled: Polled between chunks. Returning True stops the hash and
-            the function returns False.
+    When ``cancelled`` returns True, the hash stops and the result is False.
     """
     expected = decode(checksum)
     hasher = expected.hasher()

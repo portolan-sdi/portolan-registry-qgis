@@ -1,27 +1,8 @@
 """Load GeoParquet into QGIS through a GeoPackage that DuckDB writes.
 
-``plan`` and ``prepare`` run off the main thread. ``plan`` reads the file's
-schema and estimates the number of features, so the panel can ask before a
-large load. ``prepare`` has DuckDB copy the features into a GeoPackage in
-the plugin's scratch folder. No Python code touches a feature, so a load of
-millions of features stays within the memory DuckDB uses. ``build`` runs on
-the main thread and opens the GeoPackage through OGR. A file with no
-geometry column becomes a table with no geometry.
-
-A copy can keep only the features in a box or in a polygon. The layer keeps
-both in the file's CRS, in ``BBOX_PROPERTY`` and ``AREA_PROPERTY``.
-
-Each QGIS session writes into its own folder. ``sweep`` deletes the files
-that no layer in the project reads, and the plugin calls it when layers are
-removed. ``remove_stale`` deletes the folders that an earlier session left.
-The mosaics of ``mosaic`` write their VRT files into the same folders, so
-the same functions clean them.
-
-A saved project keeps the path of a file that a later session no longer
-has. ``restore_path`` gives QGIS an empty placeholder in its place, so the
-layer opens. ``restore`` then copies the features again from the URL, the
-box, and the area that the layer keeps, and ``reopen`` points the layer at
-the copy.
+``plan`` and ``prepare`` run off the main thread, and ``build`` on it. Each
+session writes into its own scratch folder, which ``sweep`` cleans. A saved
+project whose copy is gone opens a placeholder, and ``restore`` copies again.
 """
 
 from __future__ import annotations
@@ -54,15 +35,17 @@ from qgis.core import (
 )
 
 from portolan_registry_qgis.core import parquet_query
-from portolan_registry_qgis.core.geoparquet import LAYER
+from portolan_registry_qgis.core.geoparquet import LAYER, WHOLE_FILE, Clip
 from portolan_registry_qgis.core.i18n import _
+from portolan_registry_qgis.qgis_io.crs import wgs84
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from qgis.core import QgsCoordinateTransformContext
+    from qgis.core import QgsCoordinateTransformContext, QgsTask
 
     from portolan_registry_qgis.core.geoparquet import ReadPlan
+    from portolan_registry_qgis.core.stac import Bbox
 
 SOURCE_PROPERTY = "portolan/parquet_url"
 # The box of the copy in the file's CRS, as "west,south,east,north", or
@@ -100,17 +83,31 @@ _pending: set[Path] = set()
 
 
 @dataclass(frozen=True)
+class Limits:
+    """The part of a GeoParquet file that ``plan`` reads.
+
+    With no field set, ``plan`` reads the whole file.
+    """
+
+    # Keep only features that intersect this rectangle.
+    extent: QgsRectangle | None = None
+    # The CRS of ``extent``.
+    extent_crs: QgsCoordinateReferenceSystem | None = None
+    # Keep only features that intersect this Polygon or MultiPolygon WKT in
+    # EPSG:4326. It replaces ``extent``.
+    area: str | None = None
+
+
+@dataclass(frozen=True)
 class Planned:
     """A GeoParquet file's read plan, ready to copy."""
 
     url: str
     plan: ReadPlan
     crs: QgsCoordinateReferenceSystem
-    bbox: tuple[float, float, float, float] | None
+    # The part of the file the copy keeps, in the file's CRS.
+    clip: Clip
     estimate: int | None
-    # A Polygon or MultiPolygon WKT in the file's CRS. ``bbox`` is then its
-    # envelope.
-    area: str | None = None
 
 
 @dataclass(frozen=True)
@@ -120,8 +117,7 @@ class Prepared:
     url: str
     path: Path
     written: parquet_query.Written
-    bbox: tuple[float, float, float, float] | None = None
-    area: str | None = None
+    clip: Clip = WHOLE_FILE
 
 
 def crs_for(plan: ReadPlan) -> QgsCoordinateReferenceSystem:
@@ -129,7 +125,7 @@ def crs_for(plan: ReadPlan) -> QgsCoordinateReferenceSystem:
     crs = QgsCoordinateReferenceSystem()
     if plan.crs and crs.createFromUserInput(plan.crs) and crs.isValid():
         return crs
-    return QgsCoordinateReferenceSystem("EPSG:4326")
+    return wgs84()
 
 
 def _profile_folder(name: str, *, create: bool = True) -> Path:
@@ -158,7 +154,7 @@ def file_bbox(
     extent_crs: QgsCoordinateReferenceSystem | None,
     file_crs: QgsCoordinateReferenceSystem,
     context: QgsCoordinateTransformContext,
-) -> tuple[float, float, float, float] | None:
+) -> Bbox | None:
     """Transform the map extent into the file's CRS."""
     if extent is None or extent_crs is None:
         return None
@@ -170,67 +166,75 @@ def file_area(
     area: str,
     file_crs: QgsCoordinateReferenceSystem,
     context: QgsCoordinateTransformContext,
-) -> tuple[str, tuple[float, float, float, float]]:
-    """Transform a polygon in EPSG:4326 into the file's CRS.
-
-    Returns:
-        The polygon as WKT in the file's CRS, and its envelope.
+) -> Clip:
+    """Transform the EPSG:4326 polygon ``area`` into a ``Clip`` in the file's CRS.
 
     Raises:
-        ValueError: ``area`` is not a Polygon or MultiPolygon WKT, or the
-            transform fails.
+        ValueError: ``area`` is not a polygon WKT, or the transform fails.
     """
     geometry = QgsGeometry.fromWkt(area)
     if geometry.isNull() or geometry.type() != Qgis.GeometryType.Polygon:
         raise ValueError(_("Not a Polygon or MultiPolygon: {wkt}").format(wkt=area[:80]))
-    transform = QgsCoordinateTransform(QgsCoordinateReferenceSystem("EPSG:4326"), file_crs, context)
+    transform = QgsCoordinateTransform(wgs84(), file_crs, context)
     if geometry.transform(transform) != Qgis.GeometryOperationResult.Success:
         crs = file_crs.authid()
         if crs:
             raise ValueError(_("Cannot transform the area into {crs}").format(crs=crs))
         raise ValueError(_("Cannot transform the area into the file CRS"))
     rect = geometry.boundingBox()
-    return geometry.asWkt(), (rect.xMinimum(), rect.yMinimum(), rect.xMaximum(), rect.yMaximum())
+    envelope = (rect.xMinimum(), rect.yMinimum(), rect.xMaximum(), rect.yMaximum())
+    return Clip(envelope, geometry.asWkt())
 
 
 def plan(
     url: str,
     context: QgsCoordinateTransformContext,
-    extent: QgsRectangle | None = None,
-    extent_crs: QgsCoordinateReferenceSystem | None = None,
+    limits: Limits | None = None,
     extension_dir: str | None = None,
     cancelled: Callable[[], bool] | None = None,
-    area: str | None = None,
 ) -> Planned:
     """Read a GeoParquet file's schema and estimate its features. Safe off the main thread.
 
-    Args:
-        url: The file's URL or local path.
-        context: The project's transform context, for the extent and the area.
-        extent: Keep only features that intersect this rectangle.
-        extent_crs: The CRS of ``extent``.
-        extension_dir: Where DuckDB installs extensions if its default
-            folder is read-only.
-        cancelled: Polled while the queries run. When it returns True, the
-            running query stops and raises ``duckdb.InterruptException``.
-        area: Keep only features that intersect this Polygon or
-            MultiPolygon WKT in EPSG:4326. It replaces ``extent``.
-
-    Raises:
-        parquet_query.DuckDBMissingError: DuckDB is absent or too old.
-        GeoParquetError: The geo metadata names a column the file does not have.
-        ValueError: ``area`` is not a polygon the file's CRS can hold.
+    ``limits`` None reads the whole file. ``cancelled`` returning True stops
+    the query with ``duckdb.InterruptException``. Raise DuckDBMissingError,
+    GeoParquetError, or ValueError for a bad file or area.
     """
+    limits = limits or Limits()
     con = parquet_query.connection(extension_dir)
     read = parquet_query.read_plan(con, url, cancelled)
     crs = crs_for(read)
-    if area is None:
-        bbox = file_bbox(extent, extent_crs, crs, context)
-        count = parquet_query.estimate(con, url, read, bbox, cancelled)
-        return Planned(url, read, crs, bbox, count)
-    wkt, bbox = file_area(area, crs, context)
-    count = parquet_query.estimate(con, url, read, bbox, cancelled, area=wkt)
-    return Planned(url, read, crs, bbox, count, wkt)
+    if limits.area is None:
+        clip = Clip(file_bbox(limits.extent, limits.extent_crs, crs, context))
+    else:
+        clip = file_area(limits.area, crs, context)
+    count = parquet_query.estimate(con, url, read, clip, cancelled)
+    return Planned(url, read, crs, clip, count)
+
+
+def planner(
+    url: str, limits: Limits, extension_dir: str | None = None
+) -> Callable[[QgsTask], Planned]:
+    """Return a task function that runs ``plan`` on ``url``. Call on the main thread.
+
+    The function reads the project's transform context now, on the main
+    thread. The task function stops the queries when the task is cancelled.
+    """
+    context = QgsProject.instance().transformContext()
+
+    def read(task: QgsTask) -> Planned:
+        return plan(url, context, limits, extension_dir, task.isCanceled)
+
+    return read
+
+
+def is_interrupt(error: BaseException | None) -> bool:
+    """Return whether ``error`` is DuckDB's ``InterruptException``.
+
+    A cancelled task stops the running query, and DuckDB then raises that
+    error. The test reads the class name, because DuckDB is imported only
+    inside functions.
+    """
+    return type(error).__name__ == "InterruptException"
 
 
 def prepare(
@@ -240,44 +244,25 @@ def prepare(
 ) -> Prepared:
     """Copy the planned features into a new GeoPackage. Safe off the main thread.
 
-    Args:
-        planned: The result of ``plan``.
-        extension_dir: As for ``plan``.
-        cancelled: Polled during the copy. When it returns True, the copy
-            stops and raises ``duckdb.InterruptException``.
+    ``cancelled`` works as for ``plan``.
     """
     con = parquet_query.connection(extension_dir)
     path = new_path(".gpkg")
     srs = planned.crs.authid() or planned.plan.crs or None
     try:
-        written = parquet_query.write_gpkg(
-            con,
-            planned.url,
-            planned.plan,
-            str(path),
-            planned.bbox,
-            srs,
-            cancelled,
-            area=planned.area,
-        )
+        target = parquet_query.Target(str(path), planned.clip, srs)
+        written = parquet_query.write_gpkg(con, planned.url, planned.plan, target, cancelled)
     except BaseException:
         discard_path(path)
         raise
-    return Prepared(planned.url, path, written, planned.bbox, planned.area)
+    return Prepared(planned.url, path, written, planned.clip)
 
 
 def build(prepared: Prepared, name: str) -> tuple[QgsVectorLayer, int]:
     """Open the GeoPackage as a layer. Call on the main thread.
 
-    A copy of a file with no geometry column holds an attribute table. It
-    opens as a layer with no geometry.
-
-    Returns:
-        The layer, and how many features the copy left out because their
-        geometry type did not fit the layer.
-
-    Raises:
-        OSError: QGIS cannot open the GeoPackage.
+    Return the layer and the count of features whose geometry type did not
+    fit. A file with no geometry opens as a table. Raise OSError on failure.
     """
     # The layer name selects the table. A GeoPackage that holds only an
     # attribute table has no geometry layer for OGR to pick first.
@@ -291,9 +276,9 @@ def build(prepared: Prepared, name: str) -> tuple[QgsVectorLayer, int]:
         )
     release_path(prepared.path)
     layer.setCustomProperty(SOURCE_PROPERTY, prepared.url)
-    bbox = prepared.bbox
-    layer.setCustomProperty(BBOX_PROPERTY, ",".join(repr(v) for v in bbox) if bbox else "")
-    layer.setCustomProperty(AREA_PROPERTY, prepared.area or "")
+    bbox, area = prepared.clip.to_text()
+    layer.setCustomProperty(BBOX_PROPERTY, bbox)
+    layer.setCustomProperty(AREA_PROPERTY, area)
     return layer, prepared.written.refused
 
 
@@ -312,7 +297,7 @@ def placeholder() -> Path:
             str(path),
             QgsFields(),
             Qgis.WkbType.Unknown,
-            QgsCoordinateReferenceSystem("EPSG:4326"),
+            wgs84(),
             QgsProject.instance().transformContext(),
             options,
         )
@@ -393,19 +378,13 @@ def restore(
 ) -> Prepared:
     """Copy a saved layer's features again. Safe off the main thread.
 
-    Args:
-        layer_url: The value of ``SOURCE_PROPERTY``.
-        bbox_text: The value of ``BBOX_PROPERTY``.
-        extension_dir: As for ``plan``.
-        cancelled: As for ``prepare``.
-        area_text: The value of ``AREA_PROPERTY``. It is already in the
-            file's CRS.
+    The arguments are the layer's ``SOURCE_PROPERTY``, ``BBOX_PROPERTY``, and
+    ``AREA_PROPERTY`` values. The area is already in the file's CRS.
     """
     con = parquet_query.connection(extension_dir)
     read = parquet_query.read_plan(con, layer_url, cancelled)
-    parts = [float(part) for part in bbox_text.split(",")] if bbox_text else []
-    bbox = (parts[0], parts[1], parts[2], parts[3]) if len(parts) == 4 else None
-    planned = Planned(layer_url, read, crs_for(read), bbox, None, area_text or None)
+    clip = Clip.from_text(bbox_text, area_text)
+    planned = Planned(layer_url, read, crs_for(read), clip, None)
     return prepare(planned, extension_dir, cancelled)
 
 
@@ -444,13 +423,9 @@ def _own_sessions() -> list[Path]:
 
 
 def new_path(suffix: str) -> Path:
-    """Return a new file path in this session's scratch folder.
+    """Return a new ``.gpkg`` or ``.vrt`` path in this session's scratch folder.
 
-    The sweep keeps the file until ``release_path`` or ``discard_path``
-    runs, because no layer reads it yet.
-
-    Args:
-        suffix: ``.gpkg`` for a GeoParquet copy, ``.vrt`` for a mosaic.
+    The sweep keeps the file until ``release_path`` or ``discard_path`` runs.
     """
     global _session  # noqa: PLW0603 - one scratch folder per QGIS session
     if suffix not in _SUFFIXES:

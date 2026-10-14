@@ -1,10 +1,6 @@
 """Read static STAC documents into the shapes the plugin displays.
 
-The tree, link, bbox, and format logic is ported from GeoLibre's
-``stac-api.ts`` (MIT, see NOTICE): ``linksOf``, ``catalogChildren``,
-``horizontalBbox``, ``collectionBbox``, ``collectionAssetItem``, and the
-``ASSET_FORMATS`` table. PMTiles links and style assets follow the Portolan
-spec (``specs/portolan/formats.md``), which GeoLibre does not read.
+Ported from GeoLibre's ``stac-api.ts`` (MIT, see NOTICE).
 """
 
 from __future__ import annotations
@@ -12,10 +8,14 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
+from portolan_registry_qgis.core.geoparquet import GEOMETRY_NAMES
 from portolan_registry_qgis.core.hrefs import absolute_href, asset_href, folder_name, is_http_url
 from portolan_registry_qgis.core.i18n import _
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 Bbox = tuple[float, float, float, float]
 NodeKind = Literal["catalog", "collection", "item"]
@@ -42,6 +42,8 @@ PREFERRED_FORMATS: tuple[AssetFormat, ...] = (
 # GeoParquet index of the collection's items, not the data. An ``archive``
 # asset is an earlier version of the data. The browser lists all three.
 _NOT_LOADABLE_ROLES = frozenset({"source", "collection-mirror", "archive"})
+# Asset roles that do not hold the data.
+_NOT_DATA_ROLES = frozenset({"thumbnail", "overview", "metadata"})
 
 
 def is_image(href: str, media_type: str | None) -> bool:
@@ -163,20 +165,12 @@ class Document:
     @property
     def data_assets(self) -> tuple[Asset, ...]:
         """Assets other than styles, thumbnails, and metadata sidecars."""
-        skip = {"thumbnail", "overview", "metadata"}
-        return tuple(
-            asset
-            for asset in self.assets
-            if not asset.is_style and not skip.intersection(asset.roles)
-        )
+        return only_data(self.assets)
 
     def loadable(self) -> tuple[Loadable, ...]:
         """Return the files the plugin can add, with no duplicates.
 
-        The ``rel: pmtiles`` links come first. The data assets with a known
-        format follow, in document order. An asset whose href matches a
-        PMTiles link, and an asset with the ``source``,
-        ``collection-mirror``, or ``archive`` role, is left out.
+        PMTiles links come first, then the data assets with a known format.
         """
         shared = self.pmtiles_duplicates
         found = [
@@ -205,13 +199,8 @@ class Document:
     def preferred_href(self, *, parquet: bool = True) -> str | None:
         """Return the href of the asset to add when the user picks nothing else.
 
-        The first ``rel: pmtiles`` link wins. Publishers list the archive that
-        the default style reads first. Otherwise the first data asset in
-        ``PREFERRED_FORMATS`` order wins. The candidates are those of
-        ``loadable``, so an upstream ``source`` asset never wins.
-
-        Args:
-            parquet: Whether the plugin can read GeoParquet, which needs DuckDB.
+        The first PMTiles link wins, else the first data asset in
+        ``PREFERRED_FORMATS`` order.
         """
         if self.pmtiles:
             return self.pmtiles[0].href
@@ -250,6 +239,25 @@ class StacError(ValueError):
     """A document is not a STAC object the plugin can read."""
 
 
+# The link keys that ``Link`` holds. ``Link.extra`` keeps the rest.
+_LINK_KEYS = frozenset({"rel", "href", "title", "type"})
+
+
+def int_or_none(value: object) -> int | None:
+    """Return ``value`` when it is an integer, else None. A bool is not an integer."""
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def str_or_none(value: object, *, empty_ok: bool = True) -> str | None:
+    """Return ``value`` when it is a string, else None.
+
+    Without ``empty_ok``, an empty string returns None.
+    """
+    if not isinstance(value, str) or (not value and not empty_ok):
+        return None
+    return value
+
+
 def links_of(value: object, base: str) -> tuple[Link, ...]:
     """Return the well-formed links in ``value`` with absolute hrefs."""
     if not isinstance(value, list):
@@ -262,16 +270,13 @@ def links_of(value: object, base: str) -> tuple[Link, ...]:
             href = absolute_href(str(raw["href"]), base)
         except ValueError:
             continue
-        title = raw.get("title")
-        media = raw.get("type")
-        extra = {k: v for k, v in raw.items() if k not in {"rel", "href", "title", "type"}}
         links.append(
             Link(
                 rel=raw["rel"],
                 href=href,
-                title=title if isinstance(title, str) else None,
-                type=media if isinstance(media, str) else None,
-                extra=extra,
+                title=str_or_none(raw.get("title")),
+                type=str_or_none(raw.get("type")),
+                extra={k: v for k, v in raw.items() if k not in _LINK_KEYS},
             )
         )
     return tuple(links)
@@ -344,10 +349,6 @@ def asset_format(href: str, media_type: str | None) -> AssetFormat | None:
     return None
 
 
-def _int_or_none(value: object) -> int | None:
-    return value if isinstance(value, int) and not isinstance(value, bool) else None
-
-
 def _account(raw: dict[str, Any], fallback: str | None) -> str | None:
     storage = raw.get("table:storage_options")  # i18n: skip - a STAC key
     if isinstance(storage, dict) and isinstance(storage.get("account_name"), str):
@@ -355,7 +356,6 @@ def _account(raw: dict[str, Any], fallback: str | None) -> str | None:
     return fallback
 
 
-_GEOMETRY_NAMES = frozenset({"geometry", "geom", "the_geom", "wkb_geometry", "shape", "geog"})
 _GEOMETRY_TYPES = (
     "geometry",
     "geography",
@@ -380,7 +380,7 @@ def is_geometry_column(column: object) -> bool:
         return False
     name = str(column.get("name") or "").lower()
     kind = str(column.get("type") or "").lower()
-    return name in _GEOMETRY_NAMES or kind.startswith(_GEOMETRY_TYPES)
+    return name in GEOMETRY_NAMES or kind.startswith(_GEOMETRY_TYPES)
 
 
 def is_tabular(columns: object) -> bool:
@@ -393,6 +393,38 @@ def is_tabular(columns: object) -> bool:
     return not any(is_geometry_column(column) for column in columns)
 
 
+def only_data(assets: Iterable[Asset]) -> tuple[Asset, ...]:
+    """Return the assets other than styles, thumbnails, and metadata sidecars."""
+    return tuple(
+        asset
+        for asset in assets
+        if not asset.is_style and not _NOT_DATA_ROLES.intersection(asset.roles)
+    )
+
+
+def _roles(raw: object) -> tuple[str, ...]:
+    """Return the string roles of an asset's ``roles`` list."""
+    return tuple(r for r in raw if isinstance(r, str)) if isinstance(raw, list) else ()
+
+
+def _asset(key: object, raw: dict[str, Any], href: str, shared_columns: object) -> Asset:
+    """Read one asset whose href is already resolved."""
+    media = str_or_none(raw.get("type"))
+    detected = asset_format(href, media)
+    columns = raw.get("table:columns", shared_columns)  # i18n: skip - a STAC key
+    return Asset(
+        key=str(key),
+        href=href,
+        title=str_or_none(raw.get("title")),
+        type=media,
+        roles=_roles(raw.get("roles")),
+        size=int_or_none(raw.get("file:size")),  # i18n: skip - a STAC key
+        checksum=str_or_none(raw.get("file:checksum")),  # i18n: skip - a STAC key
+        format=detected,
+        tabular=detected == "parquet" and is_tabular(columns),
+    )
+
+
 def assets_of(document: dict[str, Any], base: str) -> tuple[Asset, ...]:
     """Return a document's assets with resolved hrefs and detected formats.
 
@@ -403,10 +435,11 @@ def assets_of(document: dict[str, Any], base: str) -> tuple[Asset, ...]:
     if not isinstance(raw_assets, dict):
         return ()
     properties = document.get("properties")
-    item_account = _account(properties, None) if isinstance(properties, dict) else None
+    props = properties if isinstance(properties, dict) else {}
+    item_account = _account(props, None)
     shared_columns = document.get("table:columns")  # i18n: skip - a STAC key
-    if shared_columns is None and isinstance(properties, dict):
-        shared_columns = properties.get("table:columns")  # i18n: skip - a STAC key
+    if shared_columns is None:
+        shared_columns = props.get("table:columns")  # i18n: skip - a STAC key
     assets = []
     for key, raw in raw_assets.items():
         if not isinstance(raw, dict) or not isinstance(raw.get("href"), str):
@@ -415,27 +448,7 @@ def assets_of(document: dict[str, Any], base: str) -> tuple[Asset, ...]:
             href = asset_href(raw["href"], base, _account(raw, item_account))
         except ValueError:
             continue
-        roles = raw.get("roles")
-        title = raw.get("title")
-        media = raw.get("type")
-        checksum = raw.get("file:checksum")  # i18n: skip - a STAC key
-        detected = asset_format(href, media if isinstance(media, str) else None)
-        columns = raw.get("table:columns", shared_columns)  # i18n: skip - a STAC key
-        assets.append(
-            Asset(
-                key=str(key),
-                href=href,
-                title=title if isinstance(title, str) else None,
-                type=media if isinstance(media, str) else None,
-                roles=tuple(r for r in roles if isinstance(r, str))
-                if isinstance(roles, list)
-                else (),
-                size=_int_or_none(raw.get("file:size")),  # i18n: skip - a STAC key
-                checksum=checksum if isinstance(checksum, str) else None,
-                format=detected,
-                tabular=detected == "parquet" and is_tabular(columns),
-            )
-        )
+        assets.append(_asset(key, raw, href, shared_columns))
     return tuple(assets)
 
 
@@ -480,13 +493,6 @@ def _text(document: dict[str, Any], *keys: str) -> str:
 
 def read_document(document: object, href: str) -> Document:
     """Read a fetched STAC document.
-
-    Args:
-        document: The parsed JSON.
-        href: The URL the document was fetched from, for resolving links.
-
-    Returns:
-        The document's children, assets, PMTiles links, and extent.
 
     Raises:
         StacError: The JSON is not a STAC catalog, collection, or item.

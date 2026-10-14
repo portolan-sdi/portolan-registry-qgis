@@ -24,16 +24,16 @@ def test_missing_codec_in_a_flatpak_says_what_to_do():
 
 
 def test_missing_codec_elsewhere():
-    message = open_failure(URL, "x.tif: ZSTD compression support is not configured", False)
+    message = open_failure(URL, "x.tif: ZSTD compression support is not configured", flatpak=False)
     assert "uses ZSTD compression" in message
     assert message.endswith("Open it in a QGIS whose GDAL includes ZSTD.")
 
 
 def test_other_failures_pass_gdal_on_or_stay_short():
-    assert open_failure(URL, "HTTP response code: 403", False) == (
+    assert open_failure(URL, "HTTP response code: 403", flatpak=False) == (
         f"QGIS could not open {URL}: HTTP response code: 403"
     )
-    assert open_failure(URL, GONE, False) == f"QGIS could not open {URL}"
+    assert open_failure(URL, GONE, flatpak=False) == f"QGIS could not open {URL}"
 
 
 def test_gdal_reason_drops_the_translated_qgis_wrapper():
@@ -46,4 +46,6 @@ def test_gdal_reason_drops_the_translated_qgis_wrapper():
     invalid = "El proveedor no es válido (proveedor: "
     assert gdal_reason(detail, invalid) == "tile.tif: HTTP response code: 404"
     assert "El proveedor" in gdal_reason(detail)
-    assert open_failure(URL, detail, False, invalid).endswith("HTTP response code: 404")
+    assert open_failure(URL, detail, flatpak=False, invalid=invalid).endswith(
+        "HTTP response code: 404"
+    )

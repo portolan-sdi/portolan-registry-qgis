@@ -18,67 +18,94 @@ from portolan_registry_qgis.core.hrefs import (
     vsicurl_path,
 )
 
-
-def test_s3_assets_become_https():
-    assert (
-        asset_href("s3://public-bucket/path/to/data.tif", "https://example.com/catalog/")
-        == "https://public-bucket.s3.amazonaws.com/path/to/data.tif"
-    )
-    assert (
-        asset_href("./data.tif", "https://example.com/catalog/item.json")
-        == "https://example.com/catalog/data.tif"
-    )
+_ABFS = "https://ai4edataeuwest.blob.core.windows.net/us-census/2020/cb_2020_us_state_500k.parquet"
 
 
-def test_azure_hrefs_resolve_against_the_named_account():
-    assert (
-        asset_href(
+@pytest.mark.parametrize(
+    ("href", "base", "account", "expected"),
+    [
+        pytest.param(
+            "s3://public-bucket/path/to/data.tif",
+            "https://example.com/catalog/",
+            None,
+            "https://public-bucket.s3.amazonaws.com/path/to/data.tif",
+            id="s3-becomes-https",
+        ),
+        pytest.param(
+            "./data.tif",
+            "https://example.com/catalog/item.json",
+            None,
+            "https://example.com/catalog/data.tif",
+            id="relative",
+        ),
+        pytest.param(
             "abfs://us-census/2020/cb_2020_us_state_500k.parquet",
             "https://planetarycomputer.microsoft.com/api/stac/v1/",
             "ai4edataeuwest",
-        )
-        == "https://ai4edataeuwest.blob.core.windows.net/us-census/2020/cb_2020_us_state_500k.parquet"
-    )
-    assert (
-        asset_href("az://container/a.parquet", "https://example.com/", "acct")
-        == "https://acct.blob.core.windows.net/container/a.parquet"
-    )
-    # Without an account there is nothing to resolve against.
-    assert (
-        asset_href("abfs://us-census/2020/x.parquet", "https://example.com/")
-        == "abfs://us-census/2020/x.parquet"
-    )
+            _ABFS,
+            id="abfs-named-account",
+        ),
+        pytest.param(
+            "az://container/a.parquet",
+            "https://example.com/",
+            "acct",
+            "https://acct.blob.core.windows.net/container/a.parquet",
+            id="az-named-account",
+        ),
+        # Without an account there is nothing to resolve against.
+        pytest.param(
+            "abfs://us-census/2020/x.parquet",
+            "https://example.com/",
+            None,
+            "abfs://us-census/2020/x.parquet",
+            id="abfs-no-account",
+        ),
+        pytest.param(
+            "abfss://container@acct.dfs.core.windows.net/dir/a.parquet",
+            "https://x.test/",
+            None,
+            "https://acct.blob.core.windows.net/container/dir/a.parquet",
+            id="canonical-abfss",
+        ),
+        # An account named beside it does not override the one the URI states.
+        pytest.param(
+            "abfs://container@acct.dfs.core.windows.net/a.parquet",
+            "https://x.test/",
+            "o",
+            "https://acct.blob.core.windows.net/container/a.parquet",
+            id="canonical-abfs-keeps-its-account",
+        ),
+        # The canonical host with no container cannot resolve.
+        pytest.param(
+            "abfss://acct.dfs.core.windows.net/a.parquet",
+            "https://x.test/",
+            None,
+            "abfss://acct.dfs.core.windows.net/a.parquet",
+            id="canonical-no-container",
+        ),
+    ],
+)
+def test_asset_href(href, base, account, expected):
+    assert asset_href(href, base, account) == expected
 
 
-def test_canonical_abfs_names_its_own_account():
-    assert (
-        asset_href("abfss://container@acct.dfs.core.windows.net/dir/a.parquet", "https://x.test/")
-        == "https://acct.blob.core.windows.net/container/dir/a.parquet"
-    )
-    # An account named beside it does not override the one the URI states.
-    assert (
-        asset_href("abfs://container@acct.dfs.core.windows.net/a.parquet", "https://x.test/", "o")
-        == "https://acct.blob.core.windows.net/container/a.parquet"
-    )
-    # The canonical host with no container cannot resolve.
-    assert (
-        asset_href("abfss://acct.dfs.core.windows.net/a.parquet", "https://x.test/")
-        == "abfss://acct.dfs.core.windows.net/a.parquet"
-    )
-
-
-def test_s3_website_catalogs_upgrade_to_https():
-    assert (
-        catalog_href("http://example.s3-website-us-west-2.amazonaws.com/catalog.json")
-        == "https://example.s3.us-west-2.amazonaws.com/catalog.json"
-    )
-
-
-def test_dotted_bucket_uses_path_style_endpoint():
-    assert (
-        catalog_href("http://example.catalog.s3-website-us-west-2.amazonaws.com/catalog.json")
-        == "https://s3.us-west-2.amazonaws.com/example.catalog/catalog.json"
-    )
+@pytest.mark.parametrize(
+    ("href", "expected"),
+    [
+        pytest.param(
+            "http://example.s3-website-us-west-2.amazonaws.com/catalog.json",
+            "https://example.s3.us-west-2.amazonaws.com/catalog.json",
+            id="s3-website-upgrades",
+        ),
+        pytest.param(
+            "http://example.catalog.s3-website-us-west-2.amazonaws.com/catalog.json",
+            "https://s3.us-west-2.amazonaws.com/example.catalog/catalog.json",
+            id="dotted-bucket-path-style",
+        ),
+    ],
+)
+def test_catalog_href(href, expected):
+    assert catalog_href(href) == expected
 
 
 def test_absolute_href_upgrades_after_joining():

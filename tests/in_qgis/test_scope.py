@@ -230,8 +230,6 @@ def test_another_map_tool_cancels_the_drawing(picker, iface, pan):
     assert picker.choice() == EVERYTHING
     assert iface.canvas.mapTool() is other
     # The picker sets no tool of its own during the canvas's tool change.
-    # Before, it set the pan tool again inside that change, and the pan tool
-    # stayed active next to the new tool.
     assert not pan.isActive()
     assert other.isActive()
     iface.canvas.unsetMapTool(other)
@@ -241,7 +239,7 @@ def test_draw_again_keeps_the_area_on_cancel(picker, iface, pan):
     tool = _draw_square(picker, iface)
     tool.finish()
     first = picker.scope()
-    picker._redraw.click()
+    picker.redraw.click()
     tool = iface.canvas.mapTool()
     assert isinstance(tool, PolygonTool)
     tool.cancel()
@@ -282,14 +280,14 @@ def test_from_a_layer(picker, iface):
     points = QgsVectorLayer("Point?crs=EPSG:4326", "points", "memory")
     QgsProject.instance().addMapLayers([points, layer])
     picker.choose(FROM_LAYER)
-    picker._layers.setLayer(layer)
+    picker.layer_combo.setLayer(layer)
     assert picker.events[0] == FROM_LAYER
     scope = picker.scope()
     assert isinstance(scope, Area)
     assert scope.bbox == pytest.approx((11, 44, 14, 45))
     assert QgsGeometry.fromWkt(scope.wkt).isMultipart()
 
-    picker._selected.setChecked(True)
+    picker.selected.setChecked(True)
     assert picker.problem() == "Select one or more features in squares."
     count = len(picker.events)
     first = next(layer.getFeatures()).id()
@@ -304,13 +302,13 @@ def test_the_layer_union_is_kept_until_the_layer_changes(picker, monkeypatch):
     real = scope_module.layer_area
     calls = []
 
-    def counted(*args):
+    def counted(*args, **kwargs):
         calls.append(args)
-        return real(*args)
+        return real(*args, **kwargs)
 
     monkeypatch.setattr(scope_module, "layer_area", counted)
     picker.choose(FROM_LAYER)
-    picker._layers.setLayer(layer)
+    picker.layer_combo.setLayer(layer)
     # The window asks for the scope on each button update. The union reads
     # every feature, so it runs once.
     for _ in range(5):
@@ -332,7 +330,7 @@ def test_the_layer_union_is_kept_until_the_layer_changes(picker, monkeypatch):
     layer.selectByIds([next(layer.getFeatures()).id()])
     picker.scope()
     assert len(calls) == 3
-    picker._selected.setChecked(True)
+    picker.selected.setChecked(True)
     assert picker.scope().bbox == pytest.approx((11, 44, 12, 45))
     layer.selectAll()
     assert picker.scope().bbox == pytest.approx((11, 44, 14, 45))
@@ -378,7 +376,7 @@ def test_the_layer_list_holds_polygon_layers_only(picker):
     polygons = _squares()
     points = QgsVectorLayer("Point?crs=EPSG:4326", "points", "memory")
     QgsProject.instance().addMapLayers([points, polygons])
-    combo = picker._layers
+    combo = picker.layer_combo
     names = [combo.itemText(i) for i in range(combo.count())]
     assert names == ["squares"]
 
@@ -404,4 +402,4 @@ def test_area_of_rejects_what_is_not_a_polygon():
 def test_layer_area_of_an_empty_layer():
     layer = QgsVectorLayer("Polygon?crs=EPSG:4326", "empty", "memory")
     with pytest.raises(ScopeError, match="has no polygon"):
-        layer_area(layer, False)
+        layer_area(layer, selected_only=False)

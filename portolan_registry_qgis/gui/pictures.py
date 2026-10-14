@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING, Any
 
 from qgis.core import (
     QgsApplication,
-    QgsCoordinateReferenceSystem,
     QgsFillSymbol,
     QgsMapRendererParallelJob,
     QgsMapSettings,
@@ -28,6 +27,7 @@ from qgis.PyQt.QtSvg import QSvgRenderer
 
 from portolan_registry_qgis.core import footprint
 from portolan_registry_qgis.core.i18n import _
+from portolan_registry_qgis.qgis_io.crs import wgs84
 from portolan_registry_qgis.qgis_io.network import fetch_bytes, run_task
 
 if TYPE_CHECKING:
@@ -64,7 +64,7 @@ def mix(first: QColor, second: QColor, amount: float) -> QColor:
     )
 
 
-def muted(palette: QPalette, selected: bool = False) -> QColor:
+def muted(palette: QPalette, *, selected: bool = False) -> QColor:
     """Return the color for secondary text."""
     if selected:
         return mix(
@@ -254,7 +254,7 @@ class WorldMap(QObject):
         layer.setRenderer(QgsSingleSymbolRenderer(symbol))
         settings = QgsMapSettings()
         settings.setLayers([layer])
-        settings.setDestinationCrs(QgsCoordinateReferenceSystem("EPSG:4326"))
+        settings.setDestinationCrs(wgs84())
         settings.setOutputSize(_WORLD_SIZE)
         settings.setExtent(QgsRectangle(-180, -90, 180, 90))
         settings.setBackgroundColor(QColor(0, 0, 0, 0))
@@ -279,28 +279,34 @@ class WorldMap(QObject):
             self._job = None
 
 
-def paint_extent(
-    painter: QPainter,
-    rect: QRectF,
-    bbox: Bbox | None,
-    world: WorldMap,
-    palette: QPalette,
-    min_span: float = 30.0,
-    radius: float = 3.0,
-) -> None:
-    """Draw the land around ``bbox`` in ``rect`` and mark ``bbox`` on it.
+@dataclass(frozen=True)
+class ExtentPicture:
+    """What ``paint_extent`` draws, and how."""
+
+    bbox: Bbox | None
+    world: WorldMap
+    palette: QPalette
+    # The smallest span of the map in degrees, around a small extent.
+    min_span: float = 30.0
+    # The radius of the rounded corners.
+    radius: float = 3.0
+
+
+def paint_extent(painter: QPainter, rect: QRectF, picture: ExtentPicture) -> None:
+    """Draw the land around ``picture.bbox`` in ``rect`` and mark the bbox on it.
 
     An extent too small to see draws as a dot. An extent that fills the
     picture tints the land instead. Without a world map, a graticule stands
     in for the land.
     """
+    bbox, palette, radius = picture.bbox, picture.palette, picture.radius
     if rect.width() < 2 or rect.height() < 2:
         return
     base = palette.color(QPalette.ColorRole.Base)
     text = palette.color(QPalette.ColorRole.Text)
     water = mix(base, text, 0.05)
     land = mix(base, text, 0.2 if is_dark(palette) else 0.16)
-    view = footprint.window(bbox, rect.width() / rect.height(), min_span)
+    view = footprint.window(bbox, rect.width() / rect.height(), picture.min_span)
     everywhere = bbox is not None and footprint.covers(bbox, view)
     if everywhere:
         land = mix(land, ACCENT, 0.5)
@@ -311,7 +317,7 @@ def paint_extent(
     clip.addRoundedRect(rect, radius, radius)
     painter.setClipPath(clip)
     painter.fillRect(rect, water)
-    mask = world.image(land)
+    mask = picture.world.image(land)
     if mask is not None:
         width, height = mask.width(), mask.height()
         source = QRectF(

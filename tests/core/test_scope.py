@@ -2,7 +2,18 @@ from __future__ import annotations
 
 import pytest
 
-from portolan_registry_qgis.core.scope import Area, Everything, MapView, bbox_of, intersects
+from portolan_registry_qgis.core.scope import (
+    ANTIMERIDIAN_SIDES,
+    Area,
+    Everything,
+    MapView,
+    bbox_of,
+    clip_wkt,
+    crosses_antimeridian,
+    eastward,
+    intersects,
+    split_bbox,
+)
 
 SQUARE = "POLYGON ((10 40, 12 40, 12 42, 10 42, 10 40))"
 
@@ -11,6 +22,17 @@ def test_bbox_of():
     assert bbox_of(Everything()) is None
     assert bbox_of(MapView((1, 2, 3, 4))) == (1, 2, 3, 4)
     assert bbox_of(Area(SQUARE, (10, 40, 12, 42))) == (10, 40, 12, 42)
+
+
+def test_clip_wkt():
+    assert clip_wkt(Everything()) is None
+    assert clip_wkt(Area(SQUARE, (10, 40, 12, 42))) == SQUARE
+    assert clip_wkt(MapView((1, 2, 3, 4))) == "MULTIPOLYGON(((1 2,3 2,3 4,1 4,1 2)))"
+    # A view across the antimeridian is two boxes, one on each side.
+    assert clip_wkt(MapView((170, -10, -170, 10))) == (
+        "MULTIPOLYGON(((170 -10,180.0 -10,180.0 10,170 10,170 -10)),"
+        "((-180.0 -10,-170 -10,-170 10,-180.0 10,-180.0 -10)))"
+    )
 
 
 def test_everything_and_files_without_an_extent_are_kept():
@@ -79,3 +101,39 @@ def test_a_map_view_past_180_degrees_wraps():
     assert intersects((172, -15, 174, -14), view)
     assert not intersects((-160, -15, -150, -14), view)
     assert intersects((-160, -15, -150, -14), MapView((-200, -20, 220, -10)))
+
+
+@pytest.mark.parametrize(
+    ("longitudes", "projected", "expected"),
+    [
+        # Panned past 180° on a canvas in degrees.
+        ([177, 182, 182, 177, 177], False, True),
+        ([-182, -177, -177, -182], False, True),
+        # A wide polygon drawn in degrees is what the user drew.
+        ([-170, 170, 170, -170, -170], False, False),
+        # A projected polygon whose edge jumps across 180° after the transform.
+        ([177, -178, -178, 177, 177], True, True),
+        ([10, 12, 12, 10, 10], True, False),
+    ],
+)
+def test_crosses_antimeridian(longitudes, projected, expected):
+    assert crosses_antimeridian(longitudes, projected=projected) is expected
+
+
+def test_eastward():
+    assert eastward(-178) == 182
+    assert eastward(0) == 0
+    assert eastward(177) == 177
+
+
+def test_split_bbox():
+    assert split_bbox((177, -19, 182, -16)) == (177, -19, -178, -16)
+    # A box west of 180° after the move does not cross it.
+    assert split_bbox((10, 0, 180, 1)) is None
+    assert split_bbox((-185, 0, 190, 1)) == (-180, 0, -170, 1)
+
+
+def test_antimeridian_sides_bring_each_side_into_range():
+    (west, west_shift), (east, east_shift) = ANTIMERIDIAN_SIDES
+    assert (west[0] + west_shift, west[2] + west_shift) == (-180, 180)
+    assert (east[0] + east_shift, east[2] + east_shift) == (-180, 180)

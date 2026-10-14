@@ -7,6 +7,7 @@ polygon into longitude and latitude before it builds a scope.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from itertools import pairwise
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -46,6 +47,25 @@ def bbox_of(scope: Scope) -> Bbox | None:
     return None
 
 
+def clip_wkt(scope: Scope) -> str | None:
+    """Return the polygon that clips a mosaic for ``scope``, as WKT in EPSG:4326.
+
+    A mosaic shows only the data in the area, so a map view clips to the
+    view. Everything clips to nothing.
+    """
+    if isinstance(scope, Area):
+        return scope.wkt
+    if isinstance(scope, MapView):
+        west, south, east, north = scope.bbox
+        # A view across the antimeridian is two boxes, one on each side.
+        spans = [(west, 180.0), (-180.0, east)] if west > east else [(west, east)]
+        boxes = [
+            f"(({w} {south},{e} {south},{e} {north},{w} {north},{w} {south}))" for w, e in spans
+        ]
+        return f"MULTIPOLYGON({','.join(boxes)})"
+    return None
+
+
 def _wrap(longitude: float) -> float:
     """Move a longitude outside [-180, 180] into that range."""
     if -180 <= longitude <= 180:
@@ -71,11 +91,7 @@ def _spans(west: float, east: float) -> tuple[tuple[float, float], ...]:
 def intersects(bbox: Bbox | None, scope: Scope) -> bool:
     """Return whether a file with extent ``bbox`` can hold data in ``scope``.
 
-    The test compares envelopes only, so an ``Area`` can keep a file whose
-    box touches the polygon's envelope but not the polygon. A file with no
-    extent is kept, because the test cannot rule it out. ``Everything``
-    keeps every file. Boxes that cross the antimeridian are handled.
-    Boxes that only touch at an edge intersect.
+    The test compares envelopes. A file with no extent is kept.
     """
     area = bbox_of(scope)
     if bbox is None or area is None:
@@ -89,3 +105,46 @@ def intersects(bbox: Bbox | None, scope: Scope) -> bool:
         for start, end in _spans(west, east)
         for area_start, area_end in _spans(area_west, area_east)
     )
+
+
+# The two sides of an area that crosses 180°, after ``eastward`` moves its
+# vertices. Each side is a box and the shift in longitude that brings it
+# into -180..180.
+ANTIMERIDIAN_SIDES: tuple[tuple[Bbox, float], ...] = (
+    ((-180.0, -90.0, 180.0, 90.0), 0.0),
+    ((180.0, -90.0, 540.0, 90.0), -360.0),
+)
+
+
+def crosses_antimeridian(longitudes: list[float], *, projected: bool) -> bool:
+    """Return whether a polygon with these vertex longitudes can cross 180°.
+
+    True when a longitude is beyond ±180°, or when two neighbouring vertices
+    differ by more than 180°.
+    """
+    if any(longitude < -180 or longitude > 180 for longitude in longitudes):
+        return True
+    return projected and _jumps(longitudes)
+
+
+def _jumps(longitudes: list[float]) -> bool:
+    """Return whether two neighbouring longitudes differ by more than 180°."""
+    return any(abs(east - west) > 180 for west, east in pairwise(longitudes))
+
+
+def eastward(longitude: float) -> float:
+    """Move a negative longitude 360° east, so a polygon across 180° is in one piece."""
+    return longitude + 360 if longitude < 0 else longitude
+
+
+def split_bbox(moved: Bbox) -> Bbox | None:
+    """Return the box of an area that ``eastward`` moved, as STAC writes it.
+
+    The box has west > east when the area crosses 180°. The function
+    returns None when the moved area stays west of 180°, so it does not
+    cross.
+    """
+    west, south, east, north = moved
+    if east <= 180:
+        return None
+    return (max(west, -180), south, east - 360, north)

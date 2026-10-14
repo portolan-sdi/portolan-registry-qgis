@@ -4,11 +4,15 @@ import contextlib
 import datetime
 import json
 import sqlite3
+import sys
+import threading
 
 import pytest
 
 from portolan_registry_qgis.core import parquet_query
-from portolan_registry_qgis.core.geoparquet import plan_read
+from portolan_registry_qgis.core.geoparquet import Clip, Covering, plan_read
+from portolan_registry_qgis.core.parquet_query import Target
+from tests.points import write_points
 
 pytest.importorskip("duckdb")
 
@@ -23,22 +27,14 @@ def con():
 @pytest.fixture(scope="module")
 def points(tmp_path_factory, con):
     path = tmp_path_factory.mktemp("parquet") / "points.parquet"
-    con.execute(
-        f"""COPY (SELECT i AS id, 'n' || i AS name, i * 1.5 AS val,
-            DATE '2026-01-01' + i::INT AS day,
-            ST_Point(11 + i * 0.01, 44 + i * 0.005) AS geometry,
-            {{'xmin': 11 + i * 0.01, 'ymin': 44 + i * 0.005,
-              'xmax': 11 + i * 0.01, 'ymax': 44 + i * 0.005}} AS bbox
-            FROM range(200) t(i))
-        TO '{path}' (FORMAT parquet, ROW_GROUP_SIZE 20)"""
-    )
+    write_points(con, path, "'n' || i AS name, i * 1.5 AS val, DATE '2026-01-01' + i::INT AS day")
     return str(path)
 
 
 def test_status_and_install_command(monkeypatch):
-    ok, version = parquet_query.duckdb_status()
-    assert ok
-    assert version
+    import duckdb
+
+    assert parquet_query.duckdb_status() == (True, duckdb.__version__)
     monkeypatch.setenv("FLATPAK_ID", "org.qgis.qgis")
     assert parquet_query.install_command(upgrade=False).startswith("flatpak run")
     assert "--upgrade" in parquet_query.install_command(upgrade=True)
@@ -52,6 +48,39 @@ def test_missing_duckdb_is_reported(monkeypatch):
     monkeypatch.setattr(parquet_query, "_connection", None)
     with pytest.raises(parquet_query.DuckDBMissingError):
         parquet_query.connection()
+
+
+def test_absent_duckdb_has_no_version(monkeypatch):
+    # A None entry in sys.modules makes the import raise ImportError.
+    monkeypatch.setitem(sys.modules, "duckdb", None)
+    assert parquet_query.duckdb_status() == (False, None)
+
+
+def test_connection_is_shared():
+    assert parquet_query.connection() is parquet_query.connection()
+
+
+def test_extensions_fall_back_to_the_given_folder(monkeypatch, tmp_path):
+    import duckdb
+
+    loads = []
+
+    def load(connection):
+        loads.append(connection.execute("SELECT current_setting('extension_directory')").fetchone())
+        if len(loads) == 1:
+            raise duckdb.IOException("the default folder is read-only")
+
+    monkeypatch.setattr(parquet_query, "_load_extensions", load)
+    monkeypatch.setattr(parquet_query, "_connection", None)
+    with pytest.raises(duckdb.IOException):
+        parquet_query.connection()
+    loads.clear()
+    fallback = parquet_query.connection(str(tmp_path))
+    try:
+        assert loads[1] == (str(tmp_path),)
+        assert fallback.execute("SELECT current_setting('memory_limit')").fetchone()[0]
+    finally:
+        parquet_query.close()
 
 
 def test_old_versions_are_rejected(monkeypatch):
@@ -77,11 +106,11 @@ def test_copy_all_rows(con, points, tmp_path):
     assert plan.geometry == "geometry"
     assert plan.geometry_type == "Point"
     assert parquet_query.estimate(con, points, plan) == 200
-    written = parquet_query.write_gpkg(con, points, plan, str(tmp_path / "all.gpkg"))
+    written = parquet_query.write_gpkg(con, points, plan, Target(str(tmp_path / "all.gpkg")))
     assert written == parquet_query.Written(features=200, geometry_type="Point", refused=0)
     rows = _read_back(con, tmp_path / "all.gpkg")
     assert len(rows) == 200
-    fid, ident, name, val, day, wkt = rows[0]
+    _fid, ident, name, val, day, wkt = rows[0]
     assert (ident, name, val) == (0, "n0", 0.0)
     assert day == "2026-01-01"
     assert wkt == "POINT (11 44)"
@@ -97,7 +126,7 @@ def test_dates_and_times_survive_the_copy(con, tmp_path):
     )
     plan = parquet_query.read_plan(con, str(source))
     target = tmp_path / "dated.gpkg"
-    assert parquet_query.write_gpkg(con, str(source), plan, str(target)).features == 1
+    assert parquet_query.write_gpkg(con, str(source), plan, Target(str(target))).features == 1
     types = dict(
         con.execute(
             "SELECT column_name, column_type FROM (DESCRIBE SELECT * FROM ST_Read(?))",
@@ -117,10 +146,21 @@ def test_dates_and_times_survive_the_copy(con, tmp_path):
 def test_bbox(con, points, tmp_path):
     plan = parquet_query.read_plan(con, points)
     box = (11.095, 44.0, 11.305, 45.0)
-    assert parquet_query.estimate(con, points, plan, box) == 21
-    written = parquet_query.write_gpkg(con, points, plan, str(tmp_path / "box.gpkg"), box)
+    assert parquet_query.estimate(con, points, plan, Clip(box)) == 21
+    written = parquet_query.write_gpkg(
+        con, points, plan, Target(str(tmp_path / "box.gpkg"), Clip(box))
+    )
     assert written.features == 21
     assert sorted(row[1] for row in _read_back(con, tmp_path / "box.gpkg")) == list(range(10, 31))
+
+
+def test_box_estimate_needs_a_covering_column(con, tmp_path):
+    source = tmp_path / "bare.parquet"
+    con.execute(f"COPY (SELECT ST_Point(1, 2) AS geometry) TO '{source}' (FORMAT parquet)")
+    plan = parquet_query.read_plan(con, str(source))
+    assert plan.covering is None
+    assert parquet_query.estimate(con, str(source), plan) == 1
+    assert parquet_query.estimate(con, str(source), plan, Clip((0, 0, 5, 5))) is None
 
 
 def test_area_keeps_fewer_rows_than_its_envelope(con, points, tmp_path):
@@ -132,9 +172,9 @@ def test_area_keeps_fewer_rows_than_its_envelope(con, points, tmp_path):
     )
     box = (11.095, 44.0, 11.305, 45.0)
     # The estimate counts by the envelope, an upper bound.
-    assert parquet_query.estimate(con, points, plan, box, area=area) == 21
+    assert parquet_query.estimate(con, points, plan, Clip(box, area)) == 21
     target = tmp_path / "area.gpkg"
-    written = parquet_query.write_gpkg(con, points, plan, str(target), box, area=area)
+    written = parquet_query.write_gpkg(con, points, plan, Target(str(target), Clip(box, area)))
     assert written == parquet_query.Written(features=11, geometry_type="Point", refused=0)
     assert sorted(row[1] for row in _read_back(con, target)) == list(range(10, 21))
 
@@ -149,7 +189,9 @@ def test_area_picks_the_first_type_inside_it(con, tmp_path):
     assert plan.geometry_type == "Unknown"
     area = "POLYGON ((4 4, 6 4, 6 6, 4 4))"
     target = tmp_path / "typed.gpkg"
-    written = parquet_query.write_gpkg(con, str(source), plan, str(target), (4, 4, 6, 6), area=area)
+    written = parquet_query.write_gpkg(
+        con, str(source), plan, Target(str(target), Clip((4, 4, 6, 6), area))
+    )
     assert written == parquet_query.Written(features=1, geometry_type="MultiPoint", refused=0)
 
 
@@ -162,10 +204,10 @@ def test_table_becomes_an_attribute_table(con, tmp_path, rows):
     )
     plan = parquet_query.read_plan(con, str(source))
     assert not plan.has_geometry
-    assert parquet_query.estimate(con, str(source), plan, (0, 0, 1, 1)) == rows
+    assert parquet_query.estimate(con, str(source), plan, Clip((0, 0, 1, 1))) == rows
     target = tmp_path / "table.gpkg"
     written = parquet_query.write_gpkg(
-        con, str(source), plan, str(target), (0, 0, 1, 1), srs="EPSG:4326"
+        con, str(source), plan, Target(str(target), Clip((0, 0, 1, 1)), srs="EPSG:4326")
     )
     assert written == parquet_query.Written(features=rows, geometry_type="None", refused=0)
     with contextlib.closing(sqlite3.connect(target)) as gpkg:
@@ -190,10 +232,12 @@ def test_covering_filter_gives_the_same_rows(con, points, tmp_path):
         }
     }
     plan = plan_read(schema, json.dumps(covering))
-    assert plan.covering is not None
+    assert plan.covering == Covering(
+        ("bbox", "xmin"), ("bbox", "ymin"), ("bbox", "xmax"), ("bbox", "ymax")
+    )
     assert "bbox" not in [c.name for c in plan.columns]
     box = (11.095, 44.0, 11.305, 45.0)
-    parquet_query.write_gpkg(con, points, plan, str(tmp_path / "cov.gpkg"), box)
+    parquet_query.write_gpkg(con, points, plan, Target(str(tmp_path / "cov.gpkg"), Clip(box)))
     assert sorted(row[1] for row in _read_back(con, tmp_path / "cov.gpkg")) == list(range(10, 31))
 
 
@@ -207,7 +251,7 @@ def test_mixed_geometries_promote(con, tmp_path):
     plan = parquet_query.read_plan(con, str(source))
     assert plan.geometry_type == "Unknown"
     target = tmp_path / "mixed.gpkg"
-    written = parquet_query.write_gpkg(con, str(source), plan, str(target), srs="EPSG:4326")
+    written = parquet_query.write_gpkg(con, str(source), plan, Target(str(target), srs="EPSG:4326"))
     assert written == parquet_query.Written(features=3, geometry_type="MultiPoint", refused=1)
     rows = con.execute(
         "SELECT fid_1, fid, ST_AsText(geom) FROM ST_Read(?) ORDER BY fid", [str(target)]
@@ -231,7 +275,9 @@ def test_declared_type_counts_refused_features(con, tmp_path):
     schema = [("geometry", "GEOMETRY"), ("i", "INTEGER")]
     geo = {"columns": {"geometry": {"geometry_types": ["Polygon"]}}}
     plan = plan_read(schema, json.dumps(geo))
-    written = parquet_query.write_gpkg(con, str(source), plan, str(tmp_path / "declared.gpkg"))
+    written = parquet_query.write_gpkg(
+        con, str(source), plan, Target(str(tmp_path / "declared.gpkg"))
+    )
     assert written == parquet_query.Written(features=2, geometry_type="Polygon", refused=1)
 
 
@@ -244,7 +290,7 @@ def test_attribute_named_geom_survives(con, tmp_path):
     )
     plan = parquet_query.read_plan(con, str(source))
     target = tmp_path / "geom.gpkg"
-    parquet_query.write_gpkg(con, str(source), plan, str(target))
+    parquet_query.write_gpkg(con, str(source), plan, Target(str(target)))
     row = con.execute(
         "SELECT geom, geom_1, ST_AsText(geom_2) FROM ST_Read(?)", [str(target)]
     ).fetchone()
@@ -260,7 +306,7 @@ def test_ogc_fid_column(con, tmp_path):
     )
     plan = parquet_query.read_plan(con, str(source))
     target = tmp_path / "ogc.gpkg"
-    assert parquet_query.write_gpkg(con, str(source), plan, str(target)).features == 2
+    assert parquet_query.write_gpkg(con, str(source), plan, Target(str(target))).features == 2
     rows = con.execute("SELECT ogc_fid FROM ST_Read(?)", [str(target)]).fetchall()
     assert rows == [(5,), (5,)]
 
@@ -272,7 +318,7 @@ def test_z_survives_the_copy(con, tmp_path):
     )
     plan = parquet_query.read_plan(con, str(source))
     target = tmp_path / "z.gpkg"
-    parquet_query.write_gpkg(con, str(source), plan, str(target))
+    parquet_query.write_gpkg(con, str(source), plan, Target(str(target)))
     wkt = con.execute("SELECT ST_AsText(geom) FROM ST_Read(?)", [str(target)]).fetchone()[0]
     assert wkt == "POINT Z (1 2 3)"
 
@@ -289,7 +335,9 @@ def test_cancel_stops_the_copy(con, tmp_path):
     plan = parquet_query.read_plan(con, str(source))
     target = tmp_path / "cancel.gpkg"
     with pytest.raises(duckdb.InterruptException):
-        parquet_query.write_gpkg(con, str(source), plan, str(target), cancelled=lambda: True)
+        parquet_query.write_gpkg(
+            con, str(source), plan, Target(str(target)), cancelled=lambda: True
+        )
 
 
 def test_cancel_stops_a_read(con):
@@ -297,9 +345,52 @@ def test_cancel_stops_a_read(con):
 
     with (
         pytest.raises(duckdb.InterruptException),
-        parquet_query._cursor(con, lambda: True) as cursor,
+        parquet_query.cursor(con, lambda: True) as cursor,
     ):
         cursor.execute("SELECT sum(a.range * b.range) FROM range(100000) a, range(100000) b")
+
+
+class _Cursor:
+    def __init__(self):
+        self.interrupted = False
+
+    def interrupt(self):
+        self.interrupted = True
+
+
+def test_watcher_polls_until_the_query_ends():
+    stop = threading.Event()
+    polls = []
+
+    def cancelled():
+        polls.append(True)
+        # The query ends while the watcher polls.
+        stop.set()
+        return False
+
+    watched = _Cursor()
+    parquet_query.interrupt_when(cancelled, watched, stop)
+    assert polls == [True]
+    assert not watched.interrupted
+
+
+def test_watcher_interrupts_once_cancelled():
+    watched = _Cursor()
+    parquet_query.interrupt_when(lambda: True, watched, threading.Event())
+    assert watched.interrupted
+
+
+def test_a_file_with_no_geometry_layer_is_left_alone(tmp_path):
+    path = tmp_path / "empty.gpkg"
+    with contextlib.closing(sqlite3.connect(path)) as gpkg:
+        gpkg.execute("CREATE TABLE gpkg_geometry_columns (table_name TEXT, column_name TEXT)")
+        gpkg.execute("CREATE TABLE gpkg_contents (table_name TEXT, data_type TEXT)")
+        gpkg.execute("INSERT INTO gpkg_contents VALUES ('features', 'features')")
+        gpkg.commit()
+    assert parquet_query.null_geometries(str(path)) == 0
+    parquet_query.drop_geometry(str(path))
+    with contextlib.closing(sqlite3.connect(path)) as gpkg:
+        assert gpkg.execute("SELECT data_type FROM gpkg_contents").fetchall() == [("features",)]
 
 
 def test_close_is_idempotent():

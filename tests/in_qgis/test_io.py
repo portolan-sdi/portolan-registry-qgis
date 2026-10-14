@@ -8,7 +8,7 @@ import time
 import urllib.parse
 import urllib.request
 from dataclasses import replace
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
 import pytest
@@ -35,17 +35,21 @@ from portolan_registry_qgis.core.download import (
     WALK_WORKERS,
     Plan,
     PlannedFile,
+    Walk,
     local_path,
     plan,
 )
 from portolan_registry_qgis.core.geoparquet import LAYER
-from portolan_registry_qgis.core.scope import Area, Everything, MapView
+from portolan_registry_qgis.core.mirror import mirror_href
+from portolan_registry_qgis.core.scope import Everything
 from portolan_registry_qgis.core.stac import Asset, read_document
+from portolan_registry_qgis.core.style import DEFAULT_STYLE_NAME, archive_urls
 from portolan_registry_qgis.qgis_io import downloader, layers, mosaic, network, parquet_layer
 from portolan_registry_qgis.qgis_io.downloader import DownloadJob, target_path
 from portolan_registry_qgis.qgis_io.network import (
     NetworkError,
     QtExecutor,
+    RemoteRange,
     fetch_bytes,
     fetch_json,
     fetch_range,
@@ -58,6 +62,8 @@ from portolan_registry_qgis.qgis_io.tileserver import (
     open_archive,
     read_tile,
 )
+from tests.loopback import base_url, serve
+from tests.tiles import EAST_AREA, TRIANGLE, WEST_VIEW
 
 from .conftest import wait_for
 
@@ -123,7 +129,7 @@ def test_archive_header_and_tiles(catalog):
     assert archive.min_zoom == 0
     assert archive.max_zoom == 8
     assert archive.vector_layers == ("points",)
-    west, south, east, north = archive.bounds
+    west, south, _east, _north = archive.bounds
     assert 10.9 < west < 11.1
     assert 43.9 < south < 44.1
     tile = read_tile(archive, 0, 0, 0)
@@ -178,53 +184,9 @@ def test_tile_server_answers(catalog, server):
     assert not server.serves(template)
 
 
-def test_style_split_and_sources():
-    style = {
-        "version": 8,
-        "sources": {
-            "a": {"type": "vector", "url": "pmtiles://../a.pmtiles"},
-            "b": {"type": "vector", "url": "pmtiles://https://x.test/b.pmtiles"},
-            "bare": {"type": "vector", "url": "../d.pmtiles?v=2"},
-            "tilejson": {"type": "vector", "url": "https://tiles.test/v.json"},
-            "xyz": {"type": "vector", "tiles": ["https://tiles.test/{z}/{x}/{y}.pbf"]},
-            "base": {"type": "raster", "tiles": ["https://tiles.test/{z}/{x}/{y}.png"]},
-        },
-        "layers": [
-            {"id": "bg", "type": "background"},
-            {"id": "la", "type": "fill", "source": "a", "source-layer": "l"},
-            {"id": "lb", "type": "line", "source": "b", "source-layer": "l"},
-            {"id": "sat", "type": "raster", "source": "base"},
-        ],
-    }
-    url = "https://x.test/c/styles/s.json"
-    assert layers.pmtiles_sources(style, url) == {
-        "a": "https://x.test/c/a.pmtiles",
-        "b": "https://x.test/b.pmtiles",
-        "bare": "https://x.test/c/d.pmtiles?v=2",
-    }
-    split = layers.split_style(style, url)
-    assert {k: [layer["id"] for layer in v["layers"]] for k, v in split.by_source.items()} == {
-        "https://x.test/c/a.pmtiles": ["bg", "la"],
-        "https://x.test/b.pmtiles": ["lb"],
-    }
-    assert len(split.warnings) == 1
-    assert "sat" in split.warnings[0]
-
-
-def test_source_without_url_reads_the_only_archive():
-    style = {"version": 8, "sources": {"data": {"type": "vector"}}, "layers": []}
-    url = "https://x.test/c/styles/s.json"
-    assert layers.pmtiles_sources(style, url) == {}
-    assert layers.pmtiles_sources(style, url, "https://x.test/c/a.pmtiles") == {
-        "data": "https://x.test/c/a.pmtiles"
-    }
-
-
-def test_parse_style_rejects_non_styles():
-    assert layers.parse_style(b'{"version": 8, "layers": []}')["version"] == 8
-    for raw in (b"[]", b'{"version": 7}'):
-        with pytest.raises(ValueError, match="MapLibre"):
-            layers.parse_style(raw)
+def test_range_fetcher_reads_any_http_scheme(catalog):
+    url = f"{catalog['base']}/catalog.json".replace("http://", "HTTP://", 1)
+    assert isinstance(range_fetcher(url), RemoteRange)
 
 
 def _render(layer, extent):
@@ -240,28 +202,20 @@ def _render(layer, extent):
     return job.renderedImage()
 
 
-def _red_pixels(image: QImage) -> int:
+def _pixels(image: QImage, channel: str) -> int:
+    """Count the sampled pixels that show pure ``channel``: red, green, or blue."""
     count = 0
     for x in range(0, image.width(), 2):
         for y in range(0, image.height(), 2):
             color = image.pixelColor(x, y)
-            if color.red() > 200 and color.green() < 80 and color.blue() < 80:
+            levels = {"red": color.red(), "green": color.green(), "blue": color.blue()}
+            if levels.pop(channel) > 200 and max(levels.values()) < 80:
                 count += 1
     return count
 
 
 # Web Mercator extent around the points near Bologna.
 BOLOGNA = QgsRectangle(1_200_000, 5_440_000, 1_500_000, 5_640_000)
-
-
-def _blue_pixels(image: QImage) -> int:
-    count = 0
-    for x in range(0, image.width(), 2):
-        for y in range(0, image.height(), 2):
-            color = image.pixelColor(x, y)
-            if color.blue() > 200 and color.red() < 80 and color.green() < 80:
-                count += 1
-    return count
 
 
 def _style_colors(layer) -> set[str]:
@@ -282,7 +236,7 @@ def _style_colors(layer) -> set[str]:
 
 
 def test_tiles_carry_every_style_as_a_named_style(catalog, collection, server):
-    urls = layers.archive_urls(collection)
+    urls = archive_urls(collection)
     assert urls == [f"{catalog['base']}/points.pmtiles"]
     prepared = layers.prepare_pmtiles(collection, urls, fetch_bytes)
     assert prepared.warnings == []
@@ -292,18 +246,16 @@ def test_tiles_carry_every_style_as_a_named_style(catalog, collection, server):
     assert layer.name() == "Point tiles"
     assert layer.customProperty(layers.PMTILES_PROPERTY).endswith("/points.pmtiles")
     manager = layer.styleManager()
-    assert sorted(manager.styles()) == sorted(
-        [layers.DEFAULT_STYLE_NAME, "style-red", "style-blue"]
-    )
+    assert sorted(manager.styles()) == sorted([DEFAULT_STYLE_NAME, "style-red", "style-blue"])
     # The default style is current, and each named style draws its own color.
     assert manager.currentStyle() == "style-red"
     image = _render(layer, BOLOGNA)
-    assert _red_pixels(image) > 0
-    assert _blue_pixels(image) == 0
+    assert _pixels(image, "red") > 0
+    assert _pixels(image, "blue") == 0
     manager.setCurrentStyle("style-blue")
     image = _render(layer, BOLOGNA)
-    assert _blue_pixels(image) > 0
-    assert _red_pixels(image) == 0
+    assert _pixels(image, "blue") > 0
+    assert _pixels(image, "red") == 0
     # QGIS colors a new vector tile layer from a random palette, which can
     # land on a red. So the default style must share no color with any
     # catalog style, alpha included, rather than draw no red pixels.
@@ -312,22 +264,22 @@ def test_tiles_carry_every_style_as_a_named_style(catalog, collection, server):
         manager.setCurrentStyle(name)
         catalog_colors |= _style_colors(layer)
     assert {"#ffff0000", "#ff0000ff"} <= catalog_colors
-    manager.setCurrentStyle(layers.DEFAULT_STYLE_NAME)
+    manager.setCurrentStyle(DEFAULT_STYLE_NAME)
     default_colors = _style_colors(layer)
     assert default_colors
     assert default_colors.isdisjoint(catalog_colors)
     manager.setCurrentStyle("style-red")
-    assert _red_pixels(_render(layer, BOLOGNA)) > 0
+    assert _pixels(_render(layer, BOLOGNA), "red") > 0
 
 
 def test_tiles_without_styles_use_the_qgis_style(catalog, collection, server):
     bare = replace(collection, assets=collection.data_assets)
-    urls = layers.archive_urls(bare)
+    urls = archive_urls(bare)
     prepared = layers.prepare_pmtiles(bare, urls, fetch_bytes)
     assert prepared.warnings == []
     built, _ = layers.build_pmtiles(server, prepared, QImage.fromData)
     (layer,) = built
-    assert layer.styleManager().styles() == [layers.DEFAULT_STYLE_NAME]
+    assert layer.styleManager().styles() == [DEFAULT_STYLE_NAME]
 
 
 def test_tiles_report_the_archive_extent(catalog, server):
@@ -364,7 +316,7 @@ def test_unreadable_style_is_skipped_with_a_warning(collection, server):
     broken = replace(red, href=red.href.replace("red", "gone"))
     others = [a for a in collection.assets if a.key != red.key]
     document = replace(collection, assets=(broken, *others))
-    urls = layers.archive_urls(document)
+    urls = archive_urls(document)
     prepared = layers.prepare_pmtiles(document, urls, fetch_bytes)
     assert "Could not read the style" in prepared.warnings[0]
     built, _ = layers.build_pmtiles(server, prepared, QImage.fromData)
@@ -450,9 +402,41 @@ def _parquet_url(catalog):
 
 def _load(url, extent=None, extent_crs=None):
     context = QgsProject.instance().transformContext()
-    planned = parquet_layer.plan(url, context, extent, extent_crs)
+    planned = parquet_layer.plan(url, context, parquet_layer.Limits(extent, extent_crs))
     prepared = parquet_layer.prepare(planned)
     return planned, prepared
+
+
+def test_planner_plans_in_a_task(catalog):
+    results = []
+    read = parquet_layer.planner(_parquet_url(catalog), parquet_layer.Limits())
+    run_task("plan", read, lambda r, e: results.append((r, e)))
+    wait_for(lambda: results)
+    planned, error = results[0]
+    assert error is None
+    assert planned.estimate == 200
+
+
+def test_is_interrupt():
+    duckdb = pytest.importorskip("duckdb")
+    assert parquet_layer.is_interrupt(duckdb.InterruptException("stop"))
+    assert not parquet_layer.is_interrupt(ValueError("other"))
+    assert not parquet_layer.is_interrupt(None)
+
+
+def test_start_vrt_reports_the_path_or_the_error(catalog):
+    results = []
+    mosaic.start_vrt("vrt", [_tile(catalog, "a")], None, lambda p, e: results.append((p, e)))
+    mosaic.start_vrt("none", [], None, lambda p, e: results.append((p, e)))
+    wait_for(lambda: len(results) == 2)
+    by_error = {error is None: (path, error) for path, error in results}
+    path, _ = by_error[True]
+    assert path is not None
+    assert path.exists()
+    parquet_layer.discard_path(path)
+    path, error = by_error[False]
+    assert path is None
+    assert isinstance(error, layers.LayerError)
 
 
 def test_parquet_layer_whole_file(catalog):
@@ -696,7 +680,7 @@ def test_download_runs_files_at_the_same_time(tmp_path):
     active = peak = 0
 
     class Gate(BaseHTTPRequestHandler):
-        def do_GET(self):  # noqa: N802
+        def do_GET(self):
             nonlocal active, peak
             with lock:
                 active += 1
@@ -715,18 +699,13 @@ def test_download_runs_files_at_the_same_time(tmp_path):
             self.end_headers()
             self.wfile.write(body)
 
-        def log_message(self, format, *args):  # noqa: A002
+        def log_message(self, format, *args):
             pass
 
-    gate = ThreadingHTTPServer(("127.0.0.1", 0), Gate)
-    threading.Thread(target=gate.serve_forever, daemon=True).start()
-    base = f"http://127.0.0.1:{gate.server_address[1]}"
-    try:
+    with serve(Gate) as gate:
+        base = base_url(gate)
         files = [PlannedFile(f"{base}/f{i}", f"f{i}.txt") for i in range(6)]
         report = _download(tmp_path, files)
-    finally:
-        gate.shutdown()
-        gate.server_close()
     assert report.failed == []
     assert sorted(report.downloaded) == [f"f{i}.txt" for i in range(6)]
     assert peak == 3
@@ -778,16 +757,16 @@ def test_cancel_frees_every_slot_once(catalog, tmp_path):
     job = DownloadJob(tmp_path, files)
     job.finished.connect(reports.append)
     job.start()
-    wait_for(lambda: job._downloaders)
+    wait_for(lambda: job.downloading)
     job.cancel()
     wait_for(lambda: reports)
     # Let any late downloadError signals arrive. None may report again.
-    wait_for(lambda: not job._downloaders)
+    wait_for(lambda: not job.downloading)
     for _ in range(20):
         QgsApplication.processEvents()
     assert len(reports) == 1
     assert reports[0].cancelled
-    assert job._busy == 0
+    assert job.busy == 0
     assert len(reports[0].downloaded) < len(files)
 
 
@@ -804,8 +783,7 @@ def test_plan_reads_the_catalog_from_a_task(catalog):
             lambda task: plan(
                 fetch_json,
                 catalog["url"],
-                cancelled=task.isCanceled,
-                executor=QtExecutor(WALK_WORKERS),
+                how=Walk(cancelled=task.isCanceled, executor=QtExecutor(WALK_WORKERS)),
             ),
             lambda result, error: results.append((result, error)),
         )
@@ -906,7 +884,7 @@ def test_progress_names_every_busy_slot(catalog, collection, tmp_path, monkeypat
     job.finished.connect(reports.append)
     job.start()
     wait_for(lambda: any("Verifying relief.tif" in m for m in messages))
-    wait_for(lambda: "catalog.json" in job._report.downloaded)
+    wait_for(lambda: "catalog.json" in job.report.downloaded)
     assert "Verifying relief.tif" in messages[-1]
     release.set()
     wait_for(lambda: reports)
@@ -919,29 +897,6 @@ def test_progress_names_every_busy_slot(catalog, collection, tmp_path, monkeypat
 def _csv_asset(catalog, name):
     href = f"{catalog['base']}/table/{name}"
     return Asset(name, href, None, "text/csv", ("data",), None, None, "csv")
-
-
-@pytest.mark.parametrize(
-    ("header", "expected"),
-    [
-        (b"id,lon,lat\n1,2,3\n", ("lon", "lat")),
-        (b"\xef\xbb\xbfID;Longitude;Latitude\n", ("Longitude", "Latitude")),
-        (b"name\tX\tY\na\t11.2\t44.5\n", ("X", "Y")),
-        # x and y in RD New are not degrees, so the CSV opens as a table.
-        (b"id,x,y\n1,155000,463000\n", None),
-        # x and y with no complete row cannot be told apart.
-        (b"name\tX\tY\n", None),
-        (b"id,x,y\n1,11.2,44.5\n2,155000,4630", ("x", "y")),
-        (b'"lng","LAT"\n', ("lng", "LAT")),
-        # "lon" comes before "x" in the order of preference.
-        (b"x,y,lon,lat\n", ("lon", "lat")),
-        (b"id,lon,name\n", None),
-        (b"id,name\n", None),
-        (b"", None),
-    ],
-)
-def test_coordinate_columns(header, expected):
-    assert layers.coordinate_columns(header) == expected
 
 
 def test_csv_with_coordinates_opens_as_points(catalog):
@@ -992,15 +947,15 @@ STRIP = "POLYGON((11.095 44.0, 11.305 44.0, 11.305 45.0, 11.095 45.0, 11.095 44.
 
 @pytest.fixture
 def area_calls(monkeypatch):
-    """Record the box and the area that reach parquet_query."""
+    """Record the clip that reaches parquet_query."""
     calls = []
     estimate, write_gpkg = parquet_query.estimate, parquet_query.write_gpkg
 
     def call(function, name, args, kwargs):
-        # estimate takes the box fourth, after the plan. write_gpkg takes
-        # the GeoPackage path there, and the box fifth.
-        bbox = args[3] if name == "estimate" else args[4]
-        calls.append((name, bbox, kwargs.get("area")))
+        # estimate takes the clip fourth, after the plan. write_gpkg takes
+        # the target there, which holds the clip.
+        clip = args[3] if name == "estimate" else args[3].clip
+        calls.append((name, clip))
         return function(*args, **kwargs)
 
     monkeypatch.setattr(parquet_query, "estimate", lambda *a, **k: call(estimate, "estimate", a, k))
@@ -1015,34 +970,33 @@ def test_parquet_layer_area(catalog, area_calls):
     # The area replaces the extent.
     elsewhere = QgsRectangle(0, 0, 1, 1)
     wgs84 = QgsCoordinateReferenceSystem("EPSG:4326")
-    planned = parquet_layer.plan(_parquet_url(catalog), context, elsewhere, wgs84, area=STRIP)
-    assert planned.bbox == pytest.approx((11.095, 44.0, 11.305, 45.0))
-    assert QgsGeometry.fromWkt(planned.area).equals(QgsGeometry.fromWkt(STRIP))
+    limits = parquet_layer.Limits(elsewhere, wgs84, area=STRIP)
+    planned = parquet_layer.plan(_parquet_url(catalog), context, limits)
+    assert planned.clip.bbox == pytest.approx((11.095, 44.0, 11.305, 45.0))
+    assert QgsGeometry.fromWkt(planned.clip.area).equals(QgsGeometry.fromWkt(STRIP))
     assert planned.estimate == 21
     prepared = parquet_layer.prepare(planned)
-    assert prepared.area == planned.area
-    assert [name for name, _, _ in area_calls] == ["estimate", "write_gpkg"]
-    assert all(area == planned.area for _, _, area in area_calls)
-    assert all(bbox == planned.bbox for _, bbox, _ in area_calls)
+    assert prepared.clip == planned.clip
+    assert area_calls == [("estimate", planned.clip), ("write_gpkg", planned.clip)]
     layer, _ = parquet_layer.build(prepared, "strip")
     assert sorted(f["id"] for f in layer.getFeatures()) == list(range(10, 31))
-    assert layer.customProperty(parquet_layer.AREA_PROPERTY) == planned.area
+    assert layer.customProperty(parquet_layer.AREA_PROPERTY) == planned.clip.area
 
     # A saved project copies the same area again.
     area_calls.clear()
     url, bbox, area = parquet_layer.saved_copy(layer)
-    assert area == planned.area
+    assert area == planned.clip.area
     restored = parquet_layer.restore(url, bbox, area_text=area)
-    assert restored.area == planned.area
-    assert area_calls == [("write_gpkg", planned.bbox, planned.area)]
+    assert restored.clip == planned.clip
+    assert area_calls == [("write_gpkg", planned.clip)]
     parquet_layer.discard_path(prepared.path)
     parquet_layer.discard_path(restored.path)
 
 
 def test_parquet_layer_without_area_keeps_its_property_empty(catalog, area_calls):
     planned, prepared = _load(_parquet_url(catalog))
-    assert planned.area is None
-    assert all(area is None for _, _, area in area_calls)
+    assert planned.clip.area is None
+    assert all(clip.area is None for _, clip in area_calls)
     layer, _ = parquet_layer.build(prepared, "points")
     assert layer.customProperty(parquet_layer.AREA_PROPERTY) == ""
     assert parquet_layer.saved_copy(layer)[2] == ""
@@ -1051,7 +1005,8 @@ def test_parquet_layer_without_area_keeps_its_property_empty(catalog, area_calls
 def test_file_area_transforms_to_the_file_crs():
     context = QgsProject.instance().transformContext()
     mercator = QgsCoordinateReferenceSystem("EPSG:3857")
-    wkt, bbox = parquet_layer.file_area(STRIP, mercator, context)
+    clip = parquet_layer.file_area(STRIP, mercator, context)
+    wkt, bbox = clip.area, clip.bbox
     expected = QgsCoordinateTransform(
         QgsCoordinateReferenceSystem("EPSG:4326"), mercator, context
     ).transformBoundingBox(QgsRectangle(11.095, 44.0, 11.305, 45.0))
@@ -1113,7 +1068,7 @@ def test_parquet_without_geometry_loads_as_a_table(catalog):
 
 
 def test_new_path_refuses_other_files():
-    with pytest.raises(ValueError, match="no .txt files"):
+    with pytest.raises(ValueError, match=r"no \.txt files"):
         parquet_layer.new_path(".txt")
 
 
@@ -1130,26 +1085,12 @@ def _tile(catalog, key):
     return f"{catalog['base']}/tiles/{key}/{key}.tif"
 
 
-# Scopes in EPSG:4326 around the two items of the tiles collection.
-WEST_VIEW = MapView((10.9, 43.9, 11.5, 44.7))
-EAST_AREA = Area(
-    "POLYGON((12.1 44.1, 12.3 44.1, 12.3 44.3, 12.1 44.1))",
-    (12.1, 44.1, 12.3, 44.3),
-)
-# The envelope touches both items. East of 12.0 the triangle stays north of
-# item b, so it touches only item a.
-TRIANGLE = Area(
-    "POLYGON((11.5 44.3, 12.3 44.9, 11.5 44.9, 11.5 44.3))",
-    (11.5, 44.3, 12.3, 44.9),
-)
-
-
 def test_item_hrefs_from_the_mirror(catalog, tiles, monkeypatch):
     def no_walk(*_args, **_kwargs):
         raise AssertionError("The mirror must answer without a walk")
 
     monkeypatch.setattr(mosaic, "walk", no_walk)
-    assert mosaic.mirror_href(tiles) == f"{catalog['base']}/tiles/items.parquet"
+    assert mirror_href(tiles) == f"{catalog['base']}/tiles/items.parquet"
     both = [_tile(catalog, "a"), _tile(catalog, "b")]
     assert mosaic.item_hrefs_in(tiles, Everything(), fetch_json) == both
     assert mosaic.item_hrefs_in(tiles, WEST_VIEW, fetch_json) == both[:1]
@@ -1175,40 +1116,6 @@ def test_item_hrefs_fall_back_to_the_walk(catalog, tiles):
     (mirror,) = tiles.assets
     broken = replace(tiles, assets=(replace(mirror, href=f"{catalog['base']}/tiles/gone.parquet"),))
     assert mosaic.item_hrefs_in(broken, WEST_VIEW, fetch_json) == [_tile(catalog, "a")]
-
-
-def test_item_documents_come_from_the_item_links(tiles):
-    base = tiles.href.rsplit("/", 1)[0]
-    assert mosaic.item_documents(tiles) == {
-        "a": f"{base}/a/a.json",
-        "b": f"{base}/b/b.json",
-    }
-
-
-def test_a_mirror_without_self_links_resolves_against_the_items(catalog, tiles):
-    # The GHSL mirror stores "./<file>.tif" relative to each item and no self
-    # link. Resolved against the mirror file, the href gave HTTP 404.
-    mirror = mosaic.mirror_href(tiles)
-    both = [_tile(catalog, "a"), _tile(catalog, "b")]
-    assert mosaic.mirror_hrefs(mirror, Everything(), items=mosaic.item_documents(tiles)) == both
-    # Without the item links, item a resolves against the file, and is wrong.
-    wrong = mosaic.mirror_hrefs(mirror, Everything())
-    assert wrong[0] == f"{catalog['base']}/tiles/a.tif"
-    assert wrong[1] == both[1]
-
-
-def test_mirror_query_reads_a_list_bbox():
-    sql, params = mosaic.mirror_query(
-        {"bbox": "DOUBLE[]", "assets": "STRUCT(a STRUCT(href VARCHAR))"}, WEST_VIEW
-    )
-    assert "bbox[1]" in sql
-    assert "links" not in sql
-    assert params == [10.9, 11.5, 43.9, 44.7]
-    sql, params = mosaic.mirror_query({"bbox": "STRUCT(xmin DOUBLE)", "assets": "x"}, Everything())
-    assert "WHERE" not in sql
-    assert params == []
-    with pytest.raises(ValueError, match="no bbox or assets"):
-        mosaic.mirror_query({"id": "VARCHAR"}, Everything())
 
 
 def _sample(layer, x, y):
@@ -1258,7 +1165,7 @@ def test_a_mosaic_says_why_gdal_left_a_file_out(catalog, monkeypatch):
     # BuildVRT reports only "Can't open <path>. Skipping it." The mosaic asks
     # GDAL for the reason, such as the HTTP status.
     logged = []
-    monkeypatch.setattr(mosaic, "_log", logged.append)
+    monkeypatch.setattr(mosaic, "log", logged.append)
     gone = f"{catalog['base']}/tiles/gone-{id(logged)}.tif"
     with pytest.raises(layers.LayerError) as failure:
         mosaic.write_vrt([gone])

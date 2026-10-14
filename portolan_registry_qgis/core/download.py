@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
     from portolan_registry_qgis.core.scope import Scope
+    from portolan_registry_qgis.core.stac import Node
 
     FetchJson = Callable[[str], object]
     Read = Callable[[str], Document | tuple[str, str] | None]
@@ -74,10 +75,8 @@ def _safe_segments(path: str) -> list[str]:
 def local_path(url: str, root: str) -> str:
     """Return the POSIX path, relative to the target folder, for ``url``.
 
-    A URL under the directory of ``root`` keeps its relative path. Anything
-    else goes under ``_external/<host>/``. No result can climb out of the
-    target folder, because ``..`` segments are dropped and each segment is
-    reduced to a safe character set.
+    A URL under ``root`` keeps its relative path. Others go under
+    ``_external/<host>/``. No result can climb out of the target folder.
     """
     target, base = urlsplit(url), urlsplit(root)
     base_dir = posixpath.dirname(base.path).rstrip("/") + "/"
@@ -90,6 +89,21 @@ def local_path(url: str, root: str) -> str:
     if not segments or segments == [EXTERNAL_DIR]:
         segments.append("index")
     return "/".join(segments)
+
+
+def clipped_path(href: str, root: str) -> str:
+    """Return where the GeoPackage of a clipped GeoParquet file goes in the download folder.
+
+    It keeps the file's place in the catalog layout, with a ``.gpkg`` suffix.
+    """
+    path = local_path(href, root)
+    folder, _sep, name = path.rpartition("/")
+    stem = name
+    for suffix in (".geoparquet", ".parquet"):
+        if name.lower().endswith(suffix):
+            stem = name[: -len(suffix)]
+            break
+    return f"{folder}/{stem}.gpkg" if folder else f"{stem}.gpkg"
 
 
 def files_of(document: Document, root: str) -> list[PlannedFile]:
@@ -113,39 +127,35 @@ def files_of(document: Document, root: str) -> list[PlannedFile]:
     return files
 
 
+@dataclass(frozen=True)
+class Walk:
+    """How a walk reads the documents below its start.
+
+    Without ``executor``, the walk reads one document at a time. With it, the
+    walk reads ahead. QGIS callers pass an executor that runs on QThreads.
+    """
+
+    # Stops the walk after this many reads.
+    max_documents: int = 5000
+    # Polled before each read.
+    cancelled: Callable[[], bool] | None = None
+    # Runs the reads in parallel.
+    executor: Executor | None = None
+
+
 def walk(
     fetch_json: FetchJson,
     start: str,
     failures: list[tuple[str, str]],
-    max_documents: int = 5000,
-    cancelled: Callable[[], bool] | None = None,
-    executor: Executor | None = None,
+    how: Walk | None = None,
 ) -> Iterator[Document]:
-    """Read ``start`` and every catalog, collection, and item below it.
+    """Yield ``start`` and every catalog, collection, and item below it, breadth first.
 
-    Without ``executor``, the walk reads one document at a time in the
-    calling thread. With ``executor``, the walk reads ahead. When a document
-    arrives, the walk queues its children at once, so one slow document does
-    not stop the reads below its siblings. The caller owns the executor. QGIS
-    network requests need QThreads, so a QGIS caller passes an executor that
-    runs on QThreads.
-
-    Args:
-        fetch_json: Fetches a URL and returns the parsed JSON. It raises on
-            failure. With ``executor``, the walk calls it from the
-            executor's threads.
-        start: The document to begin with.
-        failures: Receives ``(url, reason)`` for each document that could
-            not be read. The walk continues past it.
-        max_documents: Stops the walk after this many reads.
-        cancelled: Polled before each read.
-        executor: Runs the reads in parallel.
-
-    Yields:
-        Each document read, breadth first, in link order. A walk that
-        reaches ``max_documents`` with ``executor`` can read a different
-        last few documents from one run to the next.
+    ``failures`` gets ``(url, reason)`` for each document that cannot be read.
+    ``how`` None reads up to 5000 documents in the calling thread.
     """
+    how = how or Walk()
+    cancelled = how.cancelled
 
     def read(href: str) -> Document | tuple[str, str] | None:
         if cancelled is not None and cancelled():
@@ -155,10 +165,18 @@ def walk(
         except (OSError, ValueError, StacError) as error:
             return (href, str(error))
 
-    if executor is None:
-        yield from _walk_in_turn(read, start, failures, max_documents)
+    if how.executor is None:
+        yield from _walk_in_turn(read, start, failures, how.max_documents)
     else:
-        yield from _walk_ahead(read, start, failures, max_documents, executor)
+        yield from _walk_ahead(read, start, failures, how.max_documents, how.executor)
+
+
+def _enqueue(children: tuple[Node, ...], seen: set[str], queue: deque[str]) -> None:
+    """Queue each child that the walk has not queued yet."""
+    for child in children:
+        if child.href not in seen:
+            seen.add(child.href)
+            queue.append(child.href)
 
 
 def _walk_in_turn(
@@ -177,10 +195,57 @@ def _walk_in_turn(
             failures.append(result)
             continue
         yield result
-        for child in result.children:
-            if child.href not in seen:
-                seen.add(child.href)
-                queue.append(child.href)
+        _enqueue(result.children, seen, queue)
+
+
+class _ReadAhead:
+    """Start each read as soon as the parent document arrives.
+
+    The reads run on ``executor``, up to ``max_documents`` of them.
+    """
+
+    def __init__(self, read: Read, executor: Executor, max_documents: int) -> None:
+        self._read = read
+        self._executor = executor
+        self._max_documents = max_documents
+        self._fetches: dict[str, Future[Document | tuple[str, str] | None]] = {}
+        self._unsettled: set[Future[Document | tuple[str, str] | None]] = set()
+
+    def fetch(self, href: str) -> None:
+        """Start the read of ``href`` when it is new and the budget allows it."""
+        if href not in self._fetches and len(self._fetches) < self._max_documents:
+            future = self._executor.submit(self._read, href)
+            self._fetches[href] = future
+            self._unsettled.add(future)
+
+    def _settle(self) -> None:
+        """Start the reads of the children of each document that arrived."""
+        for future in [f for f in self._unsettled if f.done()]:
+            self._unsettled.discard(future)
+            result = None if future.cancelled() else future.result()
+            if isinstance(result, Document):
+                for child in result.children:
+                    self.fetch(child.href)
+
+    def finished(self, href: str) -> Future[Document | tuple[str, str] | None] | None:
+        """Wait for the read of ``href``.
+
+        Returns:
+            The finished read, or None when the budget ran out before it.
+        """
+        future = self._fetches.get(href)
+        if future is None:
+            return None
+        while not future.done():
+            wait(self._unsettled, return_when=FIRST_COMPLETED)
+            self._settle()
+        self._settle()
+        return future
+
+    def cancel(self) -> None:
+        """Drop the reads that have not started."""
+        for future in self._fetches.values():
+            future.cancel()
 
 
 def _walk_ahead(
@@ -190,39 +255,20 @@ def _walk_ahead(
     max_documents: int,
     executor: Executor,
 ) -> Iterator[Document]:
-    # Two orders run side by side. ``fetches`` starts a read as soon as the
-    # parent document arrives. ``queue`` yields the documents in the order
-    # of a plain breadth-first walk, so the plan does not depend on timing.
-    fetches: dict[str, Future[Document | tuple[str, str] | None]] = {}
-    unsettled: set[Future[Document | tuple[str, str] | None]] = set()
-
-    def fetch(href: str) -> None:
-        if href not in fetches and len(fetches) < max_documents:
-            future = executor.submit(read, href)
-            fetches[href] = future
-            unsettled.add(future)
-
-    def settle() -> None:
-        for future in [f for f in unsettled if f.done()]:
-            unsettled.discard(future)
-            result = None if future.cancelled() else future.result()
-            if isinstance(result, Document):
-                for child in result.children:
-                    fetch(child.href)
-
-    fetch(start)
+    # Two orders run side by side. ``_ReadAhead`` starts a read as soon as
+    # the parent document arrives. ``queue`` yields the documents in the
+    # order of a plain breadth-first walk, so the plan does not depend on
+    # timing.
+    ahead = _ReadAhead(read, executor, max_documents)
+    ahead.fetch(start)
     queue: deque[str] = deque([start])
     placed = {start}
     try:
         while queue:
-            future = fetches.get(queue.popleft())
+            future = ahead.finished(queue.popleft())
             if future is None:
                 # The read budget ran out before this document.
                 continue
-            while not future.done():
-                wait(unsettled, return_when=FIRST_COMPLETED)
-                settle()
-            settle()
             result = future.result()
             if result is None:
                 return
@@ -230,25 +276,16 @@ def _walk_ahead(
                 failures.append(result)
                 continue
             yield result
-            for child in result.children:
-                if child.href not in placed:
-                    placed.add(child.href)
-                    queue.append(child.href)
+            _enqueue(result.children, placed, queue)
     finally:
         # A cancelled or abandoned walk drops the reads that have not started.
-        for future in fetches.values():
-            future.cancel()
+        ahead.cancel()
 
 
 def split_collisions(files: list[PlannedFile]) -> tuple[list[PlannedFile], list[PlannedFile]]:
-    """Separate the files that would save over an earlier file.
+    """Return the files to download, and the later files that share a local path.
 
-    Two URLs can map to one local path, because ``local_path`` replaces
-    unsafe characters. Windows and macOS also treat ``Data.tif`` and
-    ``data.tif`` as one file, so the comparison ignores case.
-
-    Returns:
-        The files to download, and the later files that share a path.
+    The comparison ignores case, as on Windows and macOS.
     """
     claimed: set[str] = set()
     keep: list[PlannedFile] = []
@@ -267,35 +304,25 @@ def plan(
     fetch_json: FetchJson,
     start: str,
     root: str | None = None,
-    max_documents: int = 5000,
-    cancelled: Callable[[], bool] | None = None,
-    executor: Executor | None = None,
+    how: Walk | None = None,
     scope: Scope | None = None,
 ) -> Plan:
     """Plan the download of ``start`` and everything below it.
 
-    Args:
-        fetch_json: Fetches a URL and returns the parsed JSON.
-        start: The catalog, collection, or item to download.
-        root: The URL that local paths are relative to. Defaults to
-            ``start``, so the chosen document lands at the top of the folder.
-        max_documents: Stops the walk after this many reads.
-        cancelled: Polled before each read.
-        executor: Runs the reads in parallel. See ``walk``.
-        scope: Keep only the items whose bbox intersects this scope. The
-            plan keeps every catalog and collection document, and every
-            item with no bbox. None keeps every item.
+    ``root`` defaults to ``start``. ``scope`` drops the items whose bbox misses
+    it. Catalogs, collections, and items with no bbox stay.
     """
+    how = how or Walk()
     base = root or start
     failures: list[tuple[str, str]] = []
     files: dict[str, PlannedFile] = {}
     reads = outside = 0
-    for document in walk(fetch_json, start, failures, max_documents, cancelled, executor):
+    for document in walk(fetch_json, start, failures, how):
         reads += 1
         if scope is not None and document.kind == "item" and not intersects(document.bbox, scope):
             outside += 1
             continue
         for planned in files_of(document, base):
             files.setdefault(planned.url, planned)
-    truncated = reads + len(failures) >= max_documents
+    truncated = reads + len(failures) >= how.max_documents
     return Plan(list(files.values()), failures, truncated=truncated, outside=outside)

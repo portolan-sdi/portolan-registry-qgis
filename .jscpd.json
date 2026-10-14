@@ -1,0 +1,8 @@
+{
+  "path": ["portolan_registry_qgis", "tests", "scripts"],
+  "format": ["python"],
+  "minTokens": 50,
+  "minLines": 5,
+  "gitignore": true,
+  "reporters": ["console"]
+}

@@ -1,11 +1,4 @@
-"""Read PMTiles v3 archives through HTTP range requests.
-
-The reader follows the PMTiles v3 specification
-(https://github.com/protomaps/PMTiles/blob/main/spec/v3/spec.md). It takes a
-``fetch_range(offset, length)`` function, so the caller decides how bytes
-travel. Inside QGIS that function uses QGIS's network stack, which applies the
-user's proxy and authentication settings.
-"""
+"""Read PMTiles v3 archives through a caller-supplied ``fetch_range``."""
 
 from __future__ import annotations
 
@@ -47,7 +40,6 @@ class Header:
     leaf_offset: int
     leaf_length: int
     data_offset: int
-    data_length: int
     internal_compression: str
     tile_compression: str
     tile_type: str
@@ -89,7 +81,6 @@ def parse_header(data: bytes) -> Header:
         leaf_offset=numbers[4],
         leaf_length=numbers[5],
         data_offset=numbers[6],
-        data_length=numbers[7],
         internal_compression=COMPRESSIONS.get(clustered_etc[1], "unknown"),
         tile_compression=COMPRESSIONS.get(clustered_etc[2], "unknown"),
         tile_type=TILE_TYPES.get(clustered_etc[3], "unknown"),

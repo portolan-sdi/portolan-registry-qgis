@@ -11,6 +11,7 @@ from qgis.PyQt.QtGui import QImage
 
 from portolan_registry_qgis.core.registry import REGISTRY_URL, parse_registry
 from portolan_registry_qgis.core.stac import read_document
+from portolan_registry_qgis.core.style import archive_urls
 from portolan_registry_qgis.qgis_io import layers, parquet_layer
 from portolan_registry_qgis.qgis_io.network import fetch_bytes, fetch_json
 from portolan_registry_qgis.qgis_io.tileserver import TileServer, open_archive, read_tile
@@ -34,7 +35,7 @@ def test_live_anncsu_tiles_render_with_their_style():
     collection = read_document(fetch_json(href), href)
     server = TileServer()
     try:
-        urls = layers.archive_urls(collection)
+        urls = archive_urls(collection)
         prepared = layers.prepare_pmtiles(collection, urls, fetch_bytes)
         built, warnings = layers.build_pmtiles(server, prepared, QImage.fromData)
         (layer,) = built
@@ -69,8 +70,10 @@ def test_live_source_coop_geoparquet_in_an_extent():
     planned = parquet_layer.plan(
         f"{PHL}/land_use.parquet",
         context,
-        QgsRectangle(-75.17, 39.94, -75.15, 39.96),
-        QgsCoordinateReferenceSystem("EPSG:4326"),
+        parquet_layer.Limits(
+            QgsRectangle(-75.17, 39.94, -75.15, 39.96),
+            QgsCoordinateReferenceSystem("EPSG:4326"),
+        ),
     )
     assert planned.estimate is not None
     assert planned.estimate >= 7332

@@ -24,8 +24,11 @@ from qgis.PyQt.QtCore import Qt, pyqtSignal
 from qgis.PyQt.QtGui import QColor
 from qgis.PyQt.QtWidgets import QCheckBox, QComboBox, QHBoxLayout, QToolButton, QVBoxLayout, QWidget
 
+from portolan_registry_qgis.core import scope as scopes
 from portolan_registry_qgis.core.i18n import N_, _
 from portolan_registry_qgis.core.scope import Area, Everything, MapView, Scope
+from portolan_registry_qgis.qgis_io.crs import WGS84, wgs84
+from portolan_registry_qgis.qgis_io.log import LOG_TAG
 
 EVERYTHING = "everything"
 MAP_VIEW = "view"
@@ -39,7 +42,6 @@ CHOICES = (
     (DRAW, N_("Draw an area…")),
     (FROM_LAYER, N_("From a layer…")),
 )
-WGS84 = "EPSG:4326"
 _WORLD = (-180.0, -90.0, 180.0, 90.0)
 _STROKE = QColor(65, 99, 204)
 _FILL = QColor(65, 99, 204, 50)
@@ -69,10 +71,6 @@ def _remove_band(canvas: Any, band: QgsRubberBand | None) -> None:
         scene.removeItem(band)
 
 
-def _wgs84() -> QgsCoordinateReferenceSystem:
-    return QgsCoordinateReferenceSystem(WGS84)
-
-
 def view_bbox(
     extent: QgsRectangle, crs: QgsCoordinateReferenceSystem
 ) -> tuple[float, float, float, float]:
@@ -80,7 +78,7 @@ def view_bbox(
 
     An extent that cannot be transformed gives the whole world.
     """
-    transform = QgsCoordinateTransform(crs, _wgs84(), QgsProject.instance())
+    transform = QgsCoordinateTransform(crs, wgs84(), QgsProject.instance())
     transform.setBallparkTransformsAreAppropriate(True)
     try:
         rect = transform.transformBoundingBox(extent)
@@ -101,14 +99,10 @@ _DENSIFY = 8
 
 
 def area_of(geometry: QgsGeometry, crs: QgsCoordinateReferenceSystem) -> Area:
-    """Turn a polygon in ``crs`` into an ``Area`` in EPSG:4326.
-
-    The function drops Z and M values and curves, because the area is only
-    a filter in two dimensions.
+    """Turn a polygon in ``crs`` into a 2D ``Area`` in EPSG:4326.
 
     Raises:
-        ScopeError: The geometry is empty, is not a polygon, or cannot be
-            transformed.
+        ScopeError: The geometry is empty, is not a polygon, or cannot be transformed.
     """
     if geometry.isNull() or geometry.isEmpty():
         raise ScopeError(_("The area is empty."))
@@ -128,7 +122,7 @@ def area_of(geometry: QgsGeometry, crs: QgsCoordinateReferenceSystem) -> Area:
     flat = shape.get()
     flat.dropZValue()
     flat.dropMValue()
-    crossing = _split_at_antimeridian(shape, projected)
+    crossing = _split_at_antimeridian(shape, projected=projected)
     if crossing is not None:
         return crossing
     rect = shape.boundingBox()
@@ -143,7 +137,7 @@ def _to_wgs84(geometry: QgsGeometry, crs: QgsCoordinateReferenceSystem) -> QgsGe
         ScopeError: The transform fails.
     """
     shape = QgsGeometry(geometry)
-    transform = QgsCoordinateTransform(crs, _wgs84(), QgsProject.instance())
+    transform = QgsCoordinateTransform(crs, wgs84(), QgsProject.instance())
     transform.setBallparkTransformsAreAppropriate(True)
     try:
         result = shape.transform(transform)
@@ -156,52 +150,38 @@ def _to_wgs84(geometry: QgsGeometry, crs: QgsCoordinateReferenceSystem) -> QgsGe
     return shape
 
 
-def _split_at_antimeridian(shape: QgsGeometry, projected: bool) -> Area | None:
+def _split_at_antimeridian(shape: QgsGeometry, *, projected: bool) -> Area | None:
     """Return the area cut in two at 180°, or None when it does not cross it.
 
-    A polygon crosses the antimeridian in two cases:
-    - It has longitudes beyond ±180°, as on a canvas in degrees that the user
-      panned past 180°.
-    - It came from a projected CRS, and one of its edges jumps more than 180°
-      of longitude after the transform. The caller densifies the edges
-      of a polygon wider than 180° before the transform, so each edge is
-      short.
-    A polygon drawn in degrees with longitudes in -180..180 is what the user
-    drew, even when it is wide. The area becomes a MultiPolygon of the two
-    sides, and its box has west > east, as STAC writes a box that crosses
-    the antimeridian.
+    ``core.scope.crosses_antimeridian`` names the cases. The area becomes a
+    MultiPolygon of the two sides, and its box has west > east, as STAC
+    writes a box that crosses the antimeridian.
     """
-    rect = shape.boundingBox()
-    beyond = rect.xMinimum() < -180 or rect.xMaximum() > 180
-    if not beyond and not (projected and _jumps(shape)):
+    longitudes = [vertex.x() for vertex in shape.vertices()]
+    if not scopes.crosses_antimeridian(longitudes, projected=projected):
         return None
     moved = QgsGeometry(shape)
     for index, vertex in enumerate(shape.vertices()):
         if vertex.x() < 0:
-            moved.moveVertex(vertex.x() + 360, vertex.y(), index)
+            moved.moveVertex(scopes.eastward(vertex.x()), vertex.y(), index)
     wide = moved.boundingBox()
-    if wide.xMaximum() <= 180:
+    box = scopes.split_bbox((wide.xMinimum(), wide.yMinimum(), wide.xMaximum(), wide.yMaximum()))
+    if box is None:
         return None
-    west = moved.intersection(QgsGeometry.fromRect(QgsRectangle(-180, -90, 180, 90)))
-    east = moved.intersection(QgsGeometry.fromRect(QgsRectangle(180, -90, 540, 90)))
-    east.translate(-360, 0)
-    parts = [part for part in (west, east) if not part.isNull() and not part.isEmpty()]
-    joined = QgsGeometry.collectGeometry(parts)
-    box = (max(wide.xMinimum(), -180), wide.yMinimum(), wide.xMaximum() - 360, wide.yMaximum())
-    return Area(joined.asWkt(_PRECISION), box)
+    sides = [_side(moved, side, shift) for side, shift in scopes.ANTIMERIDIAN_SIDES]
+    parts = [part for part in sides if not part.isNull() and not part.isEmpty()]
+    return Area(QgsGeometry.collectGeometry(parts).asWkt(_PRECISION), box)
 
 
-def _jumps(shape: QgsGeometry) -> bool:
-    """Return whether two neighbouring vertices of a ring differ by more than 180° of longitude."""
-    previous = None
-    for vertex in shape.vertices():
-        if previous is not None and abs(vertex.x() - previous.x()) > 180:
-            return True
-        previous = vertex
-    return False
+def _side(shape: QgsGeometry, box: tuple[float, float, float, float], shift: float) -> QgsGeometry:
+    """Return the part of ``shape`` inside ``box``, moved ``shift`` degrees east."""
+    part = shape.intersection(QgsGeometry.fromRect(QgsRectangle(*box)))
+    if shift:
+        part.translate(shift, 0)
+    return part
 
 
-def layer_area(layer: QgsVectorLayer, selected_only: bool) -> Area:
+def layer_area(layer: QgsVectorLayer, *, selected_only: bool) -> Area:
     """Join the polygons of a layer into one ``Area`` in EPSG:4326.
 
     Raises:
@@ -251,12 +231,10 @@ def _polygon_filter() -> Any:
 
 
 class PolygonTool(QgsMapTool):
-    """Draw a polygon on the canvas.
+    """Draw a polygon on the canvas, and send it in the canvas CRS on ``finished``.
 
-    A left click adds a vertex. A right click or a double click finishes
-    the polygon, which needs three vertices. A right click with fewer
-    vertices cancels, and so does Esc. Backspace removes the last vertex.
-    ``finished`` sends the polygon in the canvas CRS.
+    A left click adds a vertex. A right click or a double click finishes.
+    Esc cancels. Backspace removes the last vertex.
     """
 
     finished = pyqtSignal(object)
@@ -357,11 +335,7 @@ class PolygonTool(QgsMapTool):
 class ScopePicker(QWidget):
     """Choose which part of a dataset to add or download.
 
-    The choices are "Everything", "Map extent", "Draw an area", and "From a
-    layer". Drawing uses a polygon map tool on the canvas. The drawn area
-    stays on the canvas until the choice changes or ``clear`` runs. Call
-    ``clear`` before the picker is deleted, so that no rubber band stays on
-    the canvas.
+    Call ``clear`` before the picker is deleted, so no rubber band stays on the canvas.
     """
 
     changed = pyqtSignal()
@@ -374,12 +348,12 @@ class ScopePicker(QWidget):
         for key, label in CHOICES:
             self._choice.addItem(_(label), key)
         self._current = EVERYTHING
-        self._redraw = QToolButton()
-        self._redraw.setText(_("Draw again"))
-        self._redraw.setToolTip(_("Draw a new area on the map"))
-        self._layers = QgsMapLayerComboBox()
-        self._layers.setFilters(_polygon_filter())
-        self._selected = QCheckBox(_("Selected features only"))
+        self.redraw = QToolButton()
+        self.redraw.setText(_("Draw again"))
+        self.redraw.setToolTip(_("Draw a new area on the map"))
+        self.layer_combo = QgsMapLayerComboBox()
+        self.layer_combo.setFilters(_polygon_filter())
+        self.selected = QCheckBox(_("Selected features only"))
         self._area: Area | None = None
         self._area_band: QgsRubberBand | None = None
         self._tool: PolygonTool | None = None
@@ -392,28 +366,28 @@ class ScopePicker(QWidget):
         top = QHBoxLayout()
         top.setContentsMargins(0, 0, 0, 0)
         top.addWidget(self._choice, 1)
-        top.addWidget(self._redraw)
+        top.addWidget(self.redraw)
         self._layer_row = QWidget()
         bottom = QHBoxLayout(self._layer_row)
         bottom.setContentsMargins(0, 0, 0, 0)
-        bottom.addWidget(self._layers, 1)
-        bottom.addWidget(self._selected)
+        bottom.addWidget(self.layer_combo, 1)
+        bottom.addWidget(self.selected)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addLayout(top)
         layout.addWidget(self._layer_row)
 
         self._choice.activated.connect(self._activated)
-        self._redraw.clicked.connect(self._draw)
-        self._layers.layerChanged.connect(self._layer_changed)
-        model = self._layers.model()
+        self.redraw.clicked.connect(self._draw)
+        self.layer_combo.layerChanged.connect(self._layer_changed)
+        model = self.layer_combo.model()
         model.rowsInserted.connect(self._follow_layer)
         model.rowsRemoved.connect(self._follow_layer)
         model.modelReset.connect(self._follow_layer)
-        self._selected.toggled.connect(self._layer_input_changed)
+        self.selected.toggled.connect(self._layer_input_changed)
         self._canvas.extentsChanged.connect(self._view_changed)
         self._canvas.destinationCrsChanged.connect(self._show_area)
-        self._watch(self._layers.currentLayer())
+        self._watch(self.layer_combo.currentLayer())
         self._update_rows()
 
     def choice(self) -> str:
@@ -445,13 +419,13 @@ class ScopePicker(QWidget):
                 raise ScopeError(_("Draw an area on the map first."))
             return self._area
         if self._current == FROM_LAYER:
-            layer = self._layers.currentLayer()
+            layer = self.layer_combo.currentLayer()
             if not isinstance(layer, QgsVectorLayer):
                 raise ScopeError(_("Choose a polygon layer."))
             self._follow_layer()
             if self._layer_area is None:
                 try:
-                    self._layer_area = layer_area(layer, self._selected.isChecked())
+                    self._layer_area = layer_area(layer, selected_only=self.selected.isChecked())
                 except ScopeError as error:
                     self._layer_area = error
             if isinstance(self._layer_area, ScopeError):
@@ -492,11 +466,11 @@ class ScopePicker(QWidget):
         reading the polygons of a layer whenever the layer changes.
         """
         self.clear()
-        model = self._layers.model()
+        model = self.layer_combo.model()
         for signal, slot in (
             (self._canvas.extentsChanged, self._view_changed),
             (self._canvas.destinationCrsChanged, self._show_area),
-            (self._layers.layerChanged, self._layer_changed),
+            (self.layer_combo.layerChanged, self._layer_changed),
             (model.rowsInserted, self._follow_layer),
             (model.rowsRemoved, self._follow_layer),
             (model.modelReset, self._follow_layer),
@@ -511,7 +485,7 @@ class ScopePicker(QWidget):
         self._update_rows()
 
     def _update_rows(self) -> None:
-        self._redraw.setVisible(self._current == DRAW and self._tool is None)
+        self.redraw.setVisible(self._current == DRAW and self._tool is None)
         self._layer_row.setVisible(self._current == FROM_LAYER)
 
     def _activated(self, index: int) -> None:
@@ -567,9 +541,7 @@ class ScopePicker(QWidget):
         try:
             area = area_of(polygon, crs)
         except ScopeError as error:
-            self._iface.messageBar().pushMessage(
-                "Portolan Registry", str(error), Qgis.MessageLevel.Warning, 5
-            )
+            self._iface.messageBar().pushMessage(LOG_TAG, str(error), Qgis.MessageLevel.Warning, 5)
             self._draw_cancelled()
             return
         self._area = area
@@ -596,7 +568,7 @@ class ScopePicker(QWidget):
             return
         if self._area_band is None:
             self._area_band = _band(self._canvas)
-        self._area_band.setToGeometry(QgsGeometry.fromWkt(self._area.wkt), _wgs84())
+        self._area_band.setToGeometry(QgsGeometry.fromWkt(self._area.wkt), wgs84())
 
     def _view_changed(self) -> None:
         if self._current == MAP_VIEW:
@@ -608,7 +580,7 @@ class ScopePicker(QWidget):
         QGIS 4 picks the first polygon layer of a new project without a
         ``layerChanged`` signal, so the picker checks the list itself.
         """
-        layer = self._layers.currentLayer()
+        layer = self.layer_combo.currentLayer()
         # PyQt can return a new wrapper for the same layer, so compare IDs.
         current = layer.id() if layer is not None else None
         watched = self._watched.id() if self._watched is not None else None
@@ -643,7 +615,7 @@ class ScopePicker(QWidget):
             self.changed.emit()
 
     def _selection_changed(self, *_args: object) -> None:
-        if self._selected.isChecked():
+        if self.selected.isChecked():
             self._layer_area = None
-        if self._current == FROM_LAYER and self._selected.isChecked():
+        if self._current == FROM_LAYER and self.selected.isChecked():
             self.changed.emit()

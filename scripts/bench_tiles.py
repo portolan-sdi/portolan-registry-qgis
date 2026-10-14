@@ -4,18 +4,6 @@
 Run it with the Python that has PyQGIS:
 
     QT_QPA_PLATFORM=offscreen /usr/bin/python3 scripts/bench_tiles.py
-
-The script renders six screens east of Center City, Philadelphia, at about
-zoom 15, then pans over the same screens a second time. It prints the render
-time, the remote reads, and the loopback connections for each step. The last
-line gives the time of the first visit and of the revisit apart. The revisit
-draws from the QGIS cache. The first visit gains from kept connections, and
-from the cache where neighboring screens share a tile.
-
-``--baseline`` restores the transport of version 0.1.1: HTTP/1.0 and no
-caching. Compare the two runs to see what keep-alive and caching save. The
-regression tests in tests/in_qgis/test_tile_transport.py count the same
-connections and reads against loopback, so they hold on any machine.
 """
 
 from __future__ import annotations
@@ -53,13 +41,13 @@ def main() -> int:
     app = QgsApplication([], False)
     app.initQgis()
     try:
-        _run(args.url, args.baseline, args.steps)
+        _run(args.url, baseline=args.baseline, steps=args.steps)
     finally:
         app.exitQgis()
     return 0
 
 
-def _run(url: str, baseline: bool, steps: int) -> None:
+def _run(url: str, *, baseline: bool, steps: int) -> None:
     from qgis.core import (
         QgsCoordinateReferenceSystem,
         QgsCoordinateTransform,
@@ -73,13 +61,13 @@ def _run(url: str, baseline: bool, steps: int) -> None:
     from portolan_registry_qgis.qgis_io import layers, network, tileserver
 
     if baseline:
-        tileserver._Handler.protocol_version = "HTTP/1.0"
+        tileserver.TileHandler.protocol_version = "HTTP/1.0"
         tileserver.CACHE_CONTROL = "no-store"
 
     counts = {"reads": 0, "bytes": 0, "connections": 0}
     lock = threading.Lock()
     fetch = network._range
-    setup = tileserver._Handler.setup
+    setup = tileserver.TileHandler.setup
 
     def counted_fetch(url: str, offset: int, length: int) -> tuple[bytes, bytes]:
         body, cache_control = fetch(url, offset, length)
@@ -94,7 +82,7 @@ def _run(url: str, baseline: bool, steps: int) -> None:
         setup(handler)
 
     network._range = counted_fetch
-    tileserver._Handler.setup = counted_setup  # type: ignore[method-assign,assignment]
+    tileserver.TileHandler.setup = counted_setup  # type: ignore[method-assign,assignment]
 
     server = tileserver.TileServer()
     layer = layers.vector_tile_layer(server, tileserver.open_archive(url), "bench")

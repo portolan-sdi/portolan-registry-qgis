@@ -112,7 +112,7 @@ omit = [
 ]
 
 [tool.coverage.report]
-fail_under = 0
+fail_under = 99
 show_missing = true
 skip_covered = false
 exclude_lines = [
@@ -164,16 +164,28 @@ select = [
     "RSE", # flake8-raise
     "S", # flake8-bandit
     "SIM", # flake8-simplify
+    "SLF001", # private member access - tests use the public names
     "SLOT", # flake8-slots
     "T20", # flake8-print - QGIS output goes through the message bar and log
     "TC", # flake8-type-checking
     "YTT", # flake8-2020
+    "PL", # pylint
+    "RUF", # ruff-specific rules
+    "PT", # flake8-pytest-style
+    "BLE", # flake8-blind-except
+    "TRY", # tryceratops
+    "FBT001", # boolean positional parameter
+    "FBT002", # boolean positional parameter with a default
 ]
 ignore = [
     "E501", # line too long (handled by formatter)
     "ISC001", # conflicts with the formatter
     "D107", # Google style documents constructor arguments in the class docstring
     "PERF203", # a loop that isolates one item's failure needs try-except inside it
+    "PLR2004", # geometry, tile maths, and tests use literal numbers by design
+    "PLC0415", # DuckDB and QGIS imports stay inside functions by design (AGENTS.md)
+    "TRY003", # messages go through _() for translation, so they stay at the raise
+    "FBT003", # Qt setters such as setEnabled(True) take a positional boolean
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -188,7 +200,6 @@ ignore = [
     "S108", # /tmp paths in fixtures
     "D", # test names carry the description; docstrings are optional
     "ARG", # pytest fixtures are injected and often unused by name
-    "SLF001", # tests may reach into private helpers
     "T20", # a test may print for diagnostics
     "PTH123", # open() is fine in a fixture
     "S310", # a test opens a URL it writes itself
@@ -200,6 +211,9 @@ ignore = [
 "tests/in_qgis/*.py" = ["N802"]
 # Synced from portolan-ops (templates/repo/scripts/). Fix it there.
 "scripts/pip_audit_ignores.py" = ["D103", "T20"]
+# The benchmark counts the reads of the tile server, so it wraps the private
+# range reader of qgis_io.network.
+"scripts/bench_tiles.py" = ["SLF001"]
 "scripts/**/*.py" = [
     "T20", # scripts are CLIs of their own and print by design
     "S310", # a script opens an https URL it writes itself
@@ -219,7 +233,7 @@ required-imports = ["from __future__ import annotations"]
 convention = "google"
 
 [tool.ruff.lint.mccabe]
-max-complexity = 15
+max-complexity = 10
 
 [tool.ruff.format]
 quote-style = "double"
@@ -269,9 +283,35 @@ ignore-regex = '^(description|about)\[[a-z_]+\]=.*$'
 # ---------- dead code ----------
 
 [tool.vulture]
-min_confidence = 80
+min_confidence = 60
 paths = ["portolan_registry_qgis", "tests", "scripts"]
 sort_by_size = true
+# Frameworks read these names, so the code never reads them itself.
+ignore_names = [
+    # http.server and socketserver read these class attributes and call these
+    # methods on a request handler or a server.
+    "protocol_version",
+    "disable_nagle_algorithm",
+    "daemon_threads",
+    "log_message",
+    "log_request",
+    # QGIS reads these option fields.
+    "driverName",
+    "layerName",
+    "loadDefaultStyle",
+    "forceReadOnly",
+    # Qt calls these overrides of QWidget and QgsMapTool.
+    "paintEvent",
+    "hasHeightForWidth",
+    "canvasMoveEvent",
+    # WorldMap keeps the layer alive while the render job reads it, because
+    # QgsMapSettings keeps only a weak reference.
+    "_layer",
+    # pytest reads the marks of a module.
+    "pytestmark",
+]
+# pytest finds a fixture by name, and an autouse fixture has no reader.
+ignore_decorators = ["@pytest.fixture"]
 
 # ---------- security ----------
 

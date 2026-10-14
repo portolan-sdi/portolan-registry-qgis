@@ -1,10 +1,4 @@
-"""Place a STAC extent on a small longitude-latitude picture.
-
-The panel draws each catalog and node as a crop of a world map with its
-extent marked. These functions pick the crop and convert the extent to
-pixels. The picture uses plate carrée, so one degree has the same width
-everywhere.
-"""
+"""Place a STAC extent on a small plate carrée picture of the world."""
 
 from __future__ import annotations
 
@@ -13,7 +7,6 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from portolan_registry_qgis.core.stac import Bbox
 
-WORLD: Bbox = (-180.0, -90.0, 180.0, 90.0)
 Rect = tuple[float, float, float, float]
 
 
@@ -24,10 +17,8 @@ def _clamp(value: float, low: float, high: float) -> float:
 def window(bbox: Bbox | None, aspect: float, min_span: float = 30.0, context: float = 2.5) -> Bbox:
     """Return the area a picture of ``bbox`` shows, in degrees.
 
-    The area centers on ``bbox`` and is ``context`` times its size, but at
-    least ``min_span`` degrees wide. It has the picture's ``aspect`` (width
-    over height) and stays inside the world. A missing extent, or one that
-    crosses the antimeridian, shows the world.
+    The area centers on ``bbox`` with the picture's ``aspect``. A missing
+    extent, or one that crosses the antimeridian, shows the world.
     """
     if bbox is None or bbox[0] > bbox[2]:
         width = min(360.0, 180.0 * aspect)

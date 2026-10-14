@@ -1,9 +1,6 @@
 """Read the Portolan registry export into catalog entries.
 
-The registry publishes ``exports/catalogs.json`` as a static STAC catalog whose
-``child`` links are the registered catalogs. Ported from GeoLibre's
-``portolanIndexFromDocument`` (MIT, see NOTICE), extended to keep the
-``portolan_registry:*`` fields that GeoLibre drops.
+Ported from GeoLibre's ``portolanIndexFromDocument`` (MIT, see NOTICE).
 """
 
 from __future__ import annotations
@@ -13,7 +10,13 @@ from typing import Any
 
 from portolan_registry_qgis.core.hrefs import is_http_url
 from portolan_registry_qgis.core.i18n import _
-from portolan_registry_qgis.core.stac import Bbox, horizontal_bbox, links_of
+from portolan_registry_qgis.core.stac import (
+    Bbox,
+    horizontal_bbox,
+    int_or_none,
+    links_of,
+    str_or_none,
+)
 
 REGISTRY_URL = (
     "https://raw.githubusercontent.com/portolan-sdi/portolan-registry/"  # i18n: skip - a URL
@@ -63,14 +66,6 @@ class CatalogEntry:
         return west <= bbox[2] and east >= bbox[0] and south <= bbox[3] and north >= bbox[1]
 
 
-def _int(value: object) -> int | None:
-    return value if isinstance(value, int) and not isinstance(value, bool) else None
-
-
-def _str(value: object) -> str | None:
-    return value if isinstance(value, str) and value else None
-
-
 def _entry(link: dict[str, Any], href: str, title: str | None) -> CatalogEntry:
     def field(name: str) -> object:
         return link.get(_PREFIX + name)
@@ -78,27 +73,23 @@ def _entry(link: dict[str, Any], href: str, title: str | None) -> CatalogEntry:
     licenses = field("licenses")
     logo = field("logo")
     return CatalogEntry(
-        id=_str(field("id")) or href,
+        id=str_or_none(field("id"), empty_ok=False) or href,
         title=title or href,
         url=href,
-        status=_str(field("status")) or "unknown",
+        status=str_or_none(field("status"), empty_ok=False) or "unknown",
         bbox=horizontal_bbox(link.get("bbox")),
         licenses=tuple(sorted(licenses)) if isinstance(licenses, dict) else (),
-        collection_count=_int(field("collection_count")),
-        feature_count=_int(field("feature_count")),
-        total_size_bytes=_int(field("total_size_bytes")),
-        updated=_str(field("updated")),
-        logo_url=_str(logo.get("href")) if isinstance(logo, dict) else None,
-        failure_reason=_str(field("failure_reason")),
+        collection_count=int_or_none(field("collection_count")),
+        feature_count=int_or_none(field("feature_count")),
+        total_size_bytes=int_or_none(field("total_size_bytes")),
+        updated=str_or_none(field("updated"), empty_ok=False),
+        logo_url=str_or_none(logo.get("href"), empty_ok=False) if isinstance(logo, dict) else None,
+        failure_reason=str_or_none(field("failure_reason"), empty_ok=False),
     )
 
 
 def parse_registry(document: object, base: str = REGISTRY_URL) -> list[CatalogEntry]:
     """Return the registry's catalogs, sorted by title.
-
-    Args:
-        document: The parsed ``catalogs.json``.
-        base: The URL it was fetched from, for resolving relative links.
 
     Raises:
         RegistryError: The document is not a STAC catalog with a links list.

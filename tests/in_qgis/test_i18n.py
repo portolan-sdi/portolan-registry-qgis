@@ -1,10 +1,7 @@
 """The window shows each message through the translation, never as raw English.
 
-scripts/i18n.py finds a string literal that skips _(). These tests find what a
-static check cannot see: a message the code marks with N_() but shows without
-_(), and a message translated at import, before the plugin sets the language.
-A pseudo-translation wraps every message in brackets, so English text from the
-catalog that shows without brackets skipped the translation.
+A pseudo-translation wraps every message in brackets. Text without brackets
+skipped the translation.
 """
 
 from __future__ import annotations
@@ -14,7 +11,7 @@ import re
 
 import pytest
 from babel.messages.pofile import read_po
-from qgis.core import QgsApplication, QgsProject, QgsSettings
+from qgis.core import QgsSettings
 from qgis.PyQt.QtWidgets import (
     QAbstractButton,
     QComboBox,
@@ -30,7 +27,7 @@ import portolan_registry_qgis
 from portolan_registry_qgis.core import i18n
 from portolan_registry_qgis.qgis_io.tileserver import TileServer
 
-from .test_gui import FakeIface, open_collection, open_window
+from .test_gui import open_collection, open_window
 
 OPEN, CLOSE = "⟦", "⟧"
 _FIELD = re.compile(r"\{[^{}]*\}")
@@ -57,9 +54,9 @@ def english_phrases() -> set[str]:
         ids = message.id if isinstance(message.id, tuple) else (message.id,)
         for text in ids:
             for piece in _FIELD.split(text):
-                piece = piece.strip(" .,:;…")
-                if len(piece.split()) >= 2:
-                    phrases.add(piece)
+                phrase = piece.strip(" .,:;…")
+                if len(phrase.split()) >= 2:
+                    phrases.add(phrase)
     return phrases
 
 
@@ -68,24 +65,41 @@ def texts(root: QWidget) -> list[str]:
     found = [root.windowTitle()]
     for widget in [root, *root.findChildren(QWidget)]:
         found.append(widget.toolTip())
-        if isinstance(widget, (QLabel, QAbstractButton)):
-            found.append(widget.text())
-        if isinstance(widget, QLineEdit):
-            found.append(widget.placeholderText())
-        if isinstance(widget, QGroupBox):
-            found.append(widget.title())
-        if isinstance(widget, QComboBox):
-            found.extend(widget.itemText(i) for i in range(widget.count()))
-        if isinstance(widget, QListWidget):
-            for i in range(widget.count()):
-                found.extend((widget.item(i).text(), widget.item(i).toolTip()))
-        if isinstance(widget, QTreeWidget):
-            header = widget.headerItem()
-            found.extend(header.text(c) for c in range(header.columnCount()))
-            for item in _items(widget):
-                for column in range(widget.columnCount()):
-                    found.extend((item.text(column), item.toolTip(column)))
+        found.extend(_widget_texts(widget))
     return [text for text in found if text]
+
+
+# The widgets that show one text, and the function that reads it.
+_ONE_TEXT = (
+    ((QLabel, QAbstractButton), lambda widget: widget.text()),
+    (QLineEdit, lambda widget: widget.placeholderText()),
+    (QGroupBox, lambda widget: widget.title()),
+)
+
+
+def _widget_texts(widget: QWidget) -> list[str]:
+    """Return the texts of ``widget`` other than its tooltip."""
+    for kinds, read in _ONE_TEXT:
+        if isinstance(widget, kinds):
+            return [read(widget)]
+    if isinstance(widget, QComboBox):
+        return [widget.itemText(i) for i in range(widget.count())]
+    if isinstance(widget, QListWidget):
+        items = (widget.item(i) for i in range(widget.count()))
+        return [text for item in items for text in (item.text(), item.toolTip())]
+    if isinstance(widget, QTreeWidget):
+        return _tree_texts(widget)
+    return []
+
+
+def _tree_texts(tree: QTreeWidget) -> list[str]:
+    """Return the header texts, and the text and tooltip of each cell."""
+    header = tree.headerItem()
+    found = [header.text(c) for c in range(header.columnCount())]
+    for item in _items(tree):
+        for column in range(tree.columnCount()):
+            found.extend((item.text(column), item.toolTip(column)))
+    return found
 
 
 def _items(tree: QTreeWidget):
@@ -103,16 +117,6 @@ def untranslated(root: QWidget, phrases: set[str]) -> list[str]:
         rest = _BRACKETED.sub("", _TAG.sub(" ", text))
         raw.extend(f"{phrase!r} in {text!r}" for phrase in phrases if phrase in rest)
     return raw
-
-
-@pytest.fixture
-def iface():
-    fake = FakeIface()
-    yield fake
-    QgsProject.instance().clear()
-    for widget in (fake.canvas, fake.bar, fake.window):
-        widget.deleteLater()
-    QgsApplication.processEvents()
 
 
 @pytest.fixture

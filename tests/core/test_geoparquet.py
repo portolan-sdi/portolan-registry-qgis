@@ -6,6 +6,8 @@ import pytest
 
 from portolan_registry_qgis.core.geoparquet import (
     NO_GEOMETRY,
+    WHOLE_FILE,
+    Clip,
     GeoParquetError,
     build_copy,
     build_estimate,
@@ -64,7 +66,9 @@ def test_real_geoparquet_plan():
 
 def test_copy_uses_the_covering_column():
     plan = plan_read(LAND_USE_SCHEMA, LAND_USE_GEO)
-    sql, params = build_copy(plan, "/tmp/x.gpkg", "MultiPolygon", (-75.17, 39.94, -75.15, 39.96))
+    sql, params = build_copy(
+        plan, "/tmp/x.gpkg", "MultiPolygon", Clip((-75.17, 39.94, -75.15, 39.96))
+    )
     assert '"bbox"."xmin" <= ?' in sql
     assert "ST_Intersects" in sql
     assert "LIMIT" not in sql
@@ -86,7 +90,7 @@ def test_copy_without_bbox_or_covering():
     assert "IN ('POINT')" in sql
     assert "ST_Intersects" not in sql
     assert params == []
-    sql, params = build_copy(plan, "out.gpkg", "Point", (0, 0, 1, 1))
+    sql, params = build_copy(plan, "out.gpkg", "Point", Clip((0, 0, 1, 1)))
     assert "bbox" not in sql
     assert params == [0, 0, 1, 1]
 
@@ -119,13 +123,13 @@ def test_estimate():
     sql, params = build_estimate(plan)
     assert sql == "SELECT count(*) FROM read_parquet(?)"
     assert params == []
-    sql, params = build_estimate(plan, (0, 1, 2, 3))
+    sql, params = build_estimate(plan, Clip((0, 1, 2, 3)))
     # Only the covering column filters, so DuckDB reads no geometry.
     assert '"bbox"."xmin" <= ?' in sql
     assert "ST_Intersects" not in sql
     assert params == [2, 0, 3, 1]
     without = plan_read([("geometry", "GEOMETRY")], None)
-    assert build_estimate(without, (0, 1, 2, 3)) is None
+    assert build_estimate(without, Clip((0, 1, 2, 3))) is None
 
 
 @pytest.mark.parametrize(
@@ -151,6 +155,9 @@ def test_type_from_first(row, expected):
         ([("x", "INTEGER"), ("shape", "GEOMETRY('EPSG:3857')")], None, "shape"),
         # A WKB blob with a conventional name.
         ([("wkb_geometry", "BLOB")], None, "wkb_geometry"),
+        # The same names that the STAC table columns accept.
+        ([("id", "INTEGER"), ("shape", "BLOB")], None, "shape"),
+        ([("GEOG", "BLOB")], None, "GEOG"),
         # A primary column missing from the schema falls back to the type.
         ([("g", "GEOMETRY")], {"primary_column": "nope"}, "g"),
     ],
@@ -188,7 +195,7 @@ def test_a_file_with_no_columns_is_an_error():
 
 def test_table_copy():
     plan = plan_read([("id", "BIGINT"), ("fid", "INTEGER"), ("geom", "VARCHAR")], None)
-    sql, params = build_copy(plan, "t.gpkg", NO_GEOMETRY, (0, 0, 1, 1), "EPSG:4326")
+    sql, params = build_copy(plan, "t.gpkg", NO_GEOMETRY, Clip((0, 0, 1, 1)), "EPSG:4326")
     assert sql == (
         'COPY (SELECT "id" AS "id", "fid" AS "fid", CAST("geom" AS VARCHAR) AS "geom" '
         "FROM read_parquet(?)) TO 't.gpkg' (FORMAT GDAL, DRIVER 'GPKG', "
@@ -198,13 +205,13 @@ def test_table_copy():
     # A table has no location, so a box or an area does not filter it.
     assert params == []
     area = "POLYGON ((0 0, 1 0, 1 1, 0 0))"
-    assert build_copy(plan, "t.gpkg", NO_GEOMETRY, (0, 0, 1, 1), area=area) == (sql, [])
+    assert build_copy(plan, "t.gpkg", NO_GEOMETRY, Clip((0, 0, 1, 1), area)) == (sql, [])
 
 
 def test_table_estimate_is_exact():
     plan = plan_read([("id", "BIGINT")], None)
     assert build_estimate(plan) == ("SELECT count(*) FROM read_parquet(?)", [])
-    assert build_estimate(plan, (0, 1, 2, 3)) == ("SELECT count(*) FROM read_parquet(?)", [])
+    assert build_estimate(plan, Clip((0, 1, 2, 3))) == ("SELECT count(*) FROM read_parquet(?)", [])
 
 
 def test_a_table_has_no_first_type():
@@ -214,11 +221,12 @@ def test_a_table_has_no_first_type():
 
 AREA = "POLYGON ((-75.17 39.94, -75.15 39.94, -75.16 39.96, -75.17 39.94))"
 AREA_BOX = (-75.17, 39.94, -75.15, 39.96)
+AREA_CLIP = Clip(AREA_BOX, AREA)
 
 
 def test_copy_in_an_area():
     plan = plan_read(LAND_USE_SCHEMA, LAND_USE_GEO)
-    sql, params = build_copy(plan, "x.gpkg", "MultiPolygon", AREA_BOX, area=AREA)
+    sql, params = build_copy(plan, "x.gpkg", "MultiPolygon", AREA_CLIP)
     # The covering column skips row groups by the envelope, then the polygon tests each geometry.
     assert '"bbox"."xmin" <= ?' in sql
     assert 'ST_Intersects("geometry", ST_GeomFromText(?))' in sql
@@ -230,30 +238,53 @@ def test_copy_in_an_area():
 
 def test_area_without_a_covering_column():
     plan = plan_read([("geom", "BLOB")], None)
-    sql, params = build_copy(plan, "x.gpkg", "Point", AREA_BOX, area=AREA)
+    sql, params = build_copy(plan, "x.gpkg", "Point", AREA_CLIP)
     assert "bbox" not in sql
     assert 'ST_Intersects(ST_GeomFromWKB("geom"), ST_GeomFromText(?))' in sql
     assert params == [AREA]
-    sql, params = build_first_type(plan, AREA_BOX, AREA)
+    sql, params = build_first_type(plan, AREA_CLIP)
     assert "ST_GeomFromText(?)" in sql
     assert params == [AREA]
 
 
 def test_estimate_in_an_area_counts_by_its_envelope():
     plan = plan_read(LAND_USE_SCHEMA, LAND_USE_GEO)
-    assert build_estimate(plan, AREA_BOX, AREA) == build_estimate(plan, AREA_BOX)
+    assert build_estimate(plan, AREA_CLIP) == build_estimate(plan, Clip(AREA_BOX))
     without = plan_read([("geometry", "GEOMETRY")], None)
-    assert build_estimate(without, AREA_BOX, AREA) is None
+    assert build_estimate(without, AREA_CLIP) is None
 
 
 def test_an_area_needs_its_envelope():
-    plan = plan_read(LAND_USE_SCHEMA, LAND_USE_GEO)
     with pytest.raises(ValueError, match="envelope"):
-        build_copy(plan, "x.gpkg", "MultiPolygon", area=AREA)
+        Clip(area=AREA)
     with pytest.raises(ValueError, match="envelope"):
-        build_estimate(plan, area=AREA)
-    with pytest.raises(ValueError, match="envelope"):
-        build_first_type(plan, area=AREA)
+        Clip.from_text("", AREA)
+
+
+@pytest.mark.parametrize(
+    ("clip", "text"),
+    [
+        (WHOLE_FILE, ("", "")),
+        (Clip((11.095, 44.0, 11.305, 45.0)), ("11.095,44.0,11.305,45.0", "")),
+        (AREA_CLIP, ("-75.17,39.94,-75.15,39.96", AREA)),
+    ],
+)
+def test_clip_text_round_trip(clip, text):
+    assert clip.to_text() == text
+    assert Clip.from_text(*text) == clip
+
+
+def test_clip_reads_the_text_of_older_projects():
+    """The two layer properties keep the format that earlier versions saved."""
+    # 0.2.0 joined repr() of each float with commas, and saved the WKT as it was.
+    saved = ",".join(repr(value) for value in AREA_BOX)
+    assert Clip.from_text(saved, AREA) == AREA_CLIP
+    assert Clip.from_text(saved) == Clip(AREA_BOX)
+    assert Clip.from_text("") == WHOLE_FILE
+    # A box without four numbers gives no box.
+    assert Clip.from_text("1.0,2.0") == WHOLE_FILE
+    with pytest.raises(ValueError, match="could not convert"):
+        Clip.from_text("west,south,east,north")
 
 
 @pytest.mark.parametrize(

@@ -55,7 +55,7 @@ _MEDIA_LABELS = {
 
 
 def format_label(
-    format: str | None, media_type: str | None, href: str, tabular: bool = False
+    format: str | None, media_type: str | None, href: str, *, tabular: bool = False
 ) -> str:
     """Return a short name for an asset's format.
 
@@ -67,18 +67,25 @@ def format_label(
         return "Parquet"  # i18n: skip - a format name
     if format in _FORMAT_LABELS:
         return _FORMAT_LABELS[format]
+    # Translators: The format of a file whose format is not known.
+    return _media_label(media_type) or _extension_label(href) or _("File")
+
+
+def _media_label(media_type: str | None) -> str | None:
+    """Return the format name a media type gives, or None."""
     media = (media_type or "").split(";")[0].strip().lower()
     if media in _MEDIA_LABELS:
         return _MEDIA_LABELS[media]
     if media.startswith("image/"):
         return media.removeprefix("image/").removesuffix("+xml").upper()
-    name = href.split("?")[0].split("#")[0].rsplit("/", 1)[-1]
-    if "." in name:
-        extension = name.rsplit(".", 1)[-1]
-        if 0 < len(extension) <= 8 and extension.isalnum():
-            return extension.upper()
-    # Translators: The format of a file whose format is not known.
-    return _("File")
+    return None
+
+
+def _extension_label(href: str) -> str | None:
+    """Return the file extension of ``href`` in capitals, or None when it has none."""
+    name = href.split("?", maxsplit=1)[0].split("#", maxsplit=1)[0].rsplit("/", 1)[-1]
+    extension = name.rsplit(".", 1)[-1] if "." in name else ""
+    return extension.upper() if 0 < len(extension) <= 8 and extension.isalnum() else None
 
 
 def catalog_summary(
@@ -143,3 +150,9 @@ def link_label(href: str, title: str | None) -> str:
         return name
     host = parts.hostname or href
     return host.removeprefix("www.")
+
+
+def excerpt(text: str, limit: int = 240) -> str:
+    """Return the first ``limit`` characters of ``text`` on one line."""
+    flat = " ".join(text.split())
+    return flat if len(flat) <= limit else flat[: limit - 1].rstrip() + "…"

@@ -1,9 +1,6 @@
 """Write the facts of a document as the HTML table of the Details section.
 
-Each fact is one row, and a row leaves out what is not known. The license
-links make the License row, the publisher's documentation makes the
-Documentation row, the ``via`` links make the Source row, and the browser
-page makes the More row. A link that two STAC links repeat shows once.
+Each fact is one row. A row leaves out what is not known.
 """
 
 from __future__ import annotations

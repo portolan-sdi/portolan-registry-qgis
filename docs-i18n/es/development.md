@@ -1,5 +1,5 @@
 ---
-source_sha256: 33a7dd3dbf845ead2ecc44d787cc6339d850b4758d109a8db6c5ba90d896b3a5
+source_sha256: da90f101b8a18645586273bdf33ad0a29409d9391de914f37513f95558d5f303
 ---
 
 <!-- vale off -->
@@ -49,6 +49,7 @@ Pre-commit ejecuta estas comprobaciones, y la CI las vuelve a ejecutar en cada p
 | xenon en el paquete | Cada bloque en el rango B o mejor. Cada módulo y la media en el rango A. |
 | xenon en las pruebas y los scripts | Cada bloque en el rango C o mejor. Cada módulo en el rango B o mejor, y la media en el rango A. |
 | jscpd | Ninguna copia de 50 tokens y 5 líneas o más. |
+| Docstrings | 5 líneas o menos. Ningún historial de cambios en un docstring o un comentario. |
 | import-linter | El núcleo no importa código de QGIS, Qt ni GDAL, ni ninguna de las capas de QGIS. `qgis_io` no importa nada de `gui`. |
 | Cobertura, conjunto de uv | El 99 % del núcleo. |
 | Cobertura, conjunto de QGIS | El 87 % de `plugin.py`, `gui` y `qgis_io`. |
@@ -65,6 +66,7 @@ uv run xenon --max-absolute=B --max-modules=A \
 uv run xenon --max-absolute=C --max-modules=B \
   --max-average=A tests scripts
 uvx prek run jscpd --all-files
+uv run python scripts/docstring_check.py
 uv run lint-imports
 uv run pytest -n 4 --cov=portolan_registry_qgis
 ```

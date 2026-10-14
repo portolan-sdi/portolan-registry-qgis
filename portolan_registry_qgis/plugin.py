@@ -156,12 +156,8 @@ class PortolanRegistryPlugin:
     def _reconnect(self, layers: list[Any]) -> None:
         """Reconnect the PMTiles, GeoParquet, and mosaic layers of a saved project.
 
-        The tile server picks a new port each session, so the URL a project
-        saved no longer answers. The layer keeps the archive URL in a custom
-        property, which is enough to register it again. A GeoParquet layer
-        keeps its URL, box, and area, which is enough to copy it again. A
-        mosaic keeps the URLs of its COG files, which is enough to write its
-        VRT again.
+        The tile server port changes each session. Each layer keeps the source
+        URLs it needs to load again in custom properties.
         """
         for layer in layers:
             if parquet_layer.needs_restore(layer):

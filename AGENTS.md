@@ -86,3 +86,5 @@ QGIS code goes in `qgis_io` (network, tiles, layers, downloads) or `gui` (widget
 QGIS does not include DuckDB, so the plugin imports it inside functions only. Keep every `import duckdb` inside a function.
 
 Run `tests/in_qgis` before you push a change to `qgis_io`, `gui`, or `plugin.py`. `docs/development.md` gives the commands. The uv suite cannot catch those failures.
+
+Keep each docstring to one summary line, and 5 lines at most. State what the code does. Put the reason for a change in the commit message, not in a docstring or a comment. `scripts/docstring_check.py` enforces this.

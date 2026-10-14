@@ -1,16 +1,8 @@
 #!/usr/bin/env python3
 """Move the Unreleased notes in CHANGELOG.md under a new version heading.
 
-`cz bump` runs this as a pre-bump hook and passes the new version in
-CZ_PRE_NEW_VERSION. The hook edits CHANGELOG.md before the bump commit, and
-`cz bump` commits it with the version files.
-
-The heading has the form `## 0.1.1 - 2026-10-09`. qgis-plugin-ci reads that
-form and copies the notes into the changelog that the QGIS plugin manager
-shows. It ends a version's notes at the next `##`, so a `###` subheading would
-cut them off. The notes are a flat list for that reason.
-
-The script stops the bump when the notes are empty or contain a subheading.
+`cz bump` runs this as a pre-bump hook with the version in CZ_PRE_NEW_VERSION.
+The notes stay a flat list, because qgis-plugin-ci ends them at the next `##`.
 """
 
 from __future__ import annotations

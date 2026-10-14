@@ -42,11 +42,7 @@ class NetworkError(OSError):
 
 
 def fetch_bytes(url: str, accept: bytes = _ACCEPT) -> bytes:
-    """Return the body at ``url``.
-
-    Args:
-        url: The address to read.
-        accept: The ``Accept`` header. The default asks for JSON documents.
+    """Return the body at ``url``. ``accept`` is the ``Accept`` header.
 
     Raises:
         NetworkError: The request failed or the server answered with an error.
@@ -60,13 +56,7 @@ def fetch_bytes(url: str, accept: bytes = _ACCEPT) -> bytes:
 
 
 def _raise_for(code: Any, blocking: QgsBlockingNetworkRequest, url: str) -> None:
-    """Raise a ``NetworkError`` when the request to ``url`` did not succeed.
-
-    Args:
-        code: The error code that ``blocking.get`` returned.
-        blocking: The request, for its error message.
-        url: The address of the request.
-    """
+    """Raise a ``NetworkError`` when ``code`` from ``blocking.get`` is an error."""
     if code != QgsBlockingNetworkRequest.ErrorCode.NoError:
         # Translators: An error about the file at {url}.
         raise NetworkError(_("{url}: {error}").format(url=url, error=blocking.errorMessage()))
@@ -75,11 +65,8 @@ def _raise_for(code: Any, blocking: QgsBlockingNetworkRequest, url: str) -> None
 def http_status(url: str) -> tuple[int | None, str]:
     """Ask for the first byte of ``url`` and return the HTTP status and any error.
 
-    QGIS sends the request with its own proxy and certificate settings, so
-    the answer can differ from what GDAL gets.
-
-    Returns:
-        The status code, or None when no HTTP answer came, and the error text.
+    The status is None when no HTTP answer came. QGIS uses its own proxy
+    settings, so the answer can differ from what GDAL gets.
     """
     request = QNetworkRequest(QUrl(url))
     request.setRawHeader(b"Range", b"bytes=0-0")
@@ -94,13 +81,8 @@ def http_status(url: str) -> tuple[int | None, str]:
 def fetch_range(url: str, offset: int, length: int) -> bytes:
     """Return ``length`` bytes of ``url`` from ``offset``.
 
-    A server that ignores the Range header answers 200 with the whole body.
-    QGIS 3.38 and later abort that reply. QGIS 3.34 and 3.36 read it to the
-    end, so the function cancels it when the body grows past ``length``.
-    Without the cancel, every tile read downloads the whole archive.
-
-    Raises:
-        NetworkError: The request failed, or the server ignores ranges.
+    QGIS 3.34 and 3.36 read a 200 reply to the end, so the read cancels a body
+    longer than ``length``. Raise NetworkError when the server ignores ranges.
     """
     return _range(url, offset, length)[0]
 
@@ -215,18 +197,10 @@ def run_task(
     *,
     hidden: bool = False,
 ) -> QgsTask:
-    """Run ``function`` in a background task and report back on the main thread.
+    """Run ``function`` in a queued background task, and return the task.
 
-    Args:
-        description: Shown in the QGIS task manager.
-        function: Called with the task, off the main thread.
-        on_done: Called with ``(result, None)`` on success or
-            ``(None, error)`` on failure or cancellation.
-        hidden: Keep the task out of the task manager. Use it for small
-            reads the user did not ask for, such as icons.
-
-    Returns:
-        The task, already queued.
+    ``on_done`` gets ``(result, None)`` or ``(None, error)`` on the main thread.
+    ``hidden`` keeps small reads, such as icons, out of the task manager.
     """
 
     def finished(exception: BaseException | None, result: object = None) -> None:
@@ -273,12 +247,10 @@ class _Job(QRunnable):
 
 
 class QtExecutor(Executor):
-    """Run functions on QThreads, so QGIS network requests can use them.
+    """Run functions on QThreads, where ``QgsBlockingNetworkRequest`` has Qt timers.
 
-    ``QgsBlockingNetworkRequest`` needs Qt timers, and Qt timers work only on
-    a QThread. A ``ThreadPoolExecutor`` thread is a plain Python thread. The
-    executor has its own ``QThreadPool``, so a task that waits for it cannot
-    take every thread of the global pool.
+    The executor has its own ``QThreadPool``, so a task that waits for it
+    cannot take every thread of the global pool.
     """
 
     def __init__(self, workers: int):

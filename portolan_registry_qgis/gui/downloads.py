@@ -1,9 +1,6 @@
 """Download the selected files, or everything below a document in the area.
 
-A download of everything first walks the catalog to list the files. The user
-confirms the list, and then a download job fetches the files. With a map
-view or an area, each GeoParquet file of the document downloads as a
-GeoPackage of the features in the area.
+With an area, each GeoParquet file downloads as a GeoPackage of its features.
 """
 
 from __future__ import annotations

@@ -86,14 +86,9 @@ def _union(layers: list[Any], view: QgsRectangle, target: Any) -> QgsRectangle |
 
 
 def add_layers(canvas: Any, layers: list[Any]) -> bool:
-    """Add ``layers`` to the project, and show them when the map shows none of them.
+    """Add ``layers`` to the project, and move the map when it shows none of them.
 
-    QGIS zooms to a new layer only in an empty project. A layer that lands
-    outside the map looks as if it did not load, so the map moves to the
-    layers. A table has no extent and does not move the map.
-
-    Returns:
-        Whether the map moved.
+    A table has no extent and does not move the map. Return whether the map moved.
     """
     target = canvas.mapSettings().destinationCrs()
     view = canvas.extent()

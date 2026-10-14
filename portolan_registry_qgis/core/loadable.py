@@ -1,11 +1,4 @@
-"""Choose the files of a document that the window offers, and describe them.
-
-The window shows at most two primary buttons. "View on map" adds the first
-file of the view formats, and "Load full data" adds the first file of the
-load formats. The functions here pick those files, write the tooltips, and
-decide which buttons the window enables. They import no QGIS, so the uv
-tests cover them.
-"""
+"""Choose the files of a document that the window offers, and describe them."""
 
 from __future__ import annotations
 
@@ -166,12 +159,8 @@ def button_state(
 ) -> ButtonState:
     """Return which buttons the window enables.
 
-    ``selected`` is True when the user selected a file row. ``ready`` is
-    True when the scope is complete. ``busy`` is True while a mosaic search,
-    a download listing, or a download runs. These share the progress bar
-    and the Cancel button, so only one of them runs at a time. The All files
-    buttons act on the selected rows, whole, so the scope does not hold them
-    back.
+    ``busy`` disables the actions that share the progress bar. The All files
+    buttons do not wait for the scope.
     """
     load = targets.load
     return ButtonState(

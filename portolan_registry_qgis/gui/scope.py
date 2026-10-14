@@ -99,14 +99,10 @@ _DENSIFY = 8
 
 
 def area_of(geometry: QgsGeometry, crs: QgsCoordinateReferenceSystem) -> Area:
-    """Turn a polygon in ``crs`` into an ``Area`` in EPSG:4326.
-
-    The function drops Z and M values and curves, because the area is only
-    a filter in two dimensions.
+    """Turn a polygon in ``crs`` into a 2D ``Area`` in EPSG:4326.
 
     Raises:
-        ScopeError: The geometry is empty, is not a polygon, or cannot be
-            transformed.
+        ScopeError: The geometry is empty, is not a polygon, or cannot be transformed.
     """
     if geometry.isNull() or geometry.isEmpty():
         raise ScopeError(_("The area is empty."))
@@ -235,12 +231,10 @@ def _polygon_filter() -> Any:
 
 
 class PolygonTool(QgsMapTool):
-    """Draw a polygon on the canvas.
+    """Draw a polygon on the canvas, and send it in the canvas CRS on ``finished``.
 
-    A left click adds a vertex. A right click or a double click finishes
-    the polygon, which needs three vertices. A right click with fewer
-    vertices cancels, and so does Esc. Backspace removes the last vertex.
-    ``finished`` sends the polygon in the canvas CRS.
+    A left click adds a vertex. A right click or a double click finishes.
+    Esc cancels. Backspace removes the last vertex.
     """
 
     finished = pyqtSignal(object)
@@ -341,11 +335,7 @@ class PolygonTool(QgsMapTool):
 class ScopePicker(QWidget):
     """Choose which part of a dataset to add or download.
 
-    The choices are "Everything", "Map extent", "Draw an area", and "From a
-    layer". Drawing uses a polygon map tool on the canvas. The drawn area
-    stays on the canvas until the choice changes or ``clear`` runs. Call
-    ``clear`` before the picker is deleted, so that no rubber band stays on
-    the canvas.
+    Call ``clear`` before the picker is deleted, so no rubber band stays on the canvas.
     """
 
     changed = pyqtSignal()

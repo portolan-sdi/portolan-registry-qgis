@@ -4,18 +4,6 @@
 Run it with the Python that has PyQGIS:
 
     QT_QPA_PLATFORM=offscreen /usr/bin/python3 scripts/bench_tiles.py
-
-The script renders six screens east of Center City, Philadelphia, at about
-zoom 15, then pans over the same screens a second time. It prints the render
-time, the remote reads, and the loopback connections for each step. The last
-line gives the time of the first visit and of the revisit apart. The revisit
-draws from the QGIS cache. The first visit gains from kept connections, and
-from the cache where neighboring screens share a tile.
-
-``--baseline`` restores the transport of version 0.1.1: HTTP/1.0 and no
-caching. Compare the two runs to see what keep-alive and caching save. The
-regression tests in tests/in_qgis/test_tile_transport.py count the same
-connections and reads against loopback, so they hold on any machine.
 """
 
 from __future__ import annotations

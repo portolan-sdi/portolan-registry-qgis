@@ -1,12 +1,7 @@
-"""Fixtures for tests that need PyQGIS.
+"""Fixtures for tests that need PyQGIS. The directory skips where qgis is absent.
 
-The whole directory skips where ``qgis`` cannot be imported, which is the uv
-environment. CI runs it in the QGIS container (.github/workflows/qgis.yml).
-
-``catalog`` builds a small Portolan catalog with GDAL and serves it over
-HTTP with range support, so every network path the plugin takes runs for
-real against loopback. ``catalog["requests"]`` logs each request as
-``(method, path)``.
+``catalog`` serves a small Portolan catalog over loopback HTTP with range
+support. ``catalog["requests"]`` logs each request as ``(method, path)``.
 """
 
 from __future__ import annotations
@@ -192,10 +187,8 @@ TILES = {"a": (11.0, 44.64), "b": (12.0, 44.64)}
 def _tiles(root: Path) -> None:
     """Write a collection of two COG items and its stac-geoparquet mirror.
 
-    The root catalog does not link the collection, so the tree the window
-    tests read stays the same. Item ``a`` names its COG relative to the
-    mirror. Item ``b`` names it relative to its own ``self`` link, which is
-    relative to the mirror.
+    The root catalog does not link the collection. Item ``a`` names its COG
+    relative to the mirror, and item ``b`` relative to its ``self`` link.
     """
     import duckdb
 

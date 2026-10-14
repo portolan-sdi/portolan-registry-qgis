@@ -1,15 +1,7 @@
 """Translate the text the plugin shows, and write numbers the way the language does.
 
-English is the source language. The English text of a message is its key. Each
-other language has a gettext catalog at
-``portolan_registry_qgis/locale/<code>/LC_MESSAGES/messages.mo``.
-scripts/i18n.py builds the catalogs and checks that each one translates every
-English message.
-
-The plugin calls :func:`set_language` before it builds a widget. Code calls
-:func:`_`, :func:`ngettext`, and :func:`count` when it shows the text, never at
-import. A module constant holds its English in :func:`N_` and translates it
-where it is shown.
+The English text of a message is its key. Call ``_`` when the text shows,
+never at import. Mark module constants with ``N_``.
 """
 
 from __future__ import annotations

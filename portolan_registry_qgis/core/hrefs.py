@@ -52,11 +52,8 @@ def absolute_href(href: str, base: str) -> str:
 def asset_href(href: str, base: str, account_name: str | None = None) -> str:
     """Resolve an asset href to HTTPS, converting anonymous object-store URIs.
 
-    ``s3://bucket/key`` becomes the bucket's virtual-hosted HTTPS URL. Azure
-    ``abfs``/``abfss``/``az`` hrefs name the container first; the canonical form
-    carries the account in the host, and the shorthand relies on
-    ``account_name`` from the asset's ``table:storage_options``. Without an
-    account the href comes back unchanged.
+    Azure shorthand hrefs need ``account_name``. Without it, the href comes
+    back unchanged.
     """
     resolved = absolute_href(href, base)
     parts = urlsplit(resolved)
@@ -82,18 +79,9 @@ def asset_href(href: str, base: str, account_name: str | None = None) -> str:
 def vsicurl_path(url: str) -> str:
     """Return the GDAL path that reads ``url`` over HTTP range requests.
 
-    The ``empty_dir=yes`` option stops GDAL from listing the parent directory
-    and from probing side-car files such as ``.aux.xml``, ``.ovr``, and
-    ``.msk``. On Google Cloud Storage, a COG open sent 41 such probes and took
-    17 s, not 1 s. The cost is that GDAL ignores external side-car files. A COG
-    keeps its overviews and mask inside the file, but an asset that relies on
-    an external ``.ovr`` or ``.aux.xml`` opens without it.
-
-    GDAL needs the URL percent-encoded in this form, query string included.
-
-    GDAL refuses this form when the setting
-    ``CPL_VSIL_CURL_ALLOWED_EXTENSIONS`` is set, whatever it lists. Use
-    ``plain_vsicurl_path`` then.
+    ``empty_dir=yes`` stops side-car probes, so external ``.ovr`` files are
+    ignored. GDAL refuses this form when ``CPL_VSIL_CURL_ALLOWED_EXTENSIONS``
+    is set. Use ``plain_vsicurl_path`` then.
     """
     return f"/vsicurl?empty_dir=yes&url={quote(url, safe='')}"  # i18n: skip - a GDAL path
 
@@ -148,17 +136,6 @@ BROWSER_URL = "https://browser.portolan-sdi.org/"  # i18n: skip - a URL
 
 def browser_url(stac_href: str, base: str = BROWSER_URL) -> str:
     """Return the Portolan browser page that shows the STAC document at ``stac_href``.
-
-    The browser is a STAC Browser build with hash routing. Its
-    ``toBrowserPath`` getter names an external document
-    ``/external/<host>/<path>``. A ``http:`` segment comes before the host
-    when the document is not on HTTPS. The query string follows the path,
-    and the browser adds it to its request for the document. The fragment
-    is dropped.
-
-    Args:
-        stac_href: The http(s) URL of a catalog, collection, or item.
-        base: The browser's root URL. A mirror can replace the default.
 
     Raises:
         ValueError: ``stac_href`` is not an http(s) URL.

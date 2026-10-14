@@ -91,11 +91,7 @@ def _spans(west: float, east: float) -> tuple[tuple[float, float], ...]:
 def intersects(bbox: Bbox | None, scope: Scope) -> bool:
     """Return whether a file with extent ``bbox`` can hold data in ``scope``.
 
-    The test compares envelopes only, so an ``Area`` can keep a file whose
-    box touches the polygon's envelope but not the polygon. A file with no
-    extent is kept, because the test cannot rule it out. ``Everything``
-    keeps every file. Boxes that cross the antimeridian are handled.
-    Boxes that only touch at an edge intersect.
+    The test compares envelopes. A file with no extent is kept.
     """
     area = bbox_of(scope)
     if bbox is None or area is None:
@@ -123,16 +119,8 @@ ANTIMERIDIAN_SIDES: tuple[tuple[Bbox, float], ...] = (
 def crosses_antimeridian(longitudes: list[float], *, projected: bool) -> bool:
     """Return whether a polygon with these vertex longitudes can cross 180°.
 
-    A polygon crosses the antimeridian in two cases:
-    - It has longitudes beyond ±180°, as on a canvas in degrees that the user
-      panned past 180°.
-    - It came from a projected CRS, and two neighbouring vertices differ by
-      more than 180° of longitude after the transform. The caller densifies
-      the edges of a wide polygon before the transform, so each edge is
-      short.
-
-    A polygon drawn in degrees with longitudes in -180..180 is what the user
-    drew, even when it is wide.
+    True when a longitude is beyond ±180°, or when two neighbouring vertices
+    differ by more than 180°.
     """
     if any(longitude < -180 or longitude > 180 for longitude in longitudes):
         return True

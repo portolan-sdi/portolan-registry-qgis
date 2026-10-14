@@ -1,27 +1,8 @@
 """Load GeoParquet into QGIS through a GeoPackage that DuckDB writes.
 
-``plan`` and ``prepare`` run off the main thread. ``plan`` reads the file's
-schema and estimates the number of features, so the panel can ask before a
-large load. ``prepare`` has DuckDB copy the features into a GeoPackage in
-the plugin's scratch folder. No Python code touches a feature, so a load of
-millions of features stays within the memory DuckDB uses. ``build`` runs on
-the main thread and opens the GeoPackage through OGR. A file with no
-geometry column becomes a table with no geometry.
-
-A copy can keep only the features in a box or in a polygon. The layer keeps
-both in the file's CRS, in ``BBOX_PROPERTY`` and ``AREA_PROPERTY``.
-
-Each QGIS session writes into its own folder. ``sweep`` deletes the files
-that no layer in the project reads, and the plugin calls it when layers are
-removed. ``remove_stale`` deletes the folders that an earlier session left.
-The mosaics of ``mosaic`` write their VRT files into the same folders, so
-the same functions clean them.
-
-A saved project keeps the path of a file that a later session no longer
-has. ``restore_path`` gives QGIS an empty placeholder in its place, so the
-layer opens. ``restore`` then copies the features again from the URL, the
-box, and the area that the layer keeps, and ``reopen`` points the layer at
-the copy.
+``plan`` and ``prepare`` run off the main thread, and ``build`` on it. Each
+session writes into its own scratch folder, which ``sweep`` cleans. A saved
+project whose copy is gone opens a placeholder, and ``restore`` copies again.
 """
 
 from __future__ import annotations
@@ -186,14 +167,10 @@ def file_area(
     file_crs: QgsCoordinateReferenceSystem,
     context: QgsCoordinateTransformContext,
 ) -> Clip:
-    """Transform a polygon in EPSG:4326 into the file's CRS.
-
-    Returns:
-        The polygon as WKT in the file's CRS, with its envelope as the box.
+    """Transform the EPSG:4326 polygon ``area`` into a ``Clip`` in the file's CRS.
 
     Raises:
-        ValueError: ``area`` is not a Polygon or MultiPolygon WKT, or the
-            transform fails.
+        ValueError: ``area`` is not a polygon WKT, or the transform fails.
     """
     geometry = QgsGeometry.fromWkt(area)
     if geometry.isNull() or geometry.type() != Qgis.GeometryType.Polygon:
@@ -218,19 +195,9 @@ def plan(
 ) -> Planned:
     """Read a GeoParquet file's schema and estimate its features. Safe off the main thread.
 
-    Args:
-        url: The file's URL or local path.
-        context: The project's transform context, for the extent and the area.
-        limits: The part of the file to read. None reads the whole file.
-        extension_dir: Where DuckDB installs extensions if its default
-            folder is read-only.
-        cancelled: Polled while the queries run. When it returns True, the
-            running query stops and raises ``duckdb.InterruptException``.
-
-    Raises:
-        parquet_query.DuckDBMissingError: DuckDB is absent or too old.
-        GeoParquetError: The geo metadata names a column the file does not have.
-        ValueError: ``limits.area`` is not a polygon the file's CRS can hold.
+    ``limits`` None reads the whole file. ``cancelled`` returning True stops
+    the query with ``duckdb.InterruptException``. Raise DuckDBMissingError,
+    GeoParquetError, or ValueError for a bad file or area.
     """
     limits = limits or Limits()
     con = parquet_query.connection(extension_dir)
@@ -277,11 +244,7 @@ def prepare(
 ) -> Prepared:
     """Copy the planned features into a new GeoPackage. Safe off the main thread.
 
-    Args:
-        planned: The result of ``plan``.
-        extension_dir: As for ``plan``.
-        cancelled: Polled during the copy. When it returns True, the copy
-            stops and raises ``duckdb.InterruptException``.
+    ``cancelled`` works as for ``plan``.
     """
     con = parquet_query.connection(extension_dir)
     path = new_path(".gpkg")
@@ -298,15 +261,8 @@ def prepare(
 def build(prepared: Prepared, name: str) -> tuple[QgsVectorLayer, int]:
     """Open the GeoPackage as a layer. Call on the main thread.
 
-    A copy of a file with no geometry column holds an attribute table. It
-    opens as a layer with no geometry.
-
-    Returns:
-        The layer, and how many features the copy left out because their
-        geometry type did not fit the layer.
-
-    Raises:
-        OSError: QGIS cannot open the GeoPackage.
+    Return the layer and the count of features whose geometry type did not
+    fit. A file with no geometry opens as a table. Raise OSError on failure.
     """
     # The layer name selects the table. A GeoPackage that holds only an
     # attribute table has no geometry layer for OGR to pick first.
@@ -422,13 +378,8 @@ def restore(
 ) -> Prepared:
     """Copy a saved layer's features again. Safe off the main thread.
 
-    Args:
-        layer_url: The value of ``SOURCE_PROPERTY``.
-        bbox_text: The value of ``BBOX_PROPERTY``.
-        extension_dir: As for ``plan``.
-        cancelled: As for ``prepare``.
-        area_text: The value of ``AREA_PROPERTY``. It is already in the
-            file's CRS.
+    The arguments are the layer's ``SOURCE_PROPERTY``, ``BBOX_PROPERTY``, and
+    ``AREA_PROPERTY`` values. The area is already in the file's CRS.
     """
     con = parquet_query.connection(extension_dir)
     read = parquet_query.read_plan(con, layer_url, cancelled)
@@ -472,13 +423,9 @@ def _own_sessions() -> list[Path]:
 
 
 def new_path(suffix: str) -> Path:
-    """Return a new file path in this session's scratch folder.
+    """Return a new ``.gpkg`` or ``.vrt`` path in this session's scratch folder.
 
-    The sweep keeps the file until ``release_path`` or ``discard_path``
-    runs, because no layer reads it yet.
-
-    Args:
-        suffix: ``.gpkg`` for a GeoParquet copy, ``.vrt`` for a mosaic.
+    The sweep keeps the file until ``release_path`` or ``discard_path`` runs.
     """
     global _session  # noqa: PLW0603 - one scratch folder per QGIS session
     if suffix not in _SUFFIXES:

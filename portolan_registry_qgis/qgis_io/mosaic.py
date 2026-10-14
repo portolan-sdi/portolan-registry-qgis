@@ -1,17 +1,7 @@
-"""Add many COG files as one raster layer.
+"""Add the COG files of a collection's items as one GDAL VRT raster layer.
 
-A collection of COG items becomes a GDAL VRT over the ``/vsicurl/`` paths
-of the items that intersect the scope. QGIS reads only the tiles on screen.
-
-``item_hrefs_in`` and ``write_vrt`` send network requests, so they run off
-the main thread. ``start_vrt`` runs ``write_vrt`` in a task.
-``open_mosaic`` runs on the main thread. ``build_mosaic`` does all three
-steps in the calling thread.
-
-The VRT goes into the session folder of ``parquet_layer``, so the same
-sweep deletes it when the last layer that reads it is gone. The layer keeps
-the COG URLs. A saved project that lost its VRT reads a placeholder, and
-``rebuild`` writes the VRT again from the URLs.
+The VRT goes into the session folder of ``parquet_layer``. The layer keeps
+the COG URLs, so ``rebuild`` can write a lost VRT again.
 """
 
 from __future__ import annotations
@@ -72,15 +62,10 @@ def item_hrefs_in(
     executor: Executor | None = None,
     cancelled: Callable[[], bool] | None = None,
 ) -> list[str]:
-    """Return the COG hrefs of the collection's items that intersect ``scope``.
+    """Return the first COG href of each item of ``collection`` in ``scope``.
 
-    A ``collection-mirror`` asset (stac-geoparquet) answers with one DuckDB
-    query when DuckDB is present. Otherwise the items are read with
-    ``download.walk`` and filtered by bbox. When the mirror cannot be read,
-    the walk runs instead. Safe off the main thread.
-
-    Each item gives its first COG data asset. An item with no COG adds
-    nothing.
+    A ``collection-mirror`` asset answers through DuckDB when it can. Else the
+    function walks the items. Safe off the main thread.
     """
     mirror = mirrors.mirror_href(collection)
     if mirror is not None and parquet_query.duckdb_status()[0]:
@@ -133,28 +118,11 @@ def write_vrt(
     cancelled: Callable[[], bool] | None = None,
     clip: str | None = None,
 ) -> Path:
-    """Write a VRT over the COGs at ``hrefs`` into the session folder.
+    """Write a VRT over the COGs at ``hrefs`` into the session folder. Safe off the main thread.
 
-    GDAL opens each COG to read its size and georeferencing, so this sends
-    one or more requests per file. Safe off the main thread.
-
-    With ``clip``, the file is a warped VRT that shows only the pixels
-    inside the polygon, cropped to its extent. The warp keeps the CRS and
-    the pixel grid of the COGs, so no pixel is resampled. The mosaic of the
-    COGs goes inside the file as its source, so the layer reads one file.
-
-    GDAL leaves out a file whose CRS or band count differs from the first
-    file's, and a file it cannot open. The message log names each file left
-    out and GDAL's reason, such as an HTTP status.
-
-    Raises:
-        MosaicCancelledError: ``cancelled`` returned True.
-        LayerError: The list is empty, or GDAL cannot build the VRT.
-
-    Args:
-        hrefs: The COG URLs.
-        cancelled: Polled while GDAL opens the files.
-        clip: A Polygon or MultiPolygon in EPSG:4326 as WKT.
+    ``clip`` is EPSG:4326 WKT. With it, a warped VRT crops to the polygon and
+    keeps the pixel grid. The log names each COG that GDAL leaves out.
+    Raise MosaicCancelledError on cancel, and LayerError when GDAL fails.
     """
     if not hrefs:
         raise LayerError(_("No file intersects the area"))
@@ -383,10 +351,8 @@ def needs_rebuild(layer: object) -> bool:
 def reopen(layer: QgsRasterLayer, path: Path) -> None:
     """Point a mosaic layer at a VRT that ``write_vrt`` wrote. Call on the main thread.
 
-    The layer keeps its name, its style, and its custom properties.
-
-    Raises:
-        LayerError: QGIS cannot open the VRT.
+    The layer keeps its name, style, and properties. Raise LayerError when
+    QGIS cannot open the VRT.
     """
     layer.setDataSource(str(path), layer.name(), "gdal")
     if not layer.isValid():
@@ -397,14 +363,10 @@ def reopen(layer: QgsRasterLayer, path: Path) -> None:
 
 
 def rebuild(layer: QgsRasterLayer, cancelled: Callable[[], bool] | None = None) -> None:
-    """Write the VRT of a saved mosaic again from ``SOURCES_PROPERTY``.
+    """Write the VRT of a saved mosaic again from ``SOURCES_PROPERTY``, and reopen it.
 
-    The function sends network requests and opens the layer, so it blocks
-    the main thread. To keep the window responsive, call ``write_vrt`` with
-    ``sources(layer)`` in a task, then ``reopen`` on the main thread.
-
-    Raises:
-        LayerError: The layer keeps no URLs, or GDAL or QGIS cannot open them.
+    This blocks on the network. In the window, run ``write_vrt`` in a task
+    and then ``reopen``. Raise LayerError when the layer keeps no URLs.
     """
     hrefs = sources(layer)
     if not hrefs:
@@ -418,19 +380,10 @@ def start_vrt(
     clip: str | None,
     on_done: Callable[[Path | None, BaseException | None], None],
 ) -> QgsTask:
-    """Run ``write_vrt`` in a background task. Call on the main thread.
+    """Run ``write_vrt`` in a queued background task, and return the task.
 
-    Cancel on the task stops the write.
-
-    Args:
-        description: Shown in the QGIS task manager.
-        hrefs: The COG URLs, as for ``write_vrt``.
-        clip: The clip polygon, as for ``write_vrt``.
-        on_done: Called on the main thread with the path of the VRT and
-            None, or with None and the error.
-
-    Returns:
-        The task, already queued.
+    ``on_done`` gets the VRT path or the error on the main thread. Cancel on
+    the task stops the write.
     """
 
     def write(task: QgsTask) -> Path:

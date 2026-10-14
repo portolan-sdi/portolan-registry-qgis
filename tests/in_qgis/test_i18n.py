@@ -1,10 +1,7 @@
 """The window shows each message through the translation, never as raw English.
 
-scripts/i18n.py finds a string literal that skips _(). These tests find what a
-static check cannot see: a message the code marks with N_() but shows without
-_(), and a message translated at import, before the plugin sets the language.
-A pseudo-translation wraps every message in brackets, so English text from the
-catalog that shows without brackets skipped the translation.
+A pseudo-translation wraps every message in brackets. Text without brackets
+skipped the translation.
 """
 
 from __future__ import annotations

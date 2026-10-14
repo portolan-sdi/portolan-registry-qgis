@@ -1,13 +1,7 @@
 """Download a planned set of files and verify their checksums.
 
-``QgsFileDownloader`` streams each file to disk on the main thread's event
-loop, so a 1 GB GeoParquet file never sits in memory and QGIS stays
-responsive. The job runs ``CONCURRENT_FILES`` files at the same time. A file
-that declares ``file:checksum`` is hashed in a background task, and that slot
-waits for the hash while the other slots keep downloading. A file already on
-disk with a matching checksum is skipped, so a second run resumes an
-interrupted download. A file whose local path an earlier file already claims
-fails at once, so two downloads never write one file.
+The job streams ``CONCURRENT_FILES`` files to disk at a time. A file on disk
+with a matching checksum is skipped, so a second run resumes the download.
 """
 
 from __future__ import annotations

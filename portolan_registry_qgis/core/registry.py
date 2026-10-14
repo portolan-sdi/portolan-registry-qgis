@@ -1,9 +1,6 @@
 """Read the Portolan registry export into catalog entries.
 
-The registry publishes ``exports/catalogs.json`` as a static STAC catalog whose
-``child`` links are the registered catalogs. Ported from GeoLibre's
-``portolanIndexFromDocument`` (MIT, see NOTICE), extended to keep the
-``portolan_registry:*`` fields that GeoLibre drops.
+Ported from GeoLibre's ``portolanIndexFromDocument`` (MIT, see NOTICE).
 """
 
 from __future__ import annotations
@@ -93,10 +90,6 @@ def _entry(link: dict[str, Any], href: str, title: str | None) -> CatalogEntry:
 
 def parse_registry(document: object, base: str = REGISTRY_URL) -> list[CatalogEntry]:
     """Return the registry's catalogs, sorted by title.
-
-    Args:
-        document: The parsed ``catalogs.json``.
-        base: The URL it was fetched from, for resolving relative links.
 
     Raises:
         RegistryError: The document is not a STAC catalog with a links list.

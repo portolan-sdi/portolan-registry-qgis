@@ -1,9 +1,6 @@
-"""The bar that shows the progress of the window's long tasks, with Cancel.
+"""The progress bar and Cancel button that the window's long tasks share.
 
-A mosaic search and build, a download listing, and a download share one
-progress bar and one Cancel button. Only one of them runs at a time. The
-controller keeps the busy state, and it emits ``busy_changed`` when the state
-changes, so the window can enable its buttons again.
+Only one task runs at a time. ``busy_changed`` tells the window to sync its buttons.
 """
 
 from __future__ import annotations
@@ -109,17 +106,8 @@ class TaskController(QFrame):
     ) -> None:
         """Walk a catalog in a background task, with a pool of reader threads.
 
-        The window stays busy with ``busy`` until ``on_done`` calls
-        ``finish``. When ``on_done`` raises, the walk ends the busy state
-        first, so later clicks still work.
-
-        Args:
-            busy: What keeps the window busy.
-            description: Shown in the QGIS task manager.
-            message: Shown in the progress bar.
-            walk: Called off the main thread with the task and the pool.
-            on_done: Called on the main thread with the result, the error,
-                and whether the user cancelled the walk.
+        The window stays busy with ``busy`` until ``on_done`` calls ``finish``,
+        or until ``on_done`` raises.
         """
         self.begin(busy)
         self.show_progress(0, 0, message)

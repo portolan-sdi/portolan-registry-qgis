@@ -63,11 +63,7 @@ def pmtiles_sources(
 ) -> dict[str, str]:
     """Map each PMTiles source id in a MapLibre style to an absolute archive URL.
 
-    A Portolan style names its archive in ``sources.<id>.url``, relative to the
-    style file. Catalogs write the path bare (``../x.pmtiles``) or with the
-    ``pmtiles://`` scheme, so the function accepts both. A vector source with
-    neither ``url`` nor ``tiles`` reads ``fallback``, the collection's only
-    archive.
+    A source with neither ``url`` nor ``tiles`` reads ``fallback``.
     """
     sources = style.get("sources")
     if not isinstance(sources, dict):
@@ -138,19 +134,9 @@ def read_sprite(
     warnings: list[str],
     cache: dict[str, Sprite | None],
 ) -> Sprite | None:
-    """Fetch the sprite that a style names, once per sprite URL.
+    """Return the sprite image and index that a style names, or None.
 
-    Args:
-        style: The style.
-        style_url: The URL of the style file.
-        fetch_bytes: Fetches the sprite index and image.
-        warnings: Gets a warning when the sprite cannot be read.
-        cache: The sprites read so far, by URL. A sprite that cannot be
-            read is None.
-
-    Returns:
-        The sprite image and its index, or None when the style names no
-        sprite or the sprite cannot be read.
+    ``cache`` holds the sprites read so far by URL.
     """
     root = sprite_root(style, style_url)
     if root is None:

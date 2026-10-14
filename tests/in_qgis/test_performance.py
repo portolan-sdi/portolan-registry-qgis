@@ -1,13 +1,7 @@
-"""Guard the speed of GeoParquet loads against a return of per-feature Python work.
+"""Guard the speed of GeoParquet loads against per-feature Python work.
 
-The test times a load of 200,000 polygons against a reference: DuckDB reading
-the same rows into Python. Both run on the same machine, so the ratio holds
-on a slow CI runner and on a fast laptop. The memory-layer loader that the
-GeoPackage copy replaced took about 10 times the reference. The copy takes
-about 1.1 times.
-
-``build`` runs on the main thread, where QGIS stops responding while it
-works, so it also has an absolute limit.
+The test compares a load of 200,000 polygons with DuckDB reading the same
+rows, so the ratio holds on any machine. ``build`` also has an absolute limit.
 """
 
 from __future__ import annotations

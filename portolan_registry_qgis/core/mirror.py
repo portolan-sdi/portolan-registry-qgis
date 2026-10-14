@@ -1,11 +1,4 @@
-"""Find the COG files of a collection from its stac-geoparquet mirror.
-
-A collection can hold every item in one stac-geoparquet file, the asset
-with the ``collection-mirror`` role. One DuckDB query over that file finds
-the items in a scope, so the plugin reads no item document. The QGIS layer
-in ``qgis_io.mosaic`` builds a mosaic of the COG files that this module
-finds.
-"""
+"""Find the COG files of a collection from its stac-geoparquet mirror."""
 
 from __future__ import annotations
 
@@ -96,9 +89,6 @@ def _covering(plan: ReadPlan) -> Covering | None:
 def _bbox_columns(plan: ReadPlan) -> tuple[str, str, str, str]:
     """Return the SQL that reads xmin, ymin, xmax, and ymax from the bbox column.
 
-    stac-geoparquet 1.0 stores a struct with named fields, as GeoParquet 1.1
-    defines. Earlier files store a list of four or six numbers.
-
     Raises:
         ValueError: The file has no ``bbox`` or ``assets`` column.
     """
@@ -118,21 +108,10 @@ def _bbox_columns(plan: ReadPlan) -> tuple[str, str, str, str]:
 
 
 def mirror_query(plan: ReadPlan, scope: Scope) -> tuple[str, list[Any]]:
-    """Build the DuckDB query that reads the items of a stac-geoparquet file.
+    """Build the DuckDB query for the items of a stac-geoparquet file in ``scope``.
 
-    The query keeps the rows whose bbox can intersect the scope's envelope.
-    A row whose bbox crosses the antimeridian stays, and the caller tests
-    it. An ``Area`` scope also tests the item geometry against the polygon.
-
-    Args:
-        plan: The file's read plan, from ``parquet_query.read_plan``.
-        scope: The part of the collection to keep.
-
-    Returns:
-        The SQL, with ``?`` for the file URL first, and the other parameters.
-
-    Raises:
-        ValueError: The file has no ``bbox`` or ``assets`` column.
+    The file URL is the first ``?``. Rows that cross the antimeridian stay for
+    the caller to test.
     """
     xmin, ymin, xmax, ymax = _bbox_columns(plan)
     names = {column.name for column in plan.columns}
@@ -166,24 +145,10 @@ def mirror_hrefs(
     cancelled: Callable[[], bool] | None = None,
     items: dict[str, str] | None = None,
 ) -> list[str]:
-    """Return the COG hrefs of the items of a stac-geoparquet file that intersect ``scope``.
+    """Return the COG hrefs of the items of a stac-geoparquet file in ``scope``.
 
-    A relative asset href is relative to its item document. The function
-    finds that document from the item's ``self`` link, else from ``items``
-    by the item ID, else it uses the file. A stac-geoparquet file often
-    leaves out the ``self`` link, as the GHSL mirror does.
-
-    Args:
-        con: The DuckDB connection, from ``parquet_query.connection``.
-        url: The stac-geoparquet file.
-        scope: The part of the collection to keep.
-        cancelled: Polled while the queries run.
-        items: The URL of each item document by item ID, from
-            ``item_documents``.
-
-    Raises:
-        duckdb.Error: DuckDB cannot read the file.
-        ValueError: The file is not stac-geoparquet.
+    A relative href resolves against the item's ``self`` link, else its URL
+    in ``items``, else the file.
     """
     plan = parquet_query.read_plan(con, url, cancelled)
     sql, params = mirror_query(plan, scope)

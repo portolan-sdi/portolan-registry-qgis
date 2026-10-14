@@ -1,11 +1,6 @@
 """The right pane: the chosen node in collapsible sections.
 
-The title row holds the node's name, "Zoom to", and the browser link. The
-"About" section shows the picture and the description. "Add to map" holds
-the area of interest and the primary buttons. "All files" lists every file
-QGIS can open, and "Details" shows the facts. The window decides when the
-buttons are enabled. The panel emits ``state_changed`` when the selection,
-the area, or the file list changes, so the window can decide again.
+The window enables the buttons. ``state_changed`` asks it to decide again.
 """
 
 from __future__ import annotations
@@ -83,11 +78,8 @@ def section(
 ) -> tuple[QgsCollapsibleGroupBox, QVBoxLayout]:
     """Return a collapsible section and the layout for its content.
 
-    The section starts closed when ``collapsed`` is True and the user has not
-    opened it before. The section keeps its open state in the QGIS settings
-    under ``name``. The content goes in one inner widget. A collapse hides
-    the direct children of the section, so the widgets that the panel shows
-    and hides must not be direct children.
+    The section keeps its open state in the QGIS settings under ``name``.
+    A collapse hides direct children, so the content goes in one inner widget.
     """
     box = QgsCollapsibleGroupBox(title)
     box.setCollapsed(collapsed)

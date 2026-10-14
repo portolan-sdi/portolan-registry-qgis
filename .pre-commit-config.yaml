@@ -95,6 +95,15 @@ repos:
         files: ^(portolan_registry_qgis/|docs/|docs-i18n/|mkdocs\.yml$|scripts/i18n\.py$)
         stages: [pre-commit]
 
+      - id: docstrings
+        name: docstrings
+        description: Docstrings of 5 lines or fewer, with no history
+        entry: uv run python scripts/docstring_check.py
+        language: system
+        pass_filenames: false
+        files: \.py$
+        stages: [pre-commit]
+
       - id: mypy
         name: mypy
         description: Static type check (same gate as CI)

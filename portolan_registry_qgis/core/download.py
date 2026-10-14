@@ -75,10 +75,8 @@ def _safe_segments(path: str) -> list[str]:
 def local_path(url: str, root: str) -> str:
     """Return the POSIX path, relative to the target folder, for ``url``.
 
-    A URL under the directory of ``root`` keeps its relative path. Anything
-    else goes under ``_external/<host>/``. No result can climb out of the
-    target folder, because ``..`` segments are dropped and each segment is
-    reduced to a safe character set.
+    A URL under ``root`` keeps its relative path. Others go under
+    ``_external/<host>/``. No result can climb out of the target folder.
     """
     target, base = urlsplit(url), urlsplit(root)
     base_dir = posixpath.dirname(base.path).rstrip("/") + "/"
@@ -133,12 +131,8 @@ def files_of(document: Document, root: str) -> list[PlannedFile]:
 class Walk:
     """How a walk reads the documents below its start.
 
-    Without ``executor``, the walk reads one document at a time in the
-    calling thread. With ``executor``, the walk reads ahead. When a document
-    arrives, the walk queues its children at once, so one slow document does
-    not stop the reads below its siblings. The caller owns the executor. QGIS
-    network requests need QThreads, so a QGIS caller passes an executor that
-    runs on QThreads.
+    Without ``executor``, the walk reads one document at a time. With it, the
+    walk reads ahead. QGIS callers pass an executor that runs on QThreads.
     """
 
     # Stops the walk after this many reads.
@@ -155,22 +149,10 @@ def walk(
     failures: list[tuple[str, str]],
     how: Walk | None = None,
 ) -> Iterator[Document]:
-    """Read ``start`` and every catalog, collection, and item below it.
+    """Yield ``start`` and every catalog, collection, and item below it, breadth first.
 
-    Args:
-        fetch_json: Fetches a URL and returns the parsed JSON. It raises on
-            failure. With an executor, the walk calls it from the
-            executor's threads.
-        start: The document to begin with.
-        failures: Receives ``(url, reason)`` for each document that could
-            not be read. The walk continues past it.
-        how: The read limit, the cancel test, and the executor. None reads
-            up to 5000 documents in the calling thread.
-
-    Yields:
-        Each document read, breadth first, in link order. A walk that
-        reaches its read limit with an executor can read a different last
-        few documents from one run to the next.
+    ``failures`` gets ``(url, reason)`` for each document that cannot be read.
+    ``how`` None reads up to 5000 documents in the calling thread.
     """
     how = how or Walk()
     cancelled = how.cancelled
@@ -301,14 +283,9 @@ def _walk_ahead(
 
 
 def split_collisions(files: list[PlannedFile]) -> tuple[list[PlannedFile], list[PlannedFile]]:
-    """Separate the files that would save over an earlier file.
+    """Return the files to download, and the later files that share a local path.
 
-    Two URLs can map to one local path, because ``local_path`` replaces
-    unsafe characters. Windows and macOS also treat ``Data.tif`` and
-    ``data.tif`` as one file, so the comparison ignores case.
-
-    Returns:
-        The files to download, and the later files that share a path.
+    The comparison ignores case, as on Windows and macOS.
     """
     claimed: set[str] = set()
     keep: list[PlannedFile] = []
@@ -332,15 +309,8 @@ def plan(
 ) -> Plan:
     """Plan the download of ``start`` and everything below it.
 
-    Args:
-        fetch_json: Fetches a URL and returns the parsed JSON.
-        start: The catalog, collection, or item to download.
-        root: The URL that local paths are relative to. Defaults to
-            ``start``, so the chosen document lands at the top of the folder.
-        how: How the walk reads. See ``walk``.
-        scope: Keep only the items whose bbox intersects this scope. The
-            plan keeps every catalog and collection document, and every
-            item with no bbox. None keeps every item.
+    ``root`` defaults to ``start``. ``scope`` drops the items whose bbox misses
+    it. Catalogs, collections, and items with no bbox stay.
     """
     how = how or Walk()
     base = root or start

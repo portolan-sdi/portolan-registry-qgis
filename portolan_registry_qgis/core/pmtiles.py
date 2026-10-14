@@ -1,11 +1,4 @@
-"""Read PMTiles v3 archives through HTTP range requests.
-
-The reader follows the PMTiles v3 specification
-(https://github.com/protomaps/PMTiles/blob/main/spec/v3/spec.md). It takes a
-``fetch_range(offset, length)`` function, so the caller decides how bytes
-travel. Inside QGIS that function uses QGIS's network stack, which applies the
-user's proxy and authentication settings.
-"""
+"""Read PMTiles v3 archives through a caller-supplied ``fetch_range``."""
 
 from __future__ import annotations
 

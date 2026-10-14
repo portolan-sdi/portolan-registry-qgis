@@ -43,6 +43,7 @@ Pre-commit runs these checks, and CI runs them again on each pull request. A cha
 | xenon on the package | Each block at rank B or better. Each module and the average at rank A. |
 | xenon on the tests and scripts | Each block at rank C or better. Each module at rank B or better, and the average at rank A. |
 | jscpd | No copy of 50 tokens and 5 lines or more. |
+| Docstrings | 5 lines or fewer. No change history in a docstring or a comment. |
 | import-linter | The core imports no QGIS, Qt, or GDAL code, and none of the QGIS layers. `qgis_io` imports nothing from `gui`. |
 | Coverage, uv suite | 99% of the core. |
 | Coverage, QGIS suite | 87% of `plugin.py`, `gui`, and `qgis_io`. |
@@ -59,6 +60,7 @@ uv run xenon --max-absolute=B --max-modules=A \
 uv run xenon --max-absolute=C --max-modules=B \
   --max-average=A tests scripts
 uvx prek run jscpd --all-files
+uv run python scripts/docstring_check.py
 uv run lint-imports
 uv run pytest -n 4 --cov=portolan_registry_qgis
 ```

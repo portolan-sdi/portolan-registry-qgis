@@ -1,22 +1,6 @@
-"""The Portolan Registry window.
+"""The Portolan Registry window: the publisher list and tree, and the details pane.
 
-A header with the Portolan mark runs across the top. Below it, a splitter
-holds two panes. The left pane has two pages. The first lists the registry's
-publishers, each with a map of its extent and its logo. A click opens the
-second page, which shows the publisher's tree. The right pane shows the
-chosen node in collapsible sections: its picture and description, the ways to
-add it to the map, its files, and its details. The action bar runs across the
-bottom, with the progress of a long task and Cancel.
-
-The "Add to map" section offers at most two primary buttons, "View on map"
-and "Load full data", and the scope picker. The scope limits what a
-GeoParquet add, a mosaic, and a download read. A collection whose children
-are all items shows one "N files" row in the tree, and its section offers
-"Add as one layer", which adds the COG files of those items as one mosaic.
-
-The window keeps the open publisher and the open document. Each part that
-reads a document in the background compares the open document with its own,
-by identity, before it shows the result.
+Background results compare the open document by identity before they show.
 """
 
 from __future__ import annotations

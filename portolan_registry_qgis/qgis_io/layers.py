@@ -1,11 +1,7 @@
 """Turn STAC assets and PMTiles links into QGIS layers.
 
-PMTiles become native vector tile layers through the loopback tile server.
-Each layer carries every collection MapLibre style that draws its archive, as
-a named QGIS style. GeoJSON, FlatGeobuf, and CSV open through OGR,
-COGs through GDAL, and COPC through the point cloud provider, all over HTTP
-range requests without a download. GeoParquet goes through DuckDB instead, in
-``parquet_layer``.
+PMTiles go through the loopback tile server. Other formats open over HTTP
+range requests through OGR, GDAL, or the point cloud provider.
 """
 
 from __future__ import annotations
@@ -116,10 +112,8 @@ def blocked_message(url: str) -> str | None:
 def remote_reads(urls: list[str]) -> Iterator[None]:
     """Open the files at ``urls`` with retries, and without a remembered failure.
 
-    GDAL keeps the result of a failed request for the life of the process.
-    One busy moment on the server then fails every later open of the file
-    until QGIS restarts. The function drops that result for ``urls``. The retry
-    settings apply to the calling thread only.
+    GDAL caches a failed request for the life of the process, so the function
+    clears that cache for ``urls``. The retry settings apply to this thread only.
     """
     clear = getattr(gdal, "VSICurlPartialClearCache", None)
     if clear is not None:
@@ -203,14 +197,8 @@ def convert_style(
 ) -> tuple[Any, Any, list[str]]:
     """Convert a MapLibre style to a QGIS vector tile renderer and labeling.
 
-    Args:
-        style: The style, already limited to one archive's layers.
-        sprite: The sprite image (a QImage) and its JSON index, when the style
-            names a sprite.
-
-    Returns:
-        The renderer, the labeling (None when the style has no labels), and
-        the converter's warnings.
+    ``style`` holds one archive's layers. ``sprite`` is a QImage and its index.
+    Return the renderer, the labeling or None, and the converter's warnings.
     """
     converter = QgsMapBoxGlStyleConverter()
     context = QgsMapBoxGlStyleConversionContext()
@@ -248,11 +236,8 @@ _WEB_MERCATOR_LAT = 85.051129
 def apply_bounds(layer: QgsVectorTileLayer, archive: Archive) -> None:
     """Give ``layer`` the extent of ``archive``, so "Zoom to Layer" frames the data.
 
-    The XYZ vector tile provider cannot read bounds from a URL template, so
-    it reports the whole Web Mercator world. The PMTiles header carries the
-    bounds in EPSG:4326. Call this again after ``setDataSource``, which
-    resets the extent to the provider's. An archive without bounds keeps the
-    world extent.
+    Call this again after ``setDataSource``, which resets the extent to the
+    whole world. An archive without bounds keeps the world extent.
     """
     if archive.bounds is None:
         return
@@ -299,12 +284,7 @@ def prepare_pmtiles(
     urls: list[str],
     fetch_bytes: Callable[[str], bytes],
 ) -> PreparedTiles:
-    """Read PMTiles archives and every collection style that draws them.
-
-    Args:
-        document: The collection, for its styles, PMTiles links, and title.
-        urls: The archives to open.
-        fetch_bytes: Fetches the styles and their sprites.
+    """Read the PMTiles archives at ``urls`` and every style in ``document`` that draws them.
 
     Raises:
         PmtilesError: An archive cannot be read.
@@ -387,14 +367,10 @@ def add_styles(
     styles: list[TileStyle],
     load_image: Callable[[bytes], Any],
 ) -> list[str]:
-    """Add each catalog style to the layer as a named QGIS style.
+    """Add each catalog style to the layer as a named QGIS style, and return the warnings.
 
-    The first style becomes current. The layer's own style stays available
-    under ``DEFAULT_STYLE_NAME``. The user switches styles from the layer's
-    **Styles** menu.
-
-    Returns:
-        The converter's warnings.
+    The first style becomes current. The layer's own style stays under
+    ``DEFAULT_STYLE_NAME``.
     """
     warnings: list[str] = []
     original = QgsMapLayerStyle()
@@ -438,17 +414,10 @@ def csv_header(url: str) -> bytes:
 
 
 def csv_source(url: str, columns: tuple[str, str] | None) -> str:
-    """Return the OGR source that reads a CSV over HTTP.
+    """Return the OGR source that reads the CSV at ``url`` over HTTP.
 
-    The QGIS delimited text provider reads local files only. Thus the CSV
-    goes through the GDAL CSV driver over ``/vsicurl/``. The ``CSV:`` prefix
-    selects the driver when the URL does not end in ``.csv``. The driver
-    detects the separator and the column types.
-
-    Args:
-        url: The CSV.
-        columns: The longitude and latitude columns, or None for a table
-            with no geometry.
+    ``columns`` names the longitude and latitude columns, or is None for a
+    table. The ``CSV:`` prefix selects the driver for any URL ending.
     """
     options = ["AUTODETECT_TYPE=YES"]
     if columns is not None:
@@ -458,16 +427,10 @@ def csv_source(url: str, columns: tuple[str, str] | None) -> str:
 
 
 def csv_layer(url: str, title: str, header: Callable[[str], bytes] = csv_header) -> QgsVectorLayer:
-    """Open a CSV over HTTP, as points when its header names coordinates.
+    """Open a CSV over HTTP, as EPSG:4326 points when its header names coordinates.
 
-    A header with longitude and latitude columns gives a point layer in
-    EPSG:4326. Any other CSV opens as a table with no geometry.
-
-    Args:
-        url: The CSV.
-        title: The layer name.
-        header: Returns the first bytes of the file. Call off the main
-            thread when the server is slow, and pass the bytes in.
+    ``header`` returns the first bytes of the file. Any other CSV opens as a
+    table with no geometry.
     """
     columns = coordinate_columns(header(url))
     layer = QgsVectorLayer(csv_source(url, columns), title, "ogr")

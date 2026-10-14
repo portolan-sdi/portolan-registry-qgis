@@ -1,9 +1,6 @@
 """The second page of the left pane: the tree of one publisher's catalog.
 
-A header shows the publisher, and the tree below it shows the catalog's
-children. The tree reads the child documents of each page it shows, for
-their icons. A collection whose children are all items shows one "N files"
-row. A change of the current row emits ``node_chosen``.
+A collection whose children are all items shows one "N files" row.
 """
 
 from __future__ import annotations

@@ -1,11 +1,6 @@
 """Copy GeoParquet over HTTP into a GeoPackage with DuckDB.
 
-DuckDB writes the GeoPackage through the GDAL that its spatial extension
-bundles, so no Python code touches a feature. QGIS then opens the file
-through OGR. DuckDB is an external dependency. QGIS does not ship it, so every function
-imports it lazily and the plugin loads without it. ``duckdb_status`` reports
-whether a usable version is present, and the GUI tells the user how to install
-it when it is not.
+QGIS does not ship DuckDB, so every function imports it inside the function.
 """
 
 from __future__ import annotations
@@ -83,10 +78,6 @@ def install_command(*, upgrade: bool) -> str:
 
 def connection(extension_dir: str | None = None) -> Any:
     """Return the shared DuckDB connection with httpfs and spatial loaded.
-
-    Args:
-        extension_dir: Where DuckDB installs extensions when its default
-            directory is not writable, as in some sandboxes.
 
     Raises:
         DuckDBMissingError: DuckDB is absent or too old.
@@ -174,21 +165,8 @@ def estimate(
 ) -> int | None:
     """Return about how many features a copy of ``url`` in ``clip`` holds.
 
-    The count is exact without a box. With a box it counts the rows whose
-    bbox overlaps it, an upper bound. With an area it still counts by the
-    area's envelope, so it stays an upper bound. A table has no geometry,
-    so its count is exact.
-
-    Args:
-        con: The DuckDB connection.
-        url: The Parquet file.
-        plan: The file's read plan.
-        clip: The clip of the copy, in the file's CRS.
-        cancelled: Polled while the query runs.
-
-    Returns:
-        The estimate, or None when the file has no covering column to count
-        a box with cheaply.
+    With a clip the count is an upper bound. Returns None when the file has no
+    covering column to count a box with.
     """
     query = build_estimate(plan, clip)
     if query is None:
@@ -253,21 +231,8 @@ def write_gpkg(
 ) -> Written:
     """Copy the features of ``url`` into a new GeoPackage at ``target.path``.
 
-    A layer holds one geometry type. When the file declares none, the first
-    geometry picks it. A feature of another type keeps its attributes, gets
-    a NULL geometry, and counts as refused.
-
-    Args:
-        con: The DuckDB connection.
-        url: The GeoParquet file.
-        plan: The file's read plan.
-        target: The GeoPackage to write, its clip, and its CRS.
-        cancelled: Polled while the queries run. When it returns True, the
-            running query stops and raises ``duckdb.InterruptException``.
-
-    A table, a file with no geometry column, becomes an attribute table with
-    every row. The clip and the CRS do not apply to it, and its
-    ``Written.geometry_type`` is ``NO_GEOMETRY``.
+    A feature of another geometry type gets a NULL geometry and counts as
+    refused. A table becomes an attribute table.
     """
     with cursor(con, cancelled) as cur:
         layer_type = plan.geometry_type

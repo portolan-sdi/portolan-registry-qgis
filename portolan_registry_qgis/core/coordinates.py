@@ -16,18 +16,10 @@ _CSV_SEPARATORS = (",", ";", "\t", "|")
 
 
 def coordinate_columns(header: bytes) -> tuple[str, str] | None:
-    """Find the longitude and latitude columns in the first line of a CSV.
+    """Return the longitude and latitude column names of a CSV ``header``, or None.
 
-    Columns named x and y count only when every complete row in ``header``
-    holds a longitude and a latitude, because x and y are often projected.
-
-    Args:
-        header: The start of the file. The first line names the columns.
-            The complete rows after it test x and y.
-
-    Returns:
-        The exact names of the longitude and latitude columns, or None when
-        the header does not name both.
+    Columns x and y count only when every complete row holds degrees,
+    because x and y are often projected.
     """
     text = header.decode("utf-8-sig", errors="replace")
     lines = text.splitlines()

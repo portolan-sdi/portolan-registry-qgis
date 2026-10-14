@@ -1,15 +1,7 @@
 """Plan a DuckDB copy of a remote GeoParquet file into a GeoPackage.
 
-The plan picks the geometry column, the CRS, the layer geometry type, and the
-attribute types. It uses the GeoParquet ``geo`` metadata when the file has
-it. The builders below write the count query and the ``COPY`` statement. A
-bbox filter goes through the GeoParquet 1.1 ``covering`` column when the file
-declares one, so DuckDB skips row groups through Parquet statistics instead
-of scanning the whole file. A polygon filter adds an exact test after that
-box filter.
-
-A Parquet file with no geometry column is a table. Its plan copies the rows
-into a GeoPackage attribute table.
+A bbox filter uses the GeoParquet 1.1 ``covering`` column when the file has
+one. A Parquet file with no geometry column is a table.
 """
 
 from __future__ import annotations
@@ -105,14 +97,8 @@ class GeoParquetError(ValueError):
 class Clip:
     """The part of a file that a copy keeps, in the file's CRS.
 
-    A clip with no ``bbox`` keeps the whole file. A clip with only a
-    ``bbox`` keeps the features that intersect the box. A clip with an
-    ``area`` keeps the features that intersect that Polygon or MultiPolygon
-    WKT. Its ``bbox`` must then be the envelope of the area, so the covering
-    column skips row groups first. A table ignores the clip.
-
-    Raises:
-        ValueError: ``area`` is given without ``bbox``.
+    No ``bbox`` keeps the whole file. An ``area`` needs ``bbox`` as its envelope,
+    else ``ValueError``. A table ignores the clip.
     """
 
     bbox: Bbox | None = None
@@ -136,11 +122,8 @@ class Clip:
     def from_text(cls, bbox: str, area: str = "") -> Clip:
         """Read a clip from the text of ``to_text``.
 
-        A box without four numbers gives no box.
-
         Raises:
-            ValueError: A part of the box is not a number, or the area has
-                no box.
+            ValueError: A part of the box is not a number, or the area has no box.
         """
         parts = [float(part) for part in bbox.split(",")] if bbox else []
         box = (parts[0], parts[1], parts[2], parts[3]) if len(parts) == 4 else None
@@ -320,17 +303,9 @@ def _table_plan(schema: list[tuple[str, str]]) -> ReadPlan:
 def plan_read(schema: list[tuple[str, str]], geo_json: str | bytes | None) -> ReadPlan:
     """Plan a read from the file's DuckDB schema and its ``geo`` metadata.
 
-    A file with no geometry column and no ``geo`` metadata is a table. Its
-    plan copies every column as an attribute.
-
-    Args:
-        schema: ``(name, type)`` pairs from ``DESCRIBE``.
-        geo_json: The value of the ``geo`` key in the Parquet metadata, or
-            None when the file has none.
-
     Raises:
-        GeoParquetError: The file has no columns, or its ``geo`` metadata
-            names a geometry column that the schema does not hold.
+        GeoParquetError: The file has no columns, or ``geo`` names a column
+            that the schema does not hold.
     """
     if not schema:
         raise GeoParquetError(_("The file has no columns"))
@@ -390,13 +365,7 @@ def shape(plan: ReadPlan) -> str:
 def _where(plan: ReadPlan, clip: Clip, *, exact: bool = True) -> tuple[str, list[object]]:
     """Return the WHERE clause and its parameters.
 
-    Args:
-        plan: The read plan.
-        clip: Keep only the features in this clip. The area WKT goes to
-            DuckDB as a parameter.
-        exact: Test each geometry against the area, else against the box.
-            Without it, only the covering column filters, which reads far
-            less of the file.
+    Without ``exact``, only the covering column filters.
     """
     where = [f"{quote(_geometry(plan))} IS NOT NULL"]
     params: list[object] = []
@@ -419,23 +388,10 @@ def _where(plan: ReadPlan, clip: Clip, *, exact: bool = True) -> tuple[str, list
 
 
 def build_estimate(plan: ReadPlan, clip: Clip = WHOLE_FILE) -> tuple[str, list[object]] | None:
-    """Build a query that estimates the number of features, with the URL first.
+    """Build a query that estimates the feature count, with the URL first.
 
-    Without a box, DuckDB answers from the Parquet footer. With a box, the
-    query reads only the covering column, so the estimate counts the rows
-    whose bbox overlaps the box. That is an upper bound of the features the
-    copy keeps. With an area, the query still counts by its envelope only,
-    so the estimate stays an upper bound. A table has no geometry, so no
-    clip filters it, and the count is exact.
-
-    Args:
-        plan: The read plan.
-        clip: The clip of the copy.
-
-    Returns:
-        The SQL and its parameters after the URL, or None when the clip has
-        a box and the file has no covering column. The estimate would then
-        cost as much as the copy itself.
+    With a clip the count is an upper bound. Returns None when the clip has a
+    box and the file has no covering column.
     """
     if clip.bbox is None or not plan.has_geometry:
         return "SELECT count(*) FROM read_parquet(?)", []
@@ -446,10 +402,7 @@ def build_estimate(plan: ReadPlan, clip: Clip = WHOLE_FILE) -> tuple[str, list[o
 
 
 def build_first_type(plan: ReadPlan, clip: Clip = WHOLE_FILE) -> tuple[str, list[object]]:
-    """Build a query for the type of the first geometry, with the URL first.
-
-    The query returns the DuckDB type name, such as ``POLYGON``, and whether
-    the geometry has Z. ``clip`` filters as for ``build_copy``.
+    """Build a query for the type and Z of the first geometry, with the URL first.
 
     Raises:
         GeoParquetError: The plan is for a table.
@@ -557,23 +510,8 @@ def build_copy(
 ) -> tuple[str, list[object]]:
     """Build the ``COPY`` of the features into a GeoPackage, with the URL first.
 
-    A table copies every row and every column. DuckDB's GDAL writer always
-    makes a layer with a geometry column, so for a table the column stays
-    empty and has no spatial index. ``parquet_query.write_gpkg`` then turns
-    the layer into an attribute table.
-
-    Args:
-        plan: The read plan.
-        path: The GeoPackage to write.
-        layer_type: The layer geometry type, from the plan or from
-            ``type_from_first``. A feature of another type keeps its
-            attributes and gets a NULL geometry. A table ignores it.
-        clip: Keep only the features in this clip. A table ignores it.
-        srs: The CRS to record in the GeoPackage, in any form GDAL reads.
-            A table ignores it.
-
-    Returns:
-        The SQL and its parameters after the URL.
+    A feature not of ``layer_type`` gets a NULL geometry. A table copies every
+    row into an empty geometry column, and ignores the clip and the CRS.
     """
     selected = [f"{_value(column)} AS {quote(output_name(column.name))}" for column in plan.columns]
     creation = [f"FID={fid_name(plan)}", f"GEOMETRY_NAME={geometry_name(plan)}"]

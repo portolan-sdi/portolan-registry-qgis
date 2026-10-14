@@ -1,10 +1,6 @@
 """Read static STAC documents into the shapes the plugin displays.
 
-The tree, link, bbox, and format logic is ported from GeoLibre's
-``stac-api.ts`` (MIT, see NOTICE): ``linksOf``, ``catalogChildren``,
-``horizontalBbox``, ``collectionBbox``, ``collectionAssetItem``, and the
-``ASSET_FORMATS`` table. PMTiles links and style assets follow the Portolan
-spec (``specs/portolan/formats.md``), which GeoLibre does not read.
+Ported from GeoLibre's ``stac-api.ts`` (MIT, see NOTICE).
 """
 
 from __future__ import annotations
@@ -174,10 +170,7 @@ class Document:
     def loadable(self) -> tuple[Loadable, ...]:
         """Return the files the plugin can add, with no duplicates.
 
-        The ``rel: pmtiles`` links come first. The data assets with a known
-        format follow, in document order. An asset whose href matches a
-        PMTiles link, and an asset with the ``source``,
-        ``collection-mirror``, or ``archive`` role, is left out.
+        PMTiles links come first, then the data assets with a known format.
         """
         shared = self.pmtiles_duplicates
         found = [
@@ -206,13 +199,8 @@ class Document:
     def preferred_href(self, *, parquet: bool = True) -> str | None:
         """Return the href of the asset to add when the user picks nothing else.
 
-        The first ``rel: pmtiles`` link wins. Publishers list the archive that
-        the default style reads first. Otherwise the first data asset in
-        ``PREFERRED_FORMATS`` order wins. The candidates are those of
-        ``loadable``, so an upstream ``source`` asset never wins.
-
-        Args:
-            parquet: Whether the plugin can read GeoParquet, which needs DuckDB.
+        The first PMTiles link wins, else the first data asset in
+        ``PREFERRED_FORMATS`` order.
         """
         if self.pmtiles:
             return self.pmtiles[0].href
@@ -263,10 +251,7 @@ def int_or_none(value: object) -> int | None:
 def str_or_none(value: object, *, empty_ok: bool = True) -> str | None:
     """Return ``value`` when it is a string, else None.
 
-    Args:
-        value: A value from parsed JSON.
-        empty_ok: Whether an empty string counts. Without it, an empty
-            string returns None.
+    Without ``empty_ok``, an empty string returns None.
     """
     if not isinstance(value, str) or (not value and not empty_ok):
         return None
@@ -508,13 +493,6 @@ def _text(document: dict[str, Any], *keys: str) -> str:
 
 def read_document(document: object, href: str) -> Document:
     """Read a fetched STAC document.
-
-    Args:
-        document: The parsed JSON.
-        href: The URL the document was fetched from, for resolving links.
-
-    Returns:
-        The document's children, assets, PMTiles links, and extent.
 
     Raises:
         StacError: The JSON is not a STAC catalog, collection, or item.

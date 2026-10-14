@@ -230,8 +230,6 @@ def test_another_map_tool_cancels_the_drawing(picker, iface, pan):
     assert picker.choice() == EVERYTHING
     assert iface.canvas.mapTool() is other
     # The picker sets no tool of its own during the canvas's tool change.
-    # Before, it set the pan tool again inside that change, and the pan tool
-    # stayed active next to the new tool.
     assert not pan.isActive()
     assert other.isActive()
     iface.canvas.unsetMapTool(other)

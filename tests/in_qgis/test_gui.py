@@ -508,7 +508,7 @@ def test_plugin_lifecycle(iface, catalog):
 def test_plugin_reconnects_saved_tiles(iface, catalog):
     plugin = portolan_registry_qgis.classFactory(iface)
     plugin.initGui()
-    # A layer as a saved project restores it: the old port no longer answers.
+    # A layer as a saved project restores it, with a dead port.
     stale = QgsVectorTileLayer("type=xyz&url=http://127.0.0.1:9/old/{z}/{x}/{y}.pbf", "saved")
     stale.setCustomProperty(PMTILES_PROPERTY, f"{catalog['base']}/points.pmtiles")
     stale.styleManager().addStyleFromLayer("style-red")
@@ -968,9 +968,7 @@ def _check_waits(window, iface, reason):
 
 
 def test_one_task_uses_the_progress_bar_at_a_time(iface, server, catalog, asked, monkeypatch):
-    # The mosaic search, a download listing, and a download share the
-    # progress bar and the Cancel button. Before, a mosaic search during a
-    # download hid the Cancel button of the download.
+    # A mosaic search during a download keeps the download's Cancel button.
     window = open_item_files(iface, server, catalog)
     searching = _held_search(monkeypatch)
     window.add_mosaic()
@@ -1016,7 +1014,6 @@ def _held_search(monkeypatch):
 
 
 def test_a_busy_window_says_why_a_click_waits(iface, server, catalog, monkeypatch):
-    # Before, a click while a task ran did nothing and said nothing.
     window = open_item_files(iface, server, catalog)
     searching = _held_search(monkeypatch)
     window.add_mosaic()
@@ -1076,8 +1073,6 @@ def _start_held_listing(window, monkeypatch):
 
 
 def test_cancel_stops_a_mosaic_search(iface, server, catalog, monkeypatch):
-    # Before, the busy message said to cancel the search, but the window
-    # showed Cancel for a download only.
     window = open_item_files(iface, server, catalog)
     searching = _held_search(monkeypatch)
     window.details.mosaic_button.click()

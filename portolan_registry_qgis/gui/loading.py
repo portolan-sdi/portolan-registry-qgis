@@ -1,10 +1,4 @@
-"""Add files to the map: vector tiles, single files, GeoParquet copies, and mosaics.
-
-A GeoParquet file loads in two steps. DuckDB plans the read and estimates
-the features, and then copies them to a GeoPackage. A large estimate asks
-first. A mosaic also loads in two steps. A walk finds the COG files of the
-items in the area, and GDAL then writes one VRT of them.
-"""
+"""Add files to the map: vector tiles, single files, GeoParquet copies, and mosaics."""
 
 from __future__ import annotations
 

@@ -1,28 +1,7 @@
-"""Serve PMTiles archives to QGIS as XYZ vector tiles.
+"""Serve PMTiles archives to QGIS as XYZ vector tiles from a loopback server.
 
-QGIS has no PMTiles vector tile provider. This module reads each archive with
-the plugin's own PMTiles v3 reader (``core.pmtiles``) and puts a loopback HTTP
-server in front of it, so a native ``QgsVectorTileLayer`` with ``type=xyz``
-can render the tiles with a converted MapLibre style.
-
-The reader fetches byte ranges through QGIS's network stack, not through
-GDAL, so it needs no particular GDAL build and honors the QGIS proxy and
-authentication settings.
-
-The server binds 127.0.0.1 on a free port and answers only for archives the
-plugin registered, each under a random token.
-
-The server speaks HTTP/1.1, so QGIS keeps its tile connections open. Each
-connection has one handler thread, and QGIS gives each thread its own network
-manager. A kept connection therefore keeps its connection to the remote host,
-and a tile read does not pay for a new TLS handshake.
-
-Tile responses allow caching for a day, so QGIS keeps them in its disk cache
-for the session. The tokens and the port change in each session, so a later
-session does not reuse them. A server that answers with
-``Cache-Control: no-store`` keeps that rule for its tiles. A changed archive
-gets a new token, so new layers of it do not draw tiles cached from the old
-archive.
+QGIS has no PMTiles vector tile provider. The server answers on 127.0.0.1
+only for registered archives, each under a random token.
 """
 
 from __future__ import annotations
@@ -58,12 +37,7 @@ class Archive:
 
 
 def open_archive(url: str, fetch_range: Callable[[int, int], bytes] | None = None) -> Archive:
-    """Read an archive's header and metadata.
-
-    Args:
-        url: The archive's http(s) URL, or a local path.
-        fetch_range: Reads ``length`` bytes at ``offset``. Defaults to QGIS's
-            network stack for a URL and to the file system for a path.
+    """Read the header and metadata of the archive at the URL or path ``url``.
 
     Raises:
         PmtilesError: The archive cannot be read, or it holds raster tiles.
@@ -116,6 +90,7 @@ class TileHandler(BaseHTTPRequestHandler):
     """Answer the tile requests of one connection to the loopback server."""
 
     server: _Server
+    # Kept connections let each handler thread reuse its remote TLS connection.
     protocol_version = "HTTP/1.1"
     # The handler writes the headers and the body in two writes. On a kept
     # connection, Nagle's algorithm holds the second write until the client
@@ -192,10 +167,8 @@ class TileServer:
     def register(self, archive: Archive) -> str:
         """Serve ``archive`` and return its XYZ URL template.
 
-        An archive with the same URL and header as a registered one keeps the
-        registered reader and token. Its directory cache and the tiles QGIS
-        cached stay valid. A changed header means that the archive changed, so
-        it gets a new token. Older layers of that URL read the new archive.
+        An unchanged header keeps the reader and token, so cached tiles stay
+        valid. A changed header gets a new token.
         """
         with self._lock:
             server = self._ensure_started()

@@ -1,12 +1,16 @@
 ---
-source_sha256: 3729ac4afbd76aebdbed0f771bdaa436e409ad75fec10bee41d9ff837414c464
+source_sha256: dc3272a7df0a277b0cebb474761df61ff2cad5c81c359b4f9a0e59a073ebece7
 ---
 
 <!-- vale off -->
 
 # Instalación
 
-El complemento todavía no está en el repositorio oficial de complementos de QGIS. Instálelo desde un zip de una versión publicada o desde un clon.
+## Desde el administrador de complementos
+
+1. En QGIS, abra **Complementos > Administrar e instalar complementos…**.
+2. Busque **Portolan Registry** y selecciónelo.
+3. Seleccione **Instalar complemento**.
 
 ## Desde una versión publicada
 

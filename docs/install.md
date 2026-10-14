@@ -1,6 +1,10 @@
 # Install
 
-The plugin is not in the official QGIS plugin repository yet. Install it from a release zip or from a clone.
+## From the plugin manager
+
+1. In QGIS, open **Plugins > Manage and Install Plugins…**.
+2. Search for **Portolan Registry** and select it.
+3. Select **Install Plugin**.
 
 ## From a release
 

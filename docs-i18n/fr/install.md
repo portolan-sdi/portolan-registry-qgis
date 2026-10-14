@@ -1,12 +1,16 @@
 ---
-source_sha256: 3729ac4afbd76aebdbed0f771bdaa436e409ad75fec10bee41d9ff837414c464
+source_sha256: dc3272a7df0a277b0cebb474761df61ff2cad5c81c359b4f9a0e59a073ebece7
 ---
 
 <!-- vale off -->
 
 # Installation
 
-L'extension n'est pas encore dans le dépôt officiel des extensions QGIS. Installez-la depuis un zip de version ou depuis un clone.
+## Depuis le gestionnaire d'extensions
+
+1. Dans QGIS, ouvrez **Extensions > Installer/Gérer les extensions**.
+2. Recherchez **Portolan Registry** et sélectionnez l'extension.
+3. Sélectionnez **Installer l'extension**.
 
 ## Depuis une version publiée
 

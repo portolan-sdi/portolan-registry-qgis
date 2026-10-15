@@ -176,21 +176,31 @@ class Loader:
     # ---------- GeoParquet ----------
 
     def add_parquet(
-        self, asset: Asset, scope: Scope, limits: parquet_layer.Limits, *, has_tiles: bool
+        self,
+        asset: Asset,
+        document: Document | None,
+        scope: Scope,
+        limits: parquet_layer.Limits,
+        *,
+        has_tiles: bool,
     ) -> None:
-        """Copy the features of ``asset`` within ``limits`` to a layer.
+        """Copy the features of ``asset``, a file of ``document``, within ``limits`` to a layer.
 
-        ``scope`` says whether an area limits the read. ``has_tiles`` adds
-        the advice to view the vector tiles to the question about a large
-        load. Call ``duckdb_ready`` first.
+        A glob that HTTPS serves reads the GeoParquet files of the items instead.
+        ``has_tiles`` adds the advice to view the vector tiles to the question
+        about a large load. Call ``duckdb_ready`` first.
         """
         source = asset.read_url
+        name = parquet_name(asset)
+        if source is None and document is not None and document.children:
+            self._add_items(document, name, scope, limits, tables_only=True)
+            return
         if source is None:
             self._messages.warn(
                 _("QGIS cannot list the files of {glob} over HTTPS.").format(glob=asset.glob)
             )
             return
-        self.add_parquet_source(source, parquet_name(asset), scope, limits, has_tiles=has_tiles)
+        self.add_parquet_source(source, name, scope, limits, has_tiles=has_tiles)
 
     def add_parquet_source(
         self,
@@ -322,7 +332,21 @@ class Loader:
 
         COGs become a VRT. GeoParquet files become one GeoPackage, clipped to ``limits``.
         """
-        title = document.title
+        self._add_items(document, document.title, scope, limits, tables_only=False)
+
+    def _add_items(
+        self,
+        document: Document,
+        title: str,
+        scope: Scope,
+        limits: parquet_layer.Limits,
+        *,
+        tables_only: bool,
+    ) -> None:
+        """Add the files of the items of ``document`` in ``scope`` as one layer named ``title``.
+
+        ``tables_only`` reads only the GeoParquet files, which DuckDB copies as one table.
+        """
 
         def find(task: Any, executor: Any) -> list[str]:
             return mosaic.item_hrefs_in(
@@ -330,10 +354,20 @@ class Loader:
             )
 
         def found(result: object, error: BaseException | None, *, cancelled: bool) -> None:
-            hrefs = self._mosaic_files(result, error, title, cancelled=cancelled)
+            hrefs = self._mosaic_files(
+                result, error, title, cancelled=cancelled, confirm=not tables_only
+            )
             cogs, tables = mirror.split_files(hrefs or [])
+            if tables_only:
+                cogs = []
             if hrefs is None or not cogs:
                 self._tasks.finish(Busy.MOSAIC)
+            if hrefs and tables_only and not tables:
+                self._messages.info(
+                    _("No item of {title} in the chosen area has a GeoParquet file.").format(
+                        title=title
+                    )
+                )
             if tables and not cogs and duckdb_ready(self._parent):
                 has_tiles = bool(archive_urls(document))
                 self.add_parquet_source(tables, title, scope, limits, has_tiles=has_tiles)
@@ -349,11 +383,17 @@ class Loader:
         )
 
     def _mosaic_files(
-        self, result: object, error: BaseException | None, title: str, *, cancelled: bool
+        self,
+        result: object,
+        error: BaseException | None,
+        title: str,
+        *,
+        cancelled: bool,
+        confirm: bool = True,
     ) -> list[str] | None:
         """Return the files of a mosaic search, or None when the mosaic stops.
 
-        The method says why the mosaic stops.
+        The method says why the mosaic stops. ``confirm`` asks before a mosaic of many files.
         """
         # A cancelled walk returns the partial list it has. Drop it.
         if cancelled:
@@ -371,7 +411,7 @@ class Loader:
                 _("No file of {title} lies in the chosen area.").format(title=title)
             )
             return None
-        if len(result) > CONFIRM_FILES and not self._confirm_mosaic(title, len(result)):
+        if confirm and len(result) > CONFIRM_FILES and not self._confirm_mosaic(title, len(result)):
             self._messages.info(_("Did not add {title}.").format(title=title))
             return None
         return result

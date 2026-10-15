@@ -29,8 +29,8 @@ sys.path.insert(0, str(ROOT))
 
 from portolan_registry_qgis.core import parquet_query, registry, style  # noqa: E402
 from portolan_registry_qgis.core.download import files_of  # noqa: E402
-from portolan_registry_qgis.core.loadable import pick_targets  # noqa: E402
-from portolan_registry_qgis.core.mirror import mirror_href  # noqa: E402
+from portolan_registry_qgis.core.loadable import pick_targets, reads_items  # noqa: E402
+from portolan_registry_qgis.core.mirror import item_href, mirror_href  # noqa: E402
 from portolan_registry_qgis.core.stac import Document, read_document  # noqa: E402
 
 TIMEOUT = 30
@@ -173,7 +173,9 @@ class Sweep:
             )
         if load is None:
             return
-        if load.format == "parquet" and load.asset is not None and load.asset.read_url is None:
+        if reads_items(document, load):
+            self.record(document.href, "load parquet", lambda: self.first_item(document))
+        elif load.format == "parquet" and load.asset is not None and load.asset.read_url is None:
             self.flag(document.href, "load parquet", f"HTTPS cannot list {load.asset.glob}")
         elif load.format == "parquet":
             url = load.asset.read_url if load.asset is not None else load.href
@@ -194,6 +196,17 @@ class Sweep:
         if kind == "pmtiles" and not body.startswith(PMTILES_MAGIC):
             raise ValueError(f"not a PMTiles archive (starts {body[:8]!r})")
         return f"{headers['Content-Length']} bytes, {got.get('Content-Type', '?')}"
+
+    def first_item(self, document: Document) -> str:
+        """Read the GeoParquet file of the first item below ``document``, as the item walk does."""
+        node = next((child for child in document.children if child.kind == "item"), None)
+        if node is None:
+            raise ValueError("no item directly below the collection")
+        item = read_document(json.loads(fetch(node.href)[0]), node.href)
+        href = item_href(item.assets)
+        if href is None:
+            raise ValueError(f"{node.href} has no data file")
+        return f"items: {self.parquet(href)}"
 
     def parquet(self, url: str) -> str:
         """Read the schema, the geo metadata, and the estimate, as "Load full data" does."""

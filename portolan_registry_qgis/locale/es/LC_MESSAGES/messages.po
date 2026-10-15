@@ -712,6 +712,11 @@ msgstr "Ningún archivo interseca el área"
 msgid "No file of {title} lies in the chosen area."
 msgstr "Ningún archivo de {title} está en el área elegida."
 
+#: portolan_registry_qgis/gui/loading.py
+#, python-brace-format
+msgid "No item of {title} in the chosen area has a GeoParquet file."
+msgstr "Ningún ítem de {title} en el área elegida tiene un archivo GeoParquet."
+
 #: portolan_registry_qgis/gui/registry_list.py
 msgid "No publisher matches these filters."
 msgstr "Ningún publicador coincide con estos filtros."
@@ -932,6 +937,10 @@ msgstr "Leyendo…"
 msgid "Reads every file that matches {glob}."
 msgstr "Lee todos los archivos que coinciden con {glob}."
 
+#: portolan_registry_qgis/core/loadable.py
+msgid "Reads the GeoParquet file of each item in the area."
+msgstr "Lee el archivo GeoParquet de cada ítem del área."
+
 #. A catalog status. The catalog is gone from its address.
 #: portolan_registry_qgis/gui/widgets.py
 msgid "Removed"
@@ -1073,12 +1082,13 @@ msgstr "El área no es un polígono."
 #, python-brace-format
 msgid ""
 "The catalog splits this data into many files at {glob}. QGIS cannot list "
-"files over HTTPS, and the catalog gives no s3:// or gs:// address. Add "
-"single files from All files instead."
+"files over HTTPS, and the catalog gives no s3:// or gs:// address and no "
+"items. Add single files from All files instead."
 msgstr ""
 "El catálogo divide estos datos en muchos archivos en {glob}. QGIS no puede "
-"listar archivos por HTTPS, y el catálogo no da ninguna dirección s3:// ni "
-"gs://. Añada archivos sueltos desde Todos los archivos."
+"listar archivos por HTTPS, y el catálogo no da ninguna dirección s3:// o "
+"gs:// ni ningún ítem. En su lugar, añada archivos sueltos desde Todos los "
+"archivos."
 
 #: portolan_registry_qgis/qgis_io/mosaic.py
 msgid "The clip is not WKT"

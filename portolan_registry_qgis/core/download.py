@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 
 _UNSAFE = re.compile(r"[^A-Za-z0-9._@+=-]")
 EXTERNAL_DIR = "_external"
-WALK_WORKERS = 8
+WALK_WORKERS = 32
 
 
 @dataclass(frozen=True)
@@ -365,9 +365,12 @@ def _add_partitions(
     files: dict[str, PlannedFile],
     unlisted: list[tuple[str, str]],
 ) -> None:
-    """Add the files of each partitioned asset of ``document`` to ``files``."""
+    """Add the files of each partitioned asset of ``document`` to ``files``.
+
+    The walk reads the items, so a glob that HTTPS serves adds nothing when the document has some.
+    """
     for asset in document.assets:
-        if asset.glob is None:
+        if asset.glob is None or (asset.read_url is None and document.children):
             continue
         listed, reason = partition_files(asset, root, list_glob)
         if reason is not None:

@@ -379,6 +379,9 @@ class RegistryWindow(QDialog):
     def _add_parquet(self, asset: Asset, *, whole: bool = False) -> None:
         if not duckdb_ready(self):
             return
+        # A glob that HTTPS serves walks the items, which shares the mosaic's progress bar.
+        if asset.read_url is None and self.tasks.refuse_when_busy():
+            return
         scoped: tuple[Scope, parquet_layer.Limits] | None = (Everything(), parquet_layer.Limits())
         if not whole:
             scoped = self._parquet_scope()
@@ -386,7 +389,7 @@ class RegistryWindow(QDialog):
             return
         document = self._document
         has_tiles = document is not None and bool(archive_urls(document))
-        self._loader.add_parquet(asset, *scoped, has_tiles=has_tiles)
+        self._loader.add_parquet(asset, document, *scoped, has_tiles=has_tiles)
 
     def _zoom(self) -> None:
         bbox = self._extent()

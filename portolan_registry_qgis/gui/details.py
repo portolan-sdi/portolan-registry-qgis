@@ -444,7 +444,9 @@ class DetailsPanel(QScrollArea):
         for button, target in ((self.view_button, self._targets.view), (self.load_button, load)):
             button.setVisible(target is not None)
             if target is not None:
-                button.setToolTip(button_tip(target, view=button is self.view_button))
+                button.setToolTip(
+                    button_tip(target, view=button is self.view_button, document=document)
+                )
         self.mosaic_button.setVisible(only_items(document))
 
         styles = len(document.styles)

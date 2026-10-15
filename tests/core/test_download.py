@@ -303,8 +303,8 @@ def test_clipped_path():
     assert clipped_path(f"{BASE}/notes.txt", ROOT) == "notes.txt.gpkg"
 
 
-SC = "https://data.source.coop/acct/repo"
-SC_BUCKET = "s3://us-west-2.opendata.source.coop/acct/repo"
+SC = "https://bucket.s3.amazonaws.com/acct/repo"
+SC_BUCKET = "s3://bucket/acct/repo"
 
 
 def _partitioned_catalog(glob_href):
@@ -363,6 +363,22 @@ def test_plan_reports_a_glob_it_cannot_list():
         how=Walk(list_glob=broken),
     )
     assert failed.unlisted[0][1] == "listing refused"
+
+
+def test_plan_downloads_the_items_of_an_https_glob_without_a_note():
+    documents = {
+        "https://pub.test/col/collection.json": make_collection(
+            "col",
+            ["./a/a.json"],
+            assets={"data": {"href": "./*/*.parquet", "roles": ["data"]}},
+        ),
+        "https://pub.test/col/a/a.json": make_item(
+            "a", assets={"data": {"href": "./a.parquet", "roles": ["data"]}}
+        ),
+    }
+    result = plan(fake_fetch(documents), "https://pub.test/col/collection.json")
+    assert result.unlisted == []
+    assert [f.path for f in result.files] == ["collection.json", "a/a.json", "a/a.parquet"]
 
 
 def test_plan_resolves_against_the_url_after_a_redirect():

@@ -719,6 +719,11 @@ msgstr "Aucun fichier n'intersecte la zone"
 msgid "No file of {title} lies in the chosen area."
 msgstr "Aucun fichier de {title} ne se trouve dans la zone choisie."
 
+#: portolan_registry_qgis/gui/loading.py
+#, python-brace-format
+msgid "No item of {title} in the chosen area has a GeoParquet file."
+msgstr "Aucun item de {title} dans la zone choisie n'a de fichier GeoParquet."
+
 #: portolan_registry_qgis/gui/registry_list.py
 msgid "No publisher matches these filters."
 msgstr "Aucun éditeur ne correspond à ces filtres."
@@ -941,6 +946,10 @@ msgstr "Lecture…"
 msgid "Reads every file that matches {glob}."
 msgstr "Lit tous les fichiers qui correspondent à {glob}."
 
+#: portolan_registry_qgis/core/loadable.py
+msgid "Reads the GeoParquet file of each item in the area."
+msgstr "Lit le fichier GeoParquet de chaque item de la zone."
+
 #. A catalog status. The catalog is gone from its address.
 #: portolan_registry_qgis/gui/widgets.py
 msgid "Removed"
@@ -1082,13 +1091,13 @@ msgstr "La zone n'est pas un polygone."
 #, python-brace-format
 msgid ""
 "The catalog splits this data into many files at {glob}. QGIS cannot list "
-"files over HTTPS, and the catalog gives no s3:// or gs:// address. Add "
-"single files from All files instead."
+"files over HTTPS, and the catalog gives no s3:// or gs:// address and no "
+"items. Add single files from All files instead."
 msgstr ""
-"Le catalogue répartit ces données en de nombreux fichiers à {glob}. QGIS ne "
-"peut pas lister des fichiers par HTTPS, et le catalogue ne donne aucune "
-"adresse s3:// ou gs://. Ajoutez plutôt des fichiers un par un depuis Tous "
-"les fichiers."
+"Le catalogue divise ces données en de nombreux fichiers à {glob}. QGIS ne "
+"peut pas lister des fichiers par HTTPS, et le catalogue ne donne ni adresse "
+"s3:// ou gs:// ni items. Ajoutez plutôt des fichiers isolés depuis Tous les "
+"fichiers."
 
 #: portolan_registry_qgis/qgis_io/mosaic.py
 msgid "The clip is not WKT"

@@ -688,6 +688,11 @@ msgstr ""
 msgid "No file of {title} lies in the chosen area."
 msgstr ""
 
+#: portolan_registry_qgis/gui/loading.py
+#, python-brace-format
+msgid "No item of {title} in the chosen area has a GeoParquet file."
+msgstr ""
+
 #: portolan_registry_qgis/gui/registry_list.py
 msgid "No publisher matches these filters."
 msgstr ""
@@ -893,6 +898,10 @@ msgstr ""
 msgid "Reads every file that matches {glob}."
 msgstr ""
 
+#: portolan_registry_qgis/core/loadable.py
+msgid "Reads the GeoParquet file of each item in the area."
+msgstr ""
+
 #. A catalog status. The catalog is gone from its address.
 #: portolan_registry_qgis/gui/widgets.py
 msgid "Removed"
@@ -1030,8 +1039,8 @@ msgstr ""
 #, python-brace-format
 msgid ""
 "The catalog splits this data into many files at {glob}. QGIS cannot list "
-"files over HTTPS, and the catalog gives no s3:// or gs:// address. Add "
-"single files from All files instead."
+"files over HTTPS, and the catalog gives no s3:// or gs:// address and no "
+"items. Add single files from All files instead."
 msgstr ""
 
 #: portolan_registry_qgis/qgis_io/mosaic.py

@@ -1,5 +1,5 @@
 ---
-source_sha256: b8ac4443d839fa6692fb26a2edfccc091884052243370a8bcca225f999a3497d
+source_sha256: a73dc24723ffeda6e6ad9fed1d45206fe2aadf9c25a44af7515299f13992eb04
 ---
 
 <!-- vale off -->
@@ -85,7 +85,7 @@ El complemento elimina un GeoPackage cuando usted quita la última capa que lo l
 
 Un conjunto de datos grande puede dividirse en muchos archivos GeoParquet, que el catálogo describe con un solo patrón glob como `s3://bucket/data/country=*/*.parquet`. El complemento lee el glob del `partition:glob` de la colección, o de un recurso de datos cuyo href contiene `*`. Después, DuckDB lee todos los archivos como una sola tabla y añade las claves de partición, como `country`, como columnas.
 
-HTTPS no puede listar los archivos de una carpeta, así que DuckDB necesita el glob como una URL `s3://` o `gs://`. El complemento convierte las direcciones HTTPS de Amazon S3, Google Cloud Storage y Source Cooperative a estas formas. Un producto de Source Cooperative puede guardar sus archivos en una carpeta del bucket que su dirección no muestra, así que el complemento lee esa carpeta de la API de Source Cooperative. Cuando el catálogo da solo otro glob HTTPS, **Cargar datos completos** está desactivado, y su descripción emergente indica por qué. En su lugar, añada archivos sueltos desde **Todos los archivos**.
+HTTPS no puede listar los archivos de una carpeta, así que DuckDB necesita el glob como una URL `s3://` o `gs://`. El complemento convierte las direcciones HTTPS de Amazon S3 y Google Cloud Storage a estas formas. Para un glob en otro servidor HTTPS, **Cargar datos completos** lee en su lugar el archivo GeoParquet de cada ítem del área. El complemento encuentra los ítems en el `collection-mirror` de la colección cuando tiene uno. Si no, lee los documentos de los ítems, 32 a la vez. Cuando el catálogo no da ni un glob de bucket ni ítems, **Cargar datos completos** está desactivado, y su descripción emergente indica por qué.
 
 Las capas PMTiles leen a través de un servidor local que el complemento ejecuta en `127.0.0.1`. Un proyecto guardado las vuelve a conectar al reabrirse.
 

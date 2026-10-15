@@ -476,7 +476,7 @@ def test_json_value_helpers():
     assert str_or_none(1) is None
 
 
-COLLECTION = "https://data.source.coop/acct/repo/col/collection.json"
+COLLECTION = "https://bucket.s3.amazonaws.com/acct/repo/col/collection.json"
 PARQUET = "application/vnd.apache.parquet"
 
 
@@ -489,8 +489,18 @@ def test_a_glob_href_marks_the_asset_partitioned():
         assets={"data": {"href": "./zone=*/a*.parquet", "type": PARQUET, "roles": ["data"]}}
     )
     (asset,) = document.assets
-    assert asset.glob == "https://data.source.coop/acct/repo/col/zone=*/a*.parquet"
-    assert asset.read_url == "s3://us-west-2.opendata.source.coop/acct/repo/col/zone=*/a*.parquet"
+    assert asset.glob == "https://bucket.s3.amazonaws.com/acct/repo/col/zone=*/a*.parquet"
+    assert asset.read_url == "s3://bucket/acct/repo/col/zone=*/a*.parquet"
+
+
+def test_a_glob_on_another_https_host_has_no_read_url():
+    document = read_document(
+        make_collection(
+            "col", assets={"data": {"href": "./*.parquet", "type": PARQUET, "roles": ["data"]}}
+        ),
+        "https://data.source.coop/acct/repo/col/collection.json",
+    )
+    assert document.assets[0].read_url is None
 
 
 def test_an_asset_partition_glob_names_its_bucket():
@@ -551,6 +561,4 @@ def test_hrefs_resolve_against_the_url_after_a_redirect():
     document = read_fetched(fetched, "https://short.test/abc")
     assert document.href == "https://short.test/abc"
     assert document.assets[0].href == "https://bucket.test/real/col/a.parquet"
-    assert (
-        read_fetched(collection, COLLECTION).assets[0].href.startswith("https://data.source.coop/")
-    )
+    assert read_fetched(collection, COLLECTION).assets[0].href.startswith("https://bucket.s3.")

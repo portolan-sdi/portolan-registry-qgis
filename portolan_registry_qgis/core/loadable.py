@@ -96,9 +96,26 @@ def item_file(item: Document) -> Loadable | None:
     return replace(picked, title=item.title) if picked is not None else None
 
 
-def is_readable(target: Loadable) -> bool:
-    """Return whether DuckDB can read a GeoParquet target. HTTPS cannot list a glob."""
-    return target.format != "parquet" or target.asset is None or target.asset.read_url is not None
+def reads_items(document: Document | None, target: Loadable) -> bool:
+    """Return whether "Load full data" reads the GeoParquet files of the items below ``document``.
+
+    It does so for a glob that DuckDB cannot list, because HTTPS has no listing.
+    """
+    asset = target.asset
+    return (
+        document is not None
+        and bool(document.children)
+        and target.format == "parquet"
+        and asset is not None
+        and asset.read_url is None
+    )
+
+
+def is_readable(target: Loadable, document: Document | None = None) -> bool:
+    """Return whether DuckDB can read a GeoParquet target, from its URL or from the items."""
+    if target.format != "parquet" or target.asset is None or target.asset.read_url is not None:
+        return True
+    return reads_items(document, target)
 
 
 def is_table(item: Loadable) -> bool:
@@ -135,24 +152,26 @@ def pick_targets(loadable: tuple[Loadable, ...], *, duckdb_ok: bool) -> Targets:
     return Targets(first(loadable, VIEW_FORMATS), load)
 
 
-def button_tip(target: Loadable, *, view: bool) -> str:
-    """Return the tooltip of a primary button that adds ``target``.
+def button_tip(target: Loadable, *, view: bool, document: Document | None = None) -> str:
+    """Return the tooltip of a primary button that adds ``target``, a file of ``document``.
 
     The tooltip says what the button adds, what it is for, and which file it
     reads. A table has no geometry, so it loads whole and says so.
     """
     glob = None if view or target.asset is None else target.asset.glob
-    if glob is not None and not is_readable(target):
+    if glob is not None and not is_readable(target, document):
         return _(
             "The catalog splits this data into many files at {glob}. "
-            "QGIS cannot list files over HTTPS, and the catalog gives no s3:// or gs:// address. "
-            "Add single files from All files instead."
+            "QGIS cannot list files over HTTPS, and the catalog gives no s3:// or gs:// address "
+            "and no items. Add single files from All files instead."
         ).format(glob=glob)
     lead, tip = _lead_and_tip(target, view=view)
     # Translators: {title} names a file, and {format} its format, such as GeoParquet.
     file_line = _("File: {title} ({format})")
     lines = [lead, _(tip), file_line.format(title=target.title, format=format_name(target))]
-    if glob is not None:
+    if glob is not None and reads_items(document, target):
+        lines.append(_("Reads the GeoParquet file of each item in the area."))
+    elif glob is not None:
         lines.append(_("Reads every file that matches {glob}.").format(glob=glob))
     return "\n".join(line for line in lines if line)
 
@@ -203,7 +222,9 @@ def button_state(
     return ButtonState(
         add=selected,
         view=targets.view is not None,
-        load=load is not None and is_readable(load) and (load.format != "parquet" or ready),
+        load=load is not None
+        and is_readable(load, document)
+        and (load.format != "parquet" or ready),
         mosaic=document is not None and only_items(document) and ready and not busy,
         download_selected=selected and not busy,
         download_all=document is not None and not busy and ready,

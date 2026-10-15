@@ -990,6 +990,24 @@ def test_an_unlisted_glob_says_why_it_neither_adds_nor_downloads(iface, server, 
     window.disconnect_canvas()
 
 
+def test_an_https_glob_with_items_loads_the_items(iface, server, catalog):
+    # HTTPS cannot list the glob, so Load full data reads the GeoParquet file of each item.
+    window = open_window(iface, server, catalog)
+    open_catalog(window)
+    href = f"{catalog['base']}/parts/collection.json"
+    raw = network.fetch_json(href)
+    raw["assets"] = {"data": {"href": "./*/*.parquet", "roles": ["data"]}}
+    window.show_document(read_document(raw, href))
+    wait_for(window.details.load_button.isEnabled)
+    assert "each item" in window.details.load_button.toolTip()
+    window.details.load_button.click()
+    wait_for(lambda: len(QgsProject.instance().mapLayers()) == 1, timeout=60)
+    (layer,) = QgsProject.instance().mapLayers().values()
+    assert layer.name() == "parts"
+    assert layer.featureCount() == 400
+    window.disconnect_canvas()
+
+
 def test_geoparquet_items_add_as_one_layer(iface, server, catalog):
     window = open_window(iface, server, catalog)
     open_catalog(window)

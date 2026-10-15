@@ -24,6 +24,7 @@ from portolan_registry_qgis.core.loadable import (
     parquet_to_clip,
     pick_targets,
     plan_summary,
+    reads_items,
     split_plan,
 )
 from portolan_registry_qgis.core.scope import Area, Everything, MapView
@@ -281,15 +282,28 @@ def test_loadable_tip():
 GLOB_BASE = "https://pub.test/points/collection.json"
 
 
-def _glob_collection(href):
+def _glob_collection(href, links=()):
     raw = {
         "type": "Collection",
         "id": "points",
         "title": "Points",
-        "links": [],
+        "links": list(links),
         "assets": {"data": {"href": "./zone=*/a*.parquet", "roles": ["data"]}},
     }
     return read_document(raw, href)
+
+
+def test_an_https_glob_with_items_loads_the_items():
+    document = _glob_collection(GLOB_BASE, [{"rel": "item", "href": "./zone=a/a.json"}])
+    targets = pick_targets(document.loadable(), duckdb_ok=True)
+    assert targets.load is not None
+    assert reads_items(document, targets.load)
+    assert is_readable(targets.load, document)
+    assert not is_readable(targets.load)
+    assert button_state(document, targets, selected=False, ready=True, busy=False).load
+    tip = button_tip(targets.load, view=False, document=document)
+    assert "each item" in tip
+    assert "zone=*" not in tip
 
 
 def test_an_https_glob_disables_load_full_data_and_says_why():
@@ -306,7 +320,7 @@ def test_an_https_glob_disables_load_full_data_and_says_why():
 
 
 def test_a_bucket_glob_loads_and_names_its_folder():
-    document = _glob_collection("https://data.source.coop/acct/points/collection.json")
+    document = _glob_collection("https://bucket.s3.amazonaws.com/acct/points/collection.json")
     targets = pick_targets(document.loadable(), duckdb_ok=True)
     assert targets.load is not None
     assert is_readable(targets.load)

@@ -5,11 +5,18 @@ from __future__ import annotations
 import html
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, NamedTuple
+from urllib.parse import urlsplit
 
 from portolan_registry_qgis.core.format import format_label, human_size
-from portolan_registry_qgis.core.hrefs import plain_vsicurl_path, vsicurl_path
+from portolan_registry_qgis.core.hrefs import (
+    folder_name,
+    glob_root,
+    plain_vsicurl_path,
+    vsicurl_path,
+)
 from portolan_registry_qgis.core.i18n import N_, _, count, ngettext, number
 from portolan_registry_qgis.core.scope import Everything
+from portolan_registry_qgis.core.stac import PREFERRED_FORMATS
 
 if TYPE_CHECKING:
     from portolan_registry_qgis.core.download import Plan
@@ -82,6 +89,35 @@ def item_cog(item: Document) -> Asset | None:
     return next((asset for asset in item.data_assets if asset.format == "cog"), None)
 
 
+def item_file(item: Document) -> Loadable | None:
+    """Return the file an item row adds: its first data file, in ``PREFERRED_FORMATS`` order."""
+    files = tuple(found for found in item.loadable() if found.asset is not None)
+    picked = first(files, PREFERRED_FORMATS)
+    return replace(picked, title=item.title) if picked is not None else None
+
+
+def reads_items(document: Document | None, target: Loadable) -> bool:
+    """Return whether "Load full data" reads the GeoParquet files of the items below ``document``.
+
+    It does so for a glob that DuckDB cannot list, because HTTPS has no listing.
+    """
+    asset = target.asset
+    return (
+        document is not None
+        and bool(document.children)
+        and target.format == "parquet"
+        and asset is not None
+        and asset.read_url is None
+    )
+
+
+def is_readable(target: Loadable, document: Document | None = None) -> bool:
+    """Return whether DuckDB can read a GeoParquet target, from its URL or from the items."""
+    if target.format != "parquet" or target.asset is None or target.asset.read_url is not None:
+        return True
+    return reads_items(document, target)
+
+
 def is_table(item: Loadable) -> bool:
     """Return whether ``item`` is a Parquet file with no geometry column."""
     return item.asset is not None and item.asset.tabular
@@ -96,8 +132,12 @@ def format_name(item: Loadable) -> str:
 
 
 def parquet_name(asset: Asset) -> str:
-    """Return the layer name of a GeoParquet file."""
-    return asset.title or asset.href.rsplit("/", 1)[-1].removesuffix(".parquet")
+    """Return the layer name of a GeoParquet file, or of the folder that holds its partitions."""
+    if asset.title:
+        return asset.title
+    if asset.glob is not None:
+        return folder_name(glob_root(asset.glob))
+    return urlsplit(asset.href).path.rsplit("/", 1)[-1].removesuffix(".parquet")
 
 
 def pick_targets(loadable: tuple[Loadable, ...], *, duckdb_ok: bool) -> Targets:
@@ -112,23 +152,36 @@ def pick_targets(loadable: tuple[Loadable, ...], *, duckdb_ok: bool) -> Targets:
     return Targets(first(loadable, VIEW_FORMATS), load)
 
 
-def button_tip(target: Loadable, *, view: bool) -> str:
-    """Return the tooltip of a primary button that adds ``target``.
+def button_tip(target: Loadable, *, view: bool, document: Document | None = None) -> str:
+    """Return the tooltip of a primary button that adds ``target``, a file of ``document``.
 
     The tooltip says what the button adds, what it is for, and which file it
     reads. A table has no geometry, so it loads whole and says so.
     """
-    if not view and is_table(target):
-        lead = _("Loads the Parquet table. It has no geometry, so it loads whole.")
-        tip = TABLE_TIP
-    else:
-        kind = (VIEW_KINDS if view else LOAD_KINDS).get(target.format)
-        lead = _(kind) if kind else ""
-        tip = VIEW_TIP if view else LOAD_TIP
+    glob = None if view or target.asset is None else target.asset.glob
+    if glob is not None and not is_readable(target, document):
+        return _(
+            "The catalog splits this data into many files at {glob}. "
+            "QGIS cannot list files over HTTPS, and the catalog gives no s3:// or gs:// address "
+            "and no items. Add single files from All files instead."
+        ).format(glob=glob)
+    lead, tip = _lead_and_tip(target, view=view)
     # Translators: {title} names a file, and {format} its format, such as GeoParquet.
     file_line = _("File: {title} ({format})")
-    lines = (lead, _(tip), file_line.format(title=target.title, format=format_name(target)))
+    lines = [lead, _(tip), file_line.format(title=target.title, format=format_name(target))]
+    if glob is not None and reads_items(document, target):
+        lines.append(_("Reads the GeoParquet file of each item in the area."))
+    elif glob is not None:
+        lines.append(_("Reads every file that matches {glob}.").format(glob=glob))
     return "\n".join(line for line in lines if line)
+
+
+def _lead_and_tip(target: Loadable, *, view: bool) -> tuple[str, str]:
+    """Return what a primary button adds, translated, and the untranslated note on its use."""
+    if not view and is_table(target):
+        return _("Loads the Parquet table. It has no geometry, so it loads whole."), TABLE_TIP
+    kind = (VIEW_KINDS if view else LOAD_KINDS).get(target.format)
+    return (_(kind) if kind else ""), (VIEW_TIP if view else LOAD_TIP)
 
 
 def has_parquet(loadable: tuple[Loadable, ...]) -> bool:
@@ -144,6 +197,9 @@ def is_on_map(item: Loadable, urls: set[str], sources: list[str]) -> bool:
     on the GDAL settings of the session, so both forms count.
     """
     paths = (vsicurl_path(item.href), plain_vsicurl_path(item.href))
+    read_url = item.asset.read_url if item.asset is not None else None
+    if read_url is not None and read_url in urls:
+        return True
     return item.href in urls or any(
         item.href == source or any(path in source for path in paths) for source in sources
     )
@@ -166,7 +222,9 @@ def button_state(
     return ButtonState(
         add=selected,
         view=targets.view is not None,
-        load=load is not None and (load.format != "parquet" or ready),
+        load=load is not None
+        and is_readable(load, document)
+        and (load.format != "parquet" or ready),
         mosaic=document is not None and only_items(document) and ready and not busy,
         download_selected=selected and not busy,
         download_all=document is not None and not busy and ready,
@@ -204,7 +262,10 @@ def parquet_to_clip(document: Document, scope: Scope) -> list[Asset]:
     return [
         item.asset
         for item in document.loadable()
-        if item.asset is not None and item.format == "parquet" and not item.asset.tabular
+        if item.asset is not None
+        and item.format == "parquet"
+        and not item.asset.tabular
+        and item.asset.read_url is not None
     ]
 
 
@@ -247,6 +308,14 @@ def plan_summary(plan: Plan, clipped: int = 0) -> str:
                 "{n} document could not be read and is left out.",
                 "{n} documents could not be read and are left out.",
                 len(plan.failures),
+            )
+        )
+    if plan.unlisted:
+        lines.append(
+            count(
+                "The files of {n} partitioned dataset could not be listed and are left out.",
+                "The files of {n} partitioned datasets could not be listed and are left out.",
+                len(plan.unlisted),
             )
         )
     if plan.truncated:

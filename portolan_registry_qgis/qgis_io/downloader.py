@@ -74,6 +74,12 @@ class DownloadJob(QObject):
         self._concurrency = max(1, concurrency)
         self._busy = 0
         self._settled = len(clashes)
+        sizes = [planned.size for planned in files]
+        # Byte progress needs every size. Otherwise the share counts files.
+        self._total_bytes = sum(size or 0 for size in sizes) if None not in sizes else 0
+        self._settled_bytes = sum(planned.size or 0 for planned in clashes)
+        # Bytes received so far, by the local path of each file in flight.
+        self._receiving: dict[str, int] = {}
         self._report = DownloadReport()
         self._report.failed.extend(
             (
@@ -99,6 +105,14 @@ class DownloadJob(QObject):
     def downloading(self) -> int:
         """Return the number of requests in flight."""
         return len(self._downloaders)
+
+    @property
+    def fraction(self) -> float | None:
+        """Return the share of the job done, by bytes when every size is known, else by files."""
+        if self._total_bytes:
+            done = self._settled_bytes + sum(self._receiving.values())
+            return min(done / self._total_bytes, 1.0)
+        return self._settled / self._total if self._total else None
 
     @property
     def report(self) -> DownloadReport:
@@ -153,7 +167,7 @@ class DownloadJob(QObject):
             path = target_path(self._folder, planned)
         except ValueError as error:
             self._report.failed.append((planned.path, str(error)))
-            self._settled += 1
+            self._settle(planned)
             self._activity.pop(planned.path, None)
             return
         if path.exists() and planned.checksum:
@@ -162,7 +176,7 @@ class DownloadJob(QObject):
             return
         if path.exists() and planned.size is not None and path.stat().st_size == planned.size:
             self._report.skipped.append(planned.path)
-            self._settled += 1
+            self._settle(planned)
             self._activity.pop(planned.path, None)
             return
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -179,6 +193,9 @@ class DownloadJob(QObject):
         )
         downloader.downloadError.connect(
             lambda errors: self._download_ended(downloader, planned, path, "; ".join(errors))
+        )
+        downloader.downloadProgress.connect(
+            lambda received, _total: self._received(planned, int(received))
         )
         downloader.downloadCanceled.connect(
             # Translators: Why a file did not download. The user cancelled it.
@@ -246,6 +263,18 @@ class DownloadJob(QObject):
         task = run_task(_("Verify {path}").format(path=planned.path), hash_file, done)
         self._tasks.add(task)
 
+    def _received(self, planned: PlannedFile, received: int) -> None:
+        # A late signal after the file settled must not count its bytes twice.
+        activity = self._activity.get(planned.path)
+        if activity is not None:
+            self._receiving[planned.path] = received
+            self._show(planned, activity)
+
+    def _settle(self, planned: PlannedFile) -> None:
+        self._settled += 1
+        self._settled_bytes += planned.size or 0
+        self._receiving.pop(planned.path, None)
+
     def _fail(self, planned: PlannedFile, reason: str) -> None:
         if not self._cancelled:
             self._report.failed.append((planned.path, reason))
@@ -253,6 +282,6 @@ class DownloadJob(QObject):
 
     def _release(self, planned: PlannedFile) -> None:
         self._busy -= 1
-        self._settled += 1
+        self._settle(planned)
         self._show(planned, None)
         self._pump()

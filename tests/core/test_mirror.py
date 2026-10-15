@@ -223,3 +223,29 @@ def test_skipped_path():
     assert mirror.skipped_path("Can't open /vsicurl/https://x.test/a.tif") is None
     assert mirror.skipped_path("Some other warning. Skipping it") is None
     assert mirror.skipped_path("") is None
+
+
+def test_item_href_takes_a_cog_then_a_single_geoparquet_file():
+    parquet = Asset("p", f"{BASE}/p.parquet", None, None, ("data",), None, None, "parquet")
+    glob = Asset(
+        "g",
+        f"{BASE}/*.parquet",
+        None,
+        None,
+        ("data",),
+        None,
+        None,
+        "parquet",
+        glob=f"{BASE}/*.parquet",
+    )
+    assert mirror.item_href([parquet, _asset("a")]) == f"{BASE}/a.tif"
+    assert mirror.item_href([glob, parquet]) == f"{BASE}/p.parquet"
+    assert mirror.item_href([glob]) is None
+
+
+def test_split_files():
+    hrefs = [f"{BASE}/a.tif", f"{BASE}/b.parquet", f"{BASE}/c.tif?x=1"]
+    assert mirror.split_files(hrefs) == (
+        [f"{BASE}/a.tif", f"{BASE}/c.tif?x=1"],
+        [f"{BASE}/b.parquet"],
+    )

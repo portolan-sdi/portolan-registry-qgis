@@ -1,4 +1,4 @@
-"""Find the COG files of a collection from its stac-geoparquet mirror."""
+"""Find the COG or GeoParquet files of a collection from its stac-geoparquet mirror."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from portolan_registry_qgis.core.geoparquet import (
 )
 from portolan_registry_qgis.core.hrefs import asset_href
 from portolan_registry_qgis.core.i18n import _
-from portolan_registry_qgis.core.stac import assets_of, only_data
+from portolan_registry_qgis.core.stac import asset_format, assets_of, only_data
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -73,6 +73,23 @@ def item_documents(collection: Document) -> dict[str, str]:
 def cog_href(assets: Iterable[Asset]) -> str | None:
     """Return the href of the first COG data asset, or None when there is none."""
     return next((asset.href for asset in only_data(assets) if asset.format == "cog"), None)
+
+
+def item_href(assets: Iterable[Asset]) -> str | None:
+    """Return the file "Add as one layer" reads from an item: its first COG, else its GeoParquet."""
+    data = only_data(assets)
+    found = cog_href(data)
+    if found is not None:
+        return found
+    return next(
+        (asset.href for asset in data if asset.format == "parquet" and asset.glob is None), None
+    )
+
+
+def split_files(hrefs: list[str]) -> tuple[list[str], list[str]]:
+    """Split the files of ``item_hrefs`` into COGs and GeoParquet files."""
+    tables = [href for href in hrefs if asset_format(href, None) == "parquet"]
+    return [href for href in hrefs if href not in set(tables)], tables
 
 
 def _covering(plan: ReadPlan) -> Covering | None:
@@ -145,7 +162,7 @@ def mirror_hrefs(
     cancelled: Callable[[], bool] | None = None,
     items: dict[str, str] | None = None,
 ) -> list[str]:
-    """Return the COG hrefs of the items of a stac-geoparquet file in ``scope``.
+    """Return the item files of a stac-geoparquet file in ``scope``, as ``item_href`` picks them.
 
     A relative href resolves against the item's ``self`` link, else its URL
     in ``items``, else the file.
@@ -160,7 +177,7 @@ def mirror_hrefs(
 
 
 def row_href(row: tuple[Any, ...], url: str, scope: Scope, items: dict[str, str]) -> str | None:
-    """Return the COG href of one row of ``mirror_query``, or None to skip the row."""
+    """Return the file of one row of ``mirror_query``, or None to skip the row."""
     xmin, ymin, xmax, ymax, assets, links, item_id = row
     corners = (xmin, ymin, xmax, ymax)
     box: Bbox | None = None
@@ -171,7 +188,7 @@ def row_href(row: tuple[Any, ...], url: str, scope: Scope, items: dict[str, str]
     base = self_href(parse_json(links), url)
     if base is None:
         base = items.get(str(item_id), url) if item_id is not None else url
-    return cog_href(assets_of({"assets": parse_json(assets)}, base))
+    return item_href(assets_of({"assets": parse_json(assets)}, base))
 
 
 def self_href(links: object, base: str) -> str | None:

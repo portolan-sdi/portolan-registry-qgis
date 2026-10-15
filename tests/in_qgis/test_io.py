@@ -380,8 +380,10 @@ def test_a_tif_only_setting_still_opens_cogs(catalog, collection, tiles):
     raster = layers.asset_layer(by_key["relief"])
     assert raster.isValid()
     assert raster.source() == f"/vsicurl/{by_key['relief'].href}"
-    path = mosaic.write_vrt([_tile(catalog, "a"), _tile(catalog, "b")])
+    shares = []
+    path = mosaic.write_vrt([_tile(catalog, "a"), _tile(catalog, "b")], progress=shares.append)
     assert path.exists()
+    assert shares[-1] == 1.0
     parquet_layer.discard_path(path)
 
 
@@ -844,6 +846,27 @@ def test_resume_of_many_present_files_does_not_recurse(tmp_path):
     report = _download(tmp_path, files)
     assert report.failed == []
     assert len(report.skipped) == count
+
+
+def test_download_progress_counts_bytes_when_every_size_is_known(catalog, collection, tmp_path):
+    files = [
+        PlannedFile(a.href, local_path(a.href, catalog["url"]), a.size, a.checksum)
+        for a in collection.assets
+    ]
+    shares = []
+    reports = []
+    job = DownloadJob(tmp_path, files)
+    assert job.fraction == 0.0
+    job.progress.connect(lambda *_args: shares.append(job.fraction))
+    job.finished.connect(reports.append)
+    job.start()
+    wait_for(lambda: reports, timeout=30)
+    assert shares == sorted(shares)
+    assert shares[-1] == 1.0
+    # One file with no size makes the share count files.
+    unsized = DownloadJob(tmp_path, [*files[:1], PlannedFile(files[1].url, "unsized")])
+    assert unsized.fraction == 0.0
+    assert DownloadJob(tmp_path, []).fraction is None
 
 
 def test_files_that_share_a_local_path_fail_before_any_download(catalog, tmp_path):

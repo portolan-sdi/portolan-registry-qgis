@@ -25,6 +25,7 @@ from qgis.PyQt.QtNetwork import QNetworkRequest
 
 from portolan_registry_qgis.core.hrefs import is_http_url
 from portolan_registry_qgis.core.i18n import _
+from portolan_registry_qgis.core.stac import Fetched
 from portolan_registry_qgis.qgis_io.log import log
 
 if TYPE_CHECKING:
@@ -47,12 +48,19 @@ def fetch_bytes(url: str, accept: bytes = _ACCEPT) -> bytes:
     Raises:
         NetworkError: The request failed or the server answered with an error.
     """
+    return _fetch(url, accept)[0]
+
+
+def _fetch(url: str, accept: bytes = _ACCEPT) -> tuple[bytes, str]:
+    """Return the body at ``url`` and the URL it came from after any redirect."""
     request = QNetworkRequest(QUrl(url))
     request.setRawHeader(b"Accept", accept)
     blocking = QgsBlockingNetworkRequest()
     code = blocking.get(request, forceRefresh=False)
     _raise_for(code, blocking, url)
-    return bytes(blocking.reply().content())
+    reply = blocking.reply()
+    final = reply.request().url().toString()
+    return bytes(reply.content()), final or url
 
 
 def _raise_for(code: Any, blocking: QgsBlockingNetworkRequest, url: str) -> None:
@@ -176,9 +184,17 @@ def fetch_json(url: str) -> object:
         NetworkError: The request failed.
         ValueError: The body is not JSON.
     """
-    body = fetch_bytes(url)
+    return fetch_document(url).document
+
+
+def fetch_document(url: str) -> Fetched:
+    """Return the parsed JSON at ``url`` and the URL it came from, which relative hrefs need.
+
+    Raises NetworkError or ValueError as ``fetch_json`` does.
+    """
+    body, final = _fetch(url)
     try:
-        return json.loads(body)
+        return Fetched(json.loads(body), final)
     except ValueError as error:
         raise ValueError(
             _("{url} did not return JSON: {error}").format(url=url, error=error)

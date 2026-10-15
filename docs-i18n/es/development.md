@@ -1,5 +1,5 @@
 ---
-source_sha256: da90f101b8a18645586273bdf33ad0a29409d9391de914f37513f95558d5f303
+source_sha256: c2fe4741641d76cda598415a7e7cb22bc3f4138244a3b7082762da4258456484
 ---
 
 <!-- vale off -->
@@ -36,6 +36,21 @@ QT_QPA_PLATFORM=offscreen .venv-qgis/bin/python \
 QT_QPA_PLATFORM=offscreen .venv-qgis/bin/python \
   scripts/bench_tiles.py --baseline
 ```
+
+## Barridos del registro
+
+Las pruebas usan catálogos que crea el complemento. Los scripts de barrido, en cambio, ejecutan el complemento contra cada catálogo del registro en vivo e informan de cada comprobación que falla.
+
+- `scripts/sweep_registry.py` ejecuta la ruta de lectura del núcleo con uv. Para cada colección, prueba los archivos que hay detrás de **Ver en el mapa** y **Cargar datos completos**, y planifica la lectura del GeoParquet con DuckDB. También lee los estilos, la miniatura y las rutas de descarga.
+- `scripts/sweep_qgis.py` añade los destinos de cada colección como capas de QGIS con sus estilos y luego renderiza cada capa. Informa de las capas no válidas, los renderizados en blanco y las advertencias de estilo.
+
+```bash
+uv run python scripts/sweep_registry.py --out sweep
+QT_QPA_PLATFORM=offscreen .venv-qgis/bin/python \
+  scripts/sweep_qgis.py --out sweep-qgis
+```
+
+Cada script escribe `sweep.md` y `sweep.json` en su carpeta de salida. Use `--only` con identificadores de catálogo para barrer unos pocos catálogos. El flujo de trabajo Registry sweep ejecuta los dos scripts cada noche y sube los informes. Un fallo ahí no bloquea una fusión.
 
 ## Controles de calidad
 

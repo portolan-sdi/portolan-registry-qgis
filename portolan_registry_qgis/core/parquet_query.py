@@ -7,32 +7,44 @@ from __future__ import annotations
 
 import contextlib
 import os
+import re
 import sqlite3
 import sys
 import threading
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
 
 from portolan_registry_qgis.core.geoparquet import (
     NO_GEOMETRY,
     WHOLE_FILE,
     Clip,
     ReadPlan,
-    build_copy,
     build_estimate,
     build_first_type,
+    build_select,
+    build_write,
+    literal,
     plan_read,
     quote,
     type_from_first,
 )
+from portolan_registry_qgis.core.hrefs import bucket_region
 from portolan_registry_qgis.core.i18n import _
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
+    # Receives the share of a query that DuckDB has done, from 0 to 1.
+    Progress = Callable[[float], None]
+
+# What DuckDB reads: one URL, a bucket glob, or a list of URLs read as one table.
+Source = str | list[str]
 MINIMUM_DUCKDB = (1, 5, 0)
 MEMORY_LIMIT = "4GB"
 _EXTENSIONS = ("httpfs", "spatial")
+# The temporary table that holds a copy's features before GDAL writes them.
+_STAGED = "portolan_staged"
 _lock = threading.Lock()
 _connection: Any = None
 
@@ -99,6 +111,9 @@ def connection(extension_dir: str | None = None) -> Any:
                 con.execute("SET extension_directory = ?", [extension_dir])
                 _load_extensions(con)
             con.execute(f"SET memory_limit = '{MEMORY_LIMIT}'")
+            if is_flatpak():
+                # DuckDB's curl client crashes the process on any s3:// read in the Flatpak.
+                con.execute("SET httpfs_client_implementation = 'httplib'")
             _connection = con
         return _connection
 
@@ -118,24 +133,45 @@ def close() -> None:
             _connection = None
 
 
-def interrupt_when(cancelled: Callable[[], bool], cursor: Any, stop: threading.Event) -> None:
-    """Interrupt ``cursor`` once ``cancelled`` returns True, until ``stop`` is set."""
+def interrupt_when(
+    cancelled: Callable[[], bool] | None,
+    cursor: Any,
+    stop: threading.Event,
+    progress: Progress | None = None,
+) -> None:
+    """Interrupt ``cursor`` once ``cancelled`` returns True, until ``stop`` is set.
+
+    ``progress`` gets the share of the running query that DuckDB has done, from 0 to 1.
+    """
     while not stop.wait(0.1):
-        if cancelled():
+        if cancelled is not None and cancelled():
             cursor.interrupt()
             return
+        if progress is not None:
+            done = cursor.query_progress()
+            if done >= 0:
+                progress(min(done, 100.0) / 100)
 
 
 @contextlib.contextmanager
-def cursor(con: Any, cancelled: Callable[[], bool] | None = None) -> Iterator[Any]:
+def cursor(
+    con: Any, cancelled: Callable[[], bool] | None = None, progress: Progress | None = None
+) -> Iterator[Any]:
     """Yield a cursor that a watcher thread interrupts when ``cancelled`` returns True.
 
-    The running query then raises ``duckdb.InterruptException``.
+    The running query then raises ``duckdb.InterruptException``. The watcher
+    also reports the query's progress to ``progress``.
     """
     cur = con.cursor()
     stop = threading.Event()
-    if cancelled is not None:
-        threading.Thread(target=interrupt_when, args=(cancelled, cur, stop), daemon=True).start()
+    if progress is not None:
+        cur.execute("SET enable_progress_bar = true")
+        cur.execute("SET enable_progress_bar_print = false")
+    if cancelled is not None or progress is not None:
+        watcher = threading.Thread(
+            target=interrupt_when, args=(cancelled, cur, stop, progress), daemon=True
+        )
+        watcher.start()
     try:
         yield cur
     finally:
@@ -143,8 +179,62 @@ def cursor(con: Any, cancelled: Callable[[], bool] | None = None) -> Iterator[An
         cur.close()
 
 
-def read_plan(con: Any, url: str, cancelled: Callable[[], bool] | None = None) -> ReadPlan:
-    """Read a file's schema and GeoParquet metadata and plan the query."""
+def source_text(source: Source) -> str:
+    """Return ``source`` as text for a layer property, one URL per line."""
+    return source if isinstance(source, str) else "\n".join(source)
+
+
+def source_from_text(text: str) -> Source:
+    """Return the source that ``source_text`` wrote."""
+    lines = [line for line in text.splitlines() if line]
+    return lines if len(lines) > 1 else text.strip()
+
+
+def use_bucket(con: Any, source: Source) -> None:
+    """Give DuckDB the path style and region of each S3 bucket whose name holds a dot.
+
+    The virtual-hosted certificate covers one label, so such a bucket needs the path style.
+    """
+    urls = [source] if isinstance(source, str) else source
+    buckets = {urlsplit(url).hostname for url in urls if url.startswith("s3://")}
+    for bucket in sorted(b for b in buckets if b and "." in b):
+        name = "bucket_" + re.sub(r"\W", "_", bucket)
+        region = bucket_region(bucket) or "us-east-1"
+        con.execute(
+            f"CREATE SECRET IF NOT EXISTS {name} (TYPE s3, PROVIDER config, "
+            f"REGION {literal(region)}, URL_STYLE 'path', SCOPE {literal(f's3://{bucket}')})"
+        )
+
+
+def read_error(source: Source, error: BaseException | str | None) -> str:
+    """Return why DuckDB could not read ``source``, in words the user can act on."""
+    text = str(error)
+    urls = [source] if isinstance(source, str) else source
+    buckets = sorted({urlsplit(url).hostname or "" for url in urls if url.startswith("s3://")})
+    if "NoSuchBucket" in text and buckets:
+        return _(
+            "Amazon S3 has no bucket named {bucket}. The catalog gives no other S3 endpoint, "
+            "so QGIS cannot read the files."
+        ).format(bucket=buckets[0])
+    return text
+
+
+def list_files(con: Any, url: str, cancelled: Callable[[], bool] | None = None) -> list[str]:
+    """Return the files that a bucket glob matches, in order."""
+    use_bucket(con, url)
+    with cursor(con, cancelled) as cur:
+        return [
+            str(row[0])
+            for row in cur.execute("SELECT file FROM glob(?) ORDER BY file", [url]).fetchall()
+        ]
+
+
+def read_plan(con: Any, url: Source, cancelled: Callable[[], bool] | None = None) -> ReadPlan:
+    """Read a file's schema and GeoParquet metadata and plan the query.
+
+    ``url`` may be a bucket glob or a list of URLs, which DuckDB reads as one table.
+    """
+    use_bucket(con, url)
     with cursor(con, cancelled) as cur:
         schema = [
             (str(row[0]), str(row[1]))
@@ -156,12 +246,20 @@ def read_plan(con: Any, url: str, cancelled: Callable[[], bool] | None = None) -
     return plan_read(schema, geo[0][0] if geo else None)
 
 
+@dataclass(frozen=True)
+class Watch:
+    """What a long query reports to: a cancel test, and a receiver of its progress."""
+
+    cancelled: Callable[[], bool] | None = None
+    progress: Progress | None = None
+
+
 def estimate(
     con: Any,
-    url: str,
+    url: Source,
     plan: ReadPlan,
     clip: Clip = WHOLE_FILE,
-    cancelled: Callable[[], bool] | None = None,
+    watch: Watch | None = None,
 ) -> int | None:
     """Return about how many features a copy of ``url`` in ``clip`` holds.
 
@@ -172,7 +270,8 @@ def estimate(
     if query is None:
         return None
     sql, params = query
-    with cursor(con, cancelled) as cur:
+    watch = watch or Watch()
+    with cursor(con, watch.cancelled, watch.progress) as cur:
         return int(cur.execute(sql, [url, *params]).fetchone()[0])
 
 
@@ -224,23 +323,31 @@ def null_geometries(path: str) -> int:
 
 def write_gpkg(
     con: Any,
-    url: str,
+    url: Source,
     plan: ReadPlan,
     target: Target,
-    cancelled: Callable[[], bool] | None = None,
+    watch: Watch | None = None,
 ) -> Written:
     """Copy the features of ``url`` into a new GeoPackage at ``target.path``.
 
     A feature of another geometry type gets a NULL geometry and counts as
     refused. A table becomes an attribute table.
     """
-    with cursor(con, cancelled) as cur:
+    watch = watch or Watch()
+    with cursor(con, watch.cancelled, watch.progress) as cur:
         layer_type = plan.geometry_type
         if layer_type == "Unknown":
             sql, params = build_first_type(plan, target.clip)
             layer_type = type_from_first(cur.execute(sql, [url, *params]).fetchone())
-        sql, params = build_copy(plan, target.path, layer_type, target.clip, target.srs)
-        written = cur.execute(sql, [url, *params]).fetchone()
+        # COPY to GDAL scans on one thread. A table first lets DuckDB read the row groups in parallel.
+        query, params = build_select(plan, layer_type, target.clip)
+        cur.execute(f"CREATE OR REPLACE TEMP TABLE {_STAGED} AS {query}", [url, *params])
+        try:
+            written = cur.execute(
+                build_write(plan, f"SELECT * FROM {_STAGED}", target.path, layer_type, target.srs)  # noqa: S608  # nosec B608 - a fixed table name
+            ).fetchone()
+        finally:
+            cur.execute(f"DROP TABLE IF EXISTS {_STAGED}")
     features = int(written[0]) if written else 0
     if not plan.has_geometry:
         drop_geometry(target.path)

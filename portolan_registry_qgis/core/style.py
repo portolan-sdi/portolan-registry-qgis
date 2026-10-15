@@ -8,6 +8,8 @@ the QGIS MapBox GL converter.
 from __future__ import annotations
 
 import json
+import posixpath
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
@@ -23,6 +25,8 @@ if TYPE_CHECKING:
 # The name the layer's own style gets in its style manager. Translate it where it is used.
 DEFAULT_STYLE_NAME = N_("QGIS default style")
 _PMTILES_SCHEME = "pmtiles://"
+# The tile template that a ``pmtiles://`` entry in ``tiles`` may end with.
+_TILE_TEMPLATE = re.compile(r"/\{z\}/\{x\}/\{y\}[^/]*$")
 # A sprite image as bytes, and its JSON index.
 Sprite = tuple[bytes, dict[str, Any]]
 
@@ -47,6 +51,8 @@ def _archive_url(source: object, style_url: str, fallback: str | None) -> str | 
     if not isinstance(source, dict) or source.get("type") != "vector":
         return None
     url = source.get("url")
+    if url is None:
+        url = _tiles_archive(source.get("tiles"))
     if url is None and "tiles" not in source:
         return fallback
     if not isinstance(url, str):
@@ -56,6 +62,27 @@ def _archive_url(source: object, style_url: str, fallback: str | None) -> str | 
     elif not urlsplit(url).path.lower().endswith(".pmtiles"):
         return None
     return absolute_href(url, style_url)
+
+
+def _tiles_archive(tiles: object) -> str | None:
+    """Return the archive of a ``tiles`` list whose first entry is a ``pmtiles://`` template."""
+    if not isinstance(tiles, list) or not tiles or not isinstance(tiles[0], str):
+        return None
+    if not tiles[0].startswith(_PMTILES_SCHEME):
+        return None
+    return _TILE_TEMPLATE.sub("", tiles[0])
+
+
+def match_archive(url: str, archives: list[str]) -> str | None:
+    """Return the archive in ``archives`` that a style source names, or None.
+
+    An exact URL wins. Else the archive with the same file name, when only one has it.
+    """
+    if url in archives:
+        return url
+    name = posixpath.basename(urlsplit(url).path)
+    named = [archive for archive in archives if posixpath.basename(urlsplit(archive).path) == name]
+    return named[0] if len(named) == 1 else None
 
 
 def pmtiles_sources(

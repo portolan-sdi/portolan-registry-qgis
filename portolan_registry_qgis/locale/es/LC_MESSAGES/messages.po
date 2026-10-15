@@ -116,6 +116,10 @@ msgstr "Todos los archivos ({count})"
 msgid "All files and metadata in the Portolan browser"
 msgstr "Todos los archivos y metadatos en el navegador de Portolan"
 
+#: portolan_registry_qgis/core/stac.py
+msgid "All partitions"
+msgstr "Todas las particiones"
+
 #: portolan_registry_qgis/gui/catalog_tree.py
 msgid "All publishers"
 msgstr "Todos los publicadores"
@@ -123,6 +127,15 @@ msgstr "Todos los publicadores"
 #: portolan_registry_qgis/core/loadable.py
 msgid "All rows and columns, as a table with no geometry."
 msgstr "Todas las filas y columnas, como una tabla sin geometría."
+
+#: portolan_registry_qgis/core/parquet_query.py
+#, python-brace-format
+msgid ""
+"Amazon S3 has no bucket named {bucket}. The catalog gives no other S3 "
+"endpoint, so QGIS cannot read the files."
+msgstr ""
+"Amazon S3 no tiene ningún bucket llamado {bucket}. El catálogo no da ningún "
+"otro punto de acceso S3, así que QGIS no puede leer los archivos."
 
 #: portolan_registry_qgis/gui/details.py
 msgid "Area of interest"
@@ -161,13 +174,6 @@ msgstr "Crear un mosaico de {name}"
 #, python-brace-format
 msgid "Build the mosaic {name} again"
 msgstr "Crear de nuevo el mosaico {name}"
-
-#: portolan_registry_qgis/gui/loading.py
-#, python-brace-format
-msgid "Building a mosaic of {n} file…"
-msgid_plural "Building a mosaic of {n} files…"
-msgstr[0] "Creando un mosaico de {n} archivo…"
-msgstr[1] "Creando un mosaico de {n} archivos…"
 
 #: portolan_registry_qgis/gui/tasks.py
 msgid "Cancel"
@@ -252,6 +258,11 @@ msgstr "Copiando los objetos espaciales de {name} con DuckDB…"
 
 #: portolan_registry_qgis/gui/loading.py
 #, python-brace-format
+msgid "Copying the features of {name}…"
+msgstr "Copiando las entidades de {name}…"
+
+#: portolan_registry_qgis/gui/loading.py
+#, python-brace-format
 msgid "Could not add vector tiles: {error}"
 msgstr "No se pudieron añadir las teselas vectoriales: {error}"
 
@@ -290,6 +301,11 @@ msgstr "No se pudo copiar de nuevo {url}: {error}"
 #, python-brace-format
 msgid "Could not list the files of {title}: {error}"
 msgstr "No se pudieron listar los archivos de {title}: {error}"
+
+#: portolan_registry_qgis/gui/downloads.py
+#, python-brace-format
+msgid "Could not list the partitions: {error}"
+msgstr "No se pudieron listar las particiones: {error}"
 
 #: portolan_registry_qgis/gui/downloads.py
 #, python-brace-format
@@ -358,6 +374,11 @@ msgstr "No se pudo transformar la extensión: {error}"
 #, python-brace-format
 msgid "Could not write {path}: {error}"
 msgstr "No se pudo escribir {path}: {error}"
+
+#: portolan_registry_qgis/gui/loading.py
+#, python-brace-format
+msgid "Counting the features of {name}…"
+msgstr "Contando las entidades de {name}…"
 
 #: portolan_registry_qgis/core/format.py
 msgid "Custom terms"
@@ -545,6 +566,11 @@ msgstr ""
 msgid "GeoParquet needs DuckDB {minimum} or newer, and it is not installed."
 msgstr "GeoParquet necesita DuckDB {minimum} o posterior, y no está instalado."
 
+#: portolan_registry_qgis/core/download.py
+#, python-brace-format
+msgid "HTTPS cannot list the files of {glob}"
+msgstr "HTTPS no puede listar los archivos de {glob}"
+
 #: mkdocs.yml
 msgctxt "docs"
 msgid "Home"
@@ -582,6 +608,10 @@ msgstr "Licencia"
 msgid "List the files of {title}"
 msgstr "Listar los archivos de {title}"
 
+#: portolan_registry_qgis/gui/downloads.py
+msgid "List the partitions"
+msgstr "Listar las particiones"
+
 #. a task in the QGIS task manager that lists the files below {title}.
 #: portolan_registry_qgis/gui/downloads.py
 #, python-brace-format
@@ -597,6 +627,11 @@ msgstr "Listando todo lo que hay debajo de {title}…"
 #, python-brace-format
 msgid "Listing of {title} cancelled."
 msgstr "Se canceló el listado de {title}."
+
+#: portolan_registry_qgis/core/download.py
+#, python-brace-format
+msgid "Listing the files of {glob} needs DuckDB"
+msgstr "Listar los archivos de {glob} requiere DuckDB"
 
 #. The about line of the QGIS plugin manager.
 #: portolan_registry_qgis/metadata.txt
@@ -674,17 +709,22 @@ msgid "More"
 msgstr "Más"
 
 #: portolan_registry_qgis/gui/loading.py
-#, python-brace-format
-msgid "No COG file of {title} lies in the chosen area."
-msgstr "Ningún archivo COG de {title} está en el área elegida."
-
-#: portolan_registry_qgis/gui/loading.py
 msgid "No feature intersects the chosen area."
 msgstr "Ningún objeto espacial interseca el área elegida."
 
 #: portolan_registry_qgis/qgis_io/mosaic.py
 msgid "No file intersects the area"
 msgstr "Ningún archivo interseca el área"
+
+#: portolan_registry_qgis/gui/loading.py
+#, python-brace-format
+msgid "No file of {title} lies in the chosen area."
+msgstr "Ningún archivo de {title} está en el área elegida."
+
+#: portolan_registry_qgis/gui/loading.py
+#, python-brace-format
+msgid "No item of {title} in the chosen area has a GeoParquet file."
+msgstr "Ningún ítem de {title} en el área elegida tiene un archivo GeoParquet."
 
 #: portolan_registry_qgis/gui/registry_list.py
 msgid "No publisher matches these filters."
@@ -733,6 +773,13 @@ msgstr "Ábralo en un QGIS cuyo GDAL incluya {name}."
 msgid "Open vector tiles of {title}"
 msgstr "Abrir las teselas vectoriales de {title}"
 
+#: portolan_registry_qgis/gui/loading.py
+#, python-brace-format
+msgid "Opening {n} COG for the mosaic…"
+msgid_plural "Opening {n} COGs for the mosaic…"
+msgstr[0] "Abriendo {n} COG para el mosaico…"
+msgstr[1] "Abriendo {n} COG para el mosaico…"
+
 #. The symbol for petabytes in a file size. French writes "Po", for pétaoctet.
 #: portolan_registry_qgis/core/format.py
 msgid "PB"
@@ -754,6 +801,11 @@ msgstr "Propietaria"
 #: portolan_registry_qgis/core/facts.py
 msgid "Publisher"
 msgstr "Publicador"
+
+#: portolan_registry_qgis/gui/loading.py
+#, python-brace-format
+msgid "QGIS cannot list the files of {glob} over HTTPS."
+msgstr "QGIS no puede listar los archivos de {glob} por HTTPS."
 
 #: portolan_registry_qgis/qgis_io/mosaic.py
 #, python-brace-format
@@ -888,6 +940,15 @@ msgstr "Leyendo {name} con DuckDB…"
 #: portolan_registry_qgis/gui/details.py
 msgid "Reading…"
 msgstr "Leyendo…"
+
+#: portolan_registry_qgis/core/loadable.py
+#, python-brace-format
+msgid "Reads every file that matches {glob}."
+msgstr "Lee todos los archivos que coinciden con {glob}."
+
+#: portolan_registry_qgis/core/loadable.py
+msgid "Reads the GeoParquet file of each item in the area."
+msgstr "Lee el archivo GeoParquet de cada ítem del área."
 
 #. A catalog status. The catalog is gone from its address.
 #: portolan_registry_qgis/gui/widgets.py
@@ -1026,6 +1087,18 @@ msgstr "El área está vacía."
 msgid "The area is not a polygon."
 msgstr "El área no es un polígono."
 
+#: portolan_registry_qgis/core/loadable.py
+#, python-brace-format
+msgid ""
+"The catalog splits this data into many files at {glob}. QGIS cannot list "
+"files over HTTPS, and the catalog gives no s3:// or gs:// address and no "
+"items. Add single files from All files instead."
+msgstr ""
+"El catálogo divide estos datos en muchos archivos en {glob}. QGIS no puede "
+"listar archivos por HTTPS, y el catálogo no da ninguna dirección s3:// o "
+"gs:// ni ningún ítem. En su lugar, añada archivos sueltos desde Todos los "
+"archivos."
+
 #: portolan_registry_qgis/qgis_io/mosaic.py
 msgid "The clip is not WKT"
 msgstr "El recorte no es WKT"
@@ -1041,6 +1114,17 @@ msgstr "El archivo no tiene columnas"
 #: portolan_registry_qgis/core/geoparquet.py
 msgid "The file has no geometry column that its metadata names"
 msgstr "El archivo no tiene la columna de geometría que nombran sus metadatos"
+
+#: portolan_registry_qgis/core/loadable.py
+#, python-brace-format
+msgid "The files of {n} partitioned dataset could not be listed and are left out."
+msgid_plural "The files of {n} partitioned datasets could not be listed and are left out."
+msgstr[0] ""
+"No se pudieron listar los archivos de {n} conjunto de datos particionado, "
+"que queda fuera."
+msgstr[1] ""
+"No se pudieron listar los archivos de {n} conjuntos de datos particionados, "
+"que quedan fuera."
 
 #: portolan_registry_qgis/core/stac.py
 msgid "The link did not return a STAC document"
@@ -1195,6 +1279,25 @@ msgstr "Hacer zoom del mapa a la extensión de este conjunto de datos"
 msgid "Zoom to"
 msgstr "Zoom a"
 
+#: portolan_registry_qgis/core/progress.py
+#, python-brace-format
+msgid "about {n} hour left"
+msgid_plural "about {n} hours left"
+msgstr[0] "queda alrededor de {n} hora"
+msgstr[1] "quedan unas {n} horas"
+
+#: portolan_registry_qgis/core/progress.py
+#, python-brace-format
+msgid "about {n} min left"
+msgid_plural "about {n} min left"
+msgstr[0] "quedan unos {n} min"
+msgstr[1] "quedan unos {n} min"
+
+#: portolan_registry_qgis/core/progress.py
+#, python-brace-format
+msgid "about {n} s left"
+msgstr "quedan unos {n} s"
+
 #: portolan_registry_qgis/qgis_io/layers.py
 #, python-brace-format
 msgid "the server answered HTTP {status}"
@@ -1226,6 +1329,18 @@ msgstr "{layer} no tiene ningún polígono."
 #, python-brace-format
 msgid "{layer} keeps no mosaic sources"
 msgstr "{layer} no conserva las fuentes del mosaico"
+
+#. {message} says what runs, and {percent} how much of it is done.
+#: portolan_registry_qgis/core/progress.py
+#, python-brace-format
+msgid "{message} {percent}%"
+msgstr "{message} {percent} %"
+
+#. {left} is a time left, such as "about 15 s left".
+#: portolan_registry_qgis/core/progress.py
+#, python-brace-format
+msgid "{message} {percent}%, {left}"
+msgstr "{message} {percent} %, {left}"
 
 #: portolan_registry_qgis/gui/loading.py
 #, python-brace-format

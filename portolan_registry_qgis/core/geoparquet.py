@@ -365,19 +365,19 @@ def shape(plan: ReadPlan) -> str:
 def _where(plan: ReadPlan, clip: Clip, *, exact: bool = True) -> tuple[str, list[object]]:
     """Return the WHERE clause and its parameters.
 
-    Without ``exact``, only the covering column filters.
+    Without ``exact``, only the covering column filters, so DuckDB reads no geometry.
+    The covering bounds are float literals, which DuckDB prunes row groups with fastest.
     """
-    where = [f"{quote(_geometry(plan))} IS NOT NULL"]
+    where = [f"{quote(_geometry(plan))} IS NOT NULL"] if exact else ["TRUE"]
     params: list[object] = []
     if clip.bbox is not None:
-        west, south, east, north = clip.bbox
+        west, south, east, north = (float(value) for value in clip.bbox)
         if plan.covering is not None:
             c = plan.covering
             where.append(
-                f"{column_path(c.xmin)} <= ? AND {column_path(c.xmax)} >= ? "
-                f"AND {column_path(c.ymin)} <= ? AND {column_path(c.ymax)} >= ?"
+                f"{column_path(c.xmin)} <= {east!r} AND {column_path(c.xmax)} >= {west!r} "
+                f"AND {column_path(c.ymin)} <= {north!r} AND {column_path(c.ymax)} >= {south!r}"
             )
-            params += [east, west, north, south]
         if exact and clip.area is not None:
             where.append(f"ST_Intersects({shape(plan)}, ST_GeomFromText(?))")
             params.append(clip.area)
@@ -501,30 +501,36 @@ def _gdal_options(creation: list[str]) -> list[str]:
     ]
 
 
-def build_copy(
-    plan: ReadPlan,
-    path: str,
-    layer_type: str,
-    clip: Clip = WHOLE_FILE,
-    srs: str | None = None,
+def build_select(
+    plan: ReadPlan, layer_type: str, clip: Clip = WHOLE_FILE
 ) -> tuple[str, list[object]]:
-    """Build the ``COPY`` of the features into a GeoPackage, with the URL first.
+    """Build the query of the features a copy writes, with the URL first.
 
-    A feature not of ``layer_type`` gets a NULL geometry. A table copies every
-    row into an empty geometry column, and ignores the clip and the CRS.
+    A feature not of ``layer_type`` gets a NULL geometry. A table selects every
+    row, and ignores the clip.
     """
     selected = [f"{_value(column)} AS {quote(output_name(column.name))}" for column in plan.columns]
-    creation = [f"FID={fid_name(plan)}", f"GEOMETRY_NAME={geometry_name(plan)}"]
     if plan.geometry is None:
-        creation.append("SPATIAL_INDEX=NO")
-        return (
-            f"COPY (SELECT {', '.join(selected)} FROM read_parquet(?)) "  # noqa: S608  # nosec B608 - identifiers are quoted
-            f"TO {literal(path)} ({', '.join(_gdal_options(creation))})"
-        ), []
+        return f"SELECT {', '.join(selected)} FROM read_parquet(?)", []  # noqa: S608  # nosec B608 - identifiers are quoted
     fits, promote = _type_condition(plan, layer_type)
     geometry = f"ST_Multi({shape(plan)})" if promote else shape(plan)
     selected.insert(0, f"CASE WHEN {fits} THEN {geometry} END AS {quote(plan.geometry)}")
     where, params = _where(plan, clip)
+    sql = f"SELECT {', '.join(selected)} FROM read_parquet(?) WHERE {where}"  # noqa: S608  # nosec B608 - identifiers are quoted, values are parameters
+    return sql, params
+
+
+def build_write(
+    plan: ReadPlan, query: str, path: str, layer_type: str, srs: str | None = None
+) -> str:
+    """Build the ``COPY`` of the rows of ``query`` into a GeoPackage at ``path``.
+
+    A table gets no spatial index, and ignores the CRS.
+    """
+    creation = [f"FID={fid_name(plan)}", f"GEOMETRY_NAME={geometry_name(plan)}"]
+    if plan.geometry is None:
+        creation.append("SPATIAL_INDEX=NO")
+        return f"COPY ({query}) TO {literal(path)} ({', '.join(_gdal_options(creation))})"
     options = _gdal_options(creation)
     if not layer_type.endswith("Z"):
         # GDAL takes no Z types here. Without the option it reads the type
@@ -532,8 +538,16 @@ def build_copy(
         options.append(f"GEOMETRY_TYPE {literal(layer_type.upper())}")
     if srs:
         options.append(f"SRS {literal(srs)}")
-    sql = (
-        f"COPY (SELECT {', '.join(selected)} FROM read_parquet(?) "  # noqa: S608  # nosec B608 - identifiers are quoted, values are parameters
-        f"WHERE {where}) TO {literal(path)} ({', '.join(options)})"
-    )
-    return sql, params
+    return f"COPY ({query}) TO {literal(path)} ({', '.join(options)})"
+
+
+def build_copy(
+    plan: ReadPlan,
+    path: str,
+    layer_type: str,
+    clip: Clip = WHOLE_FILE,
+    srs: str | None = None,
+) -> tuple[str, list[object]]:
+    """Build the ``COPY`` of the features into a GeoPackage in one statement, with the URL first."""
+    query, params = build_select(plan, layer_type, clip)
+    return build_write(plan, query, path, layer_type, srs), params

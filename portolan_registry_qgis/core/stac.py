@@ -7,11 +7,18 @@ from __future__ import annotations
 
 import math
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal
 
 from portolan_registry_qgis.core.geoparquet import GEOMETRY_NAMES
-from portolan_registry_qgis.core.hrefs import absolute_href, asset_href, folder_name, is_http_url
+from portolan_registry_qgis.core.hrefs import (
+    absolute_href,
+    asset_href,
+    bucket_url,
+    folder_name,
+    is_glob,
+    is_http_url,
+)
 from portolan_registry_qgis.core.i18n import _
 
 if TYPE_CHECKING:
@@ -94,6 +101,16 @@ class Asset:
     # True for a Parquet file whose ``table:columns`` list no geometry
     # column. The spec calls this a tabular collection.
     tabular: bool = False
+    # The ``partition:glob`` of a partitioned asset, resolved like an href.
+    glob: str | None = None
+
+    @property
+    def read_url(self) -> str | None:
+        """The URL DuckDB reads: the href, or the bucket form of the glob.
+
+        None for a glob that only HTTPS serves, because HTTPS has no listing.
+        """
+        return self.href if self.glob is None else bucket_url(self.glob)
 
     @property
     def label(self) -> str:
@@ -407,8 +424,10 @@ def _roles(raw: object) -> tuple[str, ...]:
     return tuple(r for r in raw if isinstance(r, str)) if isinstance(raw, list) else ()
 
 
-def _asset(key: object, raw: dict[str, Any], href: str, shared_columns: object) -> Asset:
-    """Read one asset whose href is already resolved."""
+def _asset(
+    key: object, raw: dict[str, Any], href: str, shared_columns: object, glob: str | None
+) -> Asset:
+    """Read one asset whose href and glob are already resolved."""
     media = str_or_none(raw.get("type"))
     detected = asset_format(href, media)
     columns = raw.get("table:columns", shared_columns)  # i18n: skip - a STAC key
@@ -422,7 +441,52 @@ def _asset(key: object, raw: dict[str, Any], href: str, shared_columns: object) 
         checksum=str_or_none(raw.get("file:checksum")),  # i18n: skip - a STAC key
         format=detected,
         tabular=detected == "parquet" and is_tabular(columns),
+        glob=glob or (href if is_glob(href) else None),
     )
+
+
+def _glob_of(raw: dict[str, Any], base: str) -> str | None:
+    """Return the resolved ``partition:glob`` of a collection or an asset, or None."""
+    glob = raw.get("partition:glob")  # i18n: skip - a STAC key
+    if not isinstance(glob, str) or not glob:
+        return None
+    try:
+        return asset_href(glob, base)
+    except ValueError:
+        return None
+
+
+def with_partitions(
+    document: dict[str, Any], base: str, assets: tuple[Asset, ...]
+) -> tuple[Asset, ...]:
+    """Apply a collection's ``partition:glob`` to its assets.
+
+    A glob asset that DuckDB cannot list takes the collection glob. A
+    collection with no Parquet data gets one asset that reads the glob.
+    """
+    glob = _glob_of(document, base)
+    if glob is None:
+        return assets
+    fixed = tuple(
+        replace(asset, glob=glob) if asset.glob and asset.read_url is None else asset
+        for asset in assets
+    )
+    if any(asset.format == "parquet" for asset in only_data(fixed)):
+        return fixed
+    shared = document.get("table:columns")  # i18n: skip - a STAC key
+    partitions = Asset(
+        key="partition:glob",  # i18n: skip - a STAC key
+        href=glob,
+        title=_("All partitions"),
+        type="application/vnd.apache.parquet",  # i18n: skip - a media type
+        roles=("data",),
+        size=None,
+        checksum=None,
+        format="parquet",
+        tabular=is_tabular(shared),
+        glob=glob,
+    )
+    return (*fixed, partitions)
 
 
 def assets_of(document: dict[str, Any], base: str) -> tuple[Asset, ...]:
@@ -448,7 +512,7 @@ def assets_of(document: dict[str, Any], base: str) -> tuple[Asset, ...]:
             href = asset_href(raw["href"], base, _account(raw, item_account))
         except ValueError:
             continue
-        assets.append(_asset(key, raw, href, shared_columns))
+        assets.append(_asset(key, raw, href, shared_columns, _glob_of(raw, base)))
     return tuple(assets)
 
 
@@ -491,8 +555,23 @@ def _text(document: dict[str, Any], *keys: str) -> str:
     return ""
 
 
-def read_document(document: object, href: str) -> Document:
-    """Read a fetched STAC document.
+@dataclass(frozen=True)
+class Fetched:
+    """A fetched JSON document, and the URL it came from after any redirect."""
+
+    document: object
+    url: str
+
+
+def read_fetched(fetched: object, href: str) -> Document:
+    """Read a ``Fetched`` document, or plain JSON, that the plugin asked for at ``href``."""
+    if isinstance(fetched, Fetched):
+        return read_document(fetched.document, href, fetched.url)
+    return read_document(fetched, href)
+
+
+def read_document(document: object, href: str, base: str | None = None) -> Document:
+    """Read a fetched STAC document. Relative hrefs resolve against ``base``, else ``href``.
 
     Raises:
         StacError: The JSON is not a STAC catalog, collection, or item.
@@ -500,7 +579,8 @@ def read_document(document: object, href: str) -> Document:
     if not isinstance(document, dict):
         raise StacError(_("The link did not return a STAC document"))
     kind = _kind_of(document)
-    links = links_of(document.get("links"), href)
+    href_base = base or href
+    links = links_of(document.get("links"), href_base)
     properties = document.get("properties")
     props = properties if isinstance(properties, dict) else {}
     doc_id = _text(document, "id") or folder_name(href)
@@ -511,8 +591,8 @@ def read_document(document: object, href: str) -> Document:
         id=doc_id,
         title=_text(document, "title") or _text(props, "title") or doc_id,
         description=_text(document, "description") or _text(props, "description"),
-        children=children_of(document, href),
-        assets=assets_of(document, href),
+        children=children_of(document, href_base),
+        assets=with_partitions(document, href_base, assets_of(document, href_base)),
         pmtiles=pmtiles_links(links),
         bbox=_bbox_of(document, kind),
         license=license_value if isinstance(license_value, str) else None,

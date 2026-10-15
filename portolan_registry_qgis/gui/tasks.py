@@ -5,15 +5,17 @@ Only one task runs at a time. ``busy_changed`` tells the window to sync its butt
 
 from __future__ import annotations
 
+import time
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Protocol
 
 from qgis.core import Qgis
-from qgis.PyQt.QtCore import pyqtSignal
+from qgis.PyQt.QtCore import pyqtSignal, pyqtSlot
 from qgis.PyQt.QtWidgets import QFrame, QHBoxLayout, QProgressBar, QPushButton, QVBoxLayout
 
 from portolan_registry_qgis.core import download
 from portolan_registry_qgis.core.i18n import _, count
+from portolan_registry_qgis.core.progress import Clock, progress_text
 from portolan_registry_qgis.qgis_io.downloader import DownloadJob
 from portolan_registry_qgis.qgis_io.log import log
 from portolan_registry_qgis.qgis_io.network import QtExecutor, run_task
@@ -58,6 +60,9 @@ class TaskController(QFrame):
         # The task of the mosaic search, the mosaic build, or the listing.
         # Cancel stops it.
         self._task: QgsTask | None = None
+        # The time left of the task the bar shows, and what the bar says.
+        self._clock = Clock()
+        self._message = ""
         self.setFrameShape(QFrame.Shape.StyledPanel)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 6, 8, 6)
@@ -110,6 +115,7 @@ class TaskController(QFrame):
         or until ``on_done`` raises.
         """
         self.begin(busy)
+        self._clock = Clock()
         self.show_progress(0, 0, message)
 
         def work(task: QgsTask) -> object:
@@ -135,7 +141,12 @@ class TaskController(QFrame):
     def start_job(self, folder: Path, files: list[download.PlannedFile]) -> None:
         """Download ``files`` into ``folder``, and report when the job ends."""
         job = DownloadJob(folder, files, self)
-        job.progress.connect(self.show_progress)
+        self._clock = Clock()
+        job.progress.connect(
+            lambda done, total, message: self.show_fraction(
+                job.fraction, f"{message}  ({done}/{total})"
+            )
+        )
         job.finished.connect(lambda report: self._downloaded(folder, report))
         self._job = job
         self.cancel.show()
@@ -146,6 +157,42 @@ class TaskController(QFrame):
         """Let Cancel stop ``task``, a search, a listing, or a mosaic build."""
         self._task = task
         self.cancel.show()
+
+    def follow(self, task: QgsTask, message: str) -> None:
+        """Show the progress of ``task`` with ``message`` and the time left, and let Cancel stop it.
+
+        A task that starts while another holds the bar shows in the QGIS task manager only.
+        """
+        if self._job is not None or (self._task is not None and self._task is not task):
+            return
+        self._clock = Clock()
+        self._message = message
+        self.show_fraction(None, message)
+        self.track(task)
+        task.progressChanged.connect(self._task_progress)
+
+    def release(self, task: QgsTask) -> None:
+        """Hide the bar when it still shows ``task``."""
+        if self._task is task:
+            self.hide_progress()
+
+    @pyqtSlot(float)
+    def _task_progress(self, percent: float) -> None:
+        if self._task is not None and self.sender() is self._task:
+            self.show_fraction(percent / 100, self._message)
+
+    def show_fraction(self, fraction: float | None, message: str) -> None:
+        """Show ``message``, with the share done and the time left when ``fraction`` is known."""
+        scale = 1000
+        self.progress.setRange(0, scale if fraction is not None else 0)
+        left = None
+        if fraction is not None:
+            fraction = self._clock.share(fraction)
+            left = self._clock.left(fraction, time.monotonic())
+            self.progress.setValue(int(fraction * scale))
+        self.progress.setFormat(progress_text(message, fraction, left))
+        self.progress.show()
+        self.show()
 
     def stop(self) -> None:
         """Stop the download, or the task that Cancel tracks."""

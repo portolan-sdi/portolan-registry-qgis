@@ -62,7 +62,7 @@ def item_hrefs_in(
     executor: Executor | None = None,
     cancelled: Callable[[], bool] | None = None,
 ) -> list[str]:
-    """Return the first COG href of each item of ``collection`` in ``scope``.
+    """Return the file of each item of ``collection`` in ``scope``: its COG, else its GeoParquet.
 
     A ``collection-mirror`` asset answers through DuckDB when it can. Else the
     function walks the items. Safe off the main thread.
@@ -93,13 +93,13 @@ def walked_hrefs(
     executor: Executor | None = None,
     cancelled: Callable[[], bool] | None = None,
 ) -> list[str]:
-    """Read every item below ``start`` and return the COGs of those in ``scope``."""
+    """Read every item below ``start`` and return the files of those in ``scope``."""
     failures: list[tuple[str, str]] = []
     hrefs: list[str] = []
     for document in walk(fetch_json, start, failures, Walk(MAX_DOCUMENTS, cancelled, executor)):
         if document.kind != "item" or not scopes.intersects(document.bbox, scope):
             continue
-        href = mirrors.cog_href(document.assets)
+        href = mirrors.item_href(document.assets)
         if href is not None:
             hrefs.append(href)
     if failures:
@@ -117,18 +117,19 @@ def write_vrt(
     hrefs: list[str],
     cancelled: Callable[[], bool] | None = None,
     clip: str | None = None,
+    progress: Callable[[float], None] | None = None,
 ) -> Path:
     """Write a VRT over the COGs at ``hrefs`` into the session folder. Safe off the main thread.
 
     ``clip`` is EPSG:4326 WKT. With it, a warped VRT crops to the polygon and
-    keeps the pixel grid. The log names each COG that GDAL leaves out.
+    keeps the pixel grid. ``progress`` gets the share of the COGs GDAL has opened.
     Raise MosaicCancelledError on cancel, and LayerError when GDAL fails.
     """
     if not hrefs:
         raise LayerError(_("No file intersects the area"))
     path = parquet_layer.new_path(".vrt")
     try:
-        _write_vrt_at(hrefs, path, cancelled, clip)
+        _write_vrt_at(hrefs, path, cancelled, clip, progress)
     except BaseException:
         parquet_layer.discard_path(path)
         raise
@@ -140,6 +141,7 @@ def _write_vrt_at(
     path: Path,
     cancelled: Callable[[], bool] | None,
     clip: str | None,
+    progress: Callable[[float], None] | None = None,
 ) -> None:
     """Write the VRT of ``write_vrt`` at ``path``, and raise when it fails.
 
@@ -149,7 +151,7 @@ def _write_vrt_at(
     """
     _raise_if_blocked(hrefs)
     by_path = {gdal_path(h): h for h in hrefs}
-    bands, error, skipped = _build_vrt(hrefs, path, cancelled, clip)
+    bands, error, skipped = _build_vrt(hrefs, path, cancelled, clip, progress)
     reasons = _skip_reasons(skipped, by_path)
     if cancelled is not None and cancelled():
         # Translators: Why a task stopped. The user cancelled it.
@@ -173,6 +175,7 @@ def _build_vrt(
     path: Path,
     cancelled: Callable[[], bool] | None,
     clip: str | None,
+    progress: Callable[[float], None] | None = None,
 ) -> tuple[int, str, dict[str, str]]:
     """Let GDAL write the VRT over the COGs at ``hrefs`` at ``path``.
 
@@ -181,10 +184,12 @@ def _build_vrt(
         and GDAL's reason for each path it left out.
     """
 
-    def progress(_complete: float, _message: object, _data: object) -> int:
+    def report(complete: float, _message: object, _data: object) -> int:
+        if progress is not None:
+            progress(complete)
         return 0 if cancelled is not None and cancelled() else 1
 
-    options = gdal.BuildVRTOptions(callback=progress)
+    options = gdal.BuildVRTOptions(callback=report)
     paths = [gdal_path(h) for h in hrefs]
     # BuildVRT says only "Can't open <path>. Skipping it." for a file it
     # cannot open. The handler keeps those paths, to ask GDAL why.
@@ -387,7 +392,7 @@ def start_vrt(
     """
 
     def write(task: QgsTask) -> Path:
-        return write_vrt(hrefs, task.isCanceled, clip)
+        return write_vrt(hrefs, task.isCanceled, clip, lambda done: task.setProgress(done * 100))
 
     def done(result: object, error: BaseException | None) -> None:
         on_done(result if isinstance(result, Path) else None, error)

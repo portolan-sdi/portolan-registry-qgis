@@ -364,6 +364,16 @@ def test_plan_reports_a_glob_it_cannot_list():
     )
     assert failed.unlisted[0][1] == "listing refused"
 
+    def no_bucket(_url):
+        raise OSError("NoSuchBucket: The specified bucket does not exist")
+
+    missing = plan(
+        fake_fetch(_partitioned_catalog("./*.parquet")),
+        f"{SC}/col/collection.json",
+        how=Walk(list_glob=no_bucket),
+    )
+    assert "Amazon S3 has no bucket named bucket" in missing.unlisted[0][1]
+
 
 def test_plan_downloads_the_items_of_an_https_glob_without_a_note():
     documents = {

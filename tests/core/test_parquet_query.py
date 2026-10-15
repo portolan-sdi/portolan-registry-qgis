@@ -476,3 +476,28 @@ def test_a_dotted_bucket_gets_a_path_style_secret(live):
 )
 def test_source_text_round_trips(source):
     assert parquet_query.source_from_text(parquet_query.source_text(source)) == source
+
+
+_NO_BUCKET = (
+    "HTTP Error: HTTP GET error reading 's3://parquetry/nfhl/state=' in region '' "
+    "(HTTP 404 Not Found)\n\nNoSuchBucket: The specified bucket does not exist"
+)
+
+
+def test_read_error_names_a_bucket_that_amazon_does_not_have():
+    message = parquet_query.read_error("s3://parquetry/nfhl/state=*/*.parquet", _NO_BUCKET)
+    assert "parquetry" in message
+    assert "endpoint" in message
+    assert parquet_query.read_error(["s3://parquetry/a.parquet"], _NO_BUCKET) == message
+
+
+@pytest.mark.parametrize(
+    ("source", "error"),
+    [
+        ("s3://bucket/a.parquet", "HTTP 403 Forbidden"),
+        ("https://x.test/a.parquet", _NO_BUCKET),
+        (["https://x.test/a.parquet"], "IO Error"),
+    ],
+)
+def test_read_error_keeps_other_errors(source, error):
+    assert parquet_query.read_error(source, error) == error

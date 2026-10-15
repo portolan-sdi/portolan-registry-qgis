@@ -17,6 +17,7 @@ from urllib.parse import unquote, urlsplit
 
 from portolan_registry_qgis.core.hrefs import asset_href, glob_root, is_glob
 from portolan_registry_qgis.core.i18n import _
+from portolan_registry_qgis.core.parquet_query import read_error
 from portolan_registry_qgis.core.scope import intersects
 from portolan_registry_qgis.core.stac import Document, StacError, read_fetched
 
@@ -166,7 +167,7 @@ def partition_files(
     try:
         found = list_glob(url)
     except Exception as error:  # noqa: BLE001 - DuckDB raises its own error types
-        return [], str(error)
+        return [], read_error(url, error)
     hrefs = [asset_href(listed, listed) for listed in found]
     return [PlannedFile(href, local_path(href, root)) for href in hrefs], None
 

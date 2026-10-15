@@ -128,6 +128,15 @@ msgstr "Todos los publicadores"
 msgid "All rows and columns, as a table with no geometry."
 msgstr "Todas las filas y columnas, como una tabla sin geometría."
 
+#: portolan_registry_qgis/core/parquet_query.py
+#, python-brace-format
+msgid ""
+"Amazon S3 has no bucket named {bucket}. The catalog gives no other S3 "
+"endpoint, so QGIS cannot read the files."
+msgstr ""
+"Amazon S3 no tiene ningún bucket llamado {bucket}. El catálogo no da ningún "
+"otro punto de acceso S3, así que QGIS no puede leer los archivos."
+
 #: portolan_registry_qgis/gui/details.py
 msgid "Area of interest"
 msgstr "Área de interés"

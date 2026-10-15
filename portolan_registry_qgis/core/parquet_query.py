@@ -206,6 +206,19 @@ def use_bucket(con: Any, source: Source) -> None:
         )
 
 
+def read_error(source: Source, error: BaseException | str | None) -> str:
+    """Return why DuckDB could not read ``source``, in words the user can act on."""
+    text = str(error)
+    urls = [source] if isinstance(source, str) else source
+    buckets = sorted({urlsplit(url).hostname or "" for url in urls if url.startswith("s3://")})
+    if "NoSuchBucket" in text and buckets:
+        return _(
+            "Amazon S3 has no bucket named {bucket}. The catalog gives no other S3 endpoint, "
+            "so QGIS cannot read the files."
+        ).format(bucket=buckets[0])
+    return text
+
+
 def list_files(con: Any, url: str, cancelled: Callable[[], bool] | None = None) -> list[str]:
     """Return the files that a bucket glob matches, in order."""
     use_bucket(con, url)

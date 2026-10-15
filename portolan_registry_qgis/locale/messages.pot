@@ -124,6 +124,13 @@ msgstr ""
 msgid "All rows and columns, as a table with no geometry."
 msgstr ""
 
+#: portolan_registry_qgis/core/parquet_query.py
+#, python-brace-format
+msgid ""
+"Amazon S3 has no bucket named {bucket}. The catalog gives no other S3 "
+"endpoint, so QGIS cannot read the files."
+msgstr ""
+
 #: portolan_registry_qgis/gui/details.py
 msgid "Area of interest"
 msgstr ""

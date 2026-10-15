@@ -224,7 +224,9 @@ class Loader:
                     self._messages.info(_("Stopped reading {name}.").format(name=name))
                 else:
                     self._messages.warn(
-                        _("DuckDB could not read {url}: {error}").format(url=source, error=error)
+                        _("DuckDB could not read {url}: {error}").format(
+                            url=source, error=parquet_query.read_error(source, error)
+                        )
                     )
                 return
             # A table has no geometry, so the scope does not limit it.
@@ -282,7 +284,7 @@ class Loader:
                 else:
                     self._messages.warn(
                         _("DuckDB could not read {url}: {error}").format(
-                            url=planned.url, error=error
+                            url=planned.url, error=parquet_query.read_error(planned.url, error)
                         )
                     )
                 return

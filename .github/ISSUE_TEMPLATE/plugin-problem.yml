@@ -1,0 +1,71 @@
+name: Problem with the QGIS plugin
+description: Something in the Portolan Registry plugin does not work as you expect
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Use this form when the Portolan Registry plugin for QGIS does not
+        work as you expect. Is the data itself wrong or missing? Then use
+        **Report a problem** in the plugin's Details section. That form goes
+        to the publisher of the data. Your report and your GitHub name are
+        public, so remove private information before you submit.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What went wrong?
+      description: >-
+        Tell us what you tried to do, what you expected, and what happened
+        instead. Copy the exact text of any error message. You can paste a
+        screenshot here.
+      placeholder: >-
+        I selected View on map for the Catastro dataset. I expected to see
+        parcels. The map stayed empty, and QGIS showed "Could not open".
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: How did you get there?
+      description: >-
+        List the steps in QGIS, one per line. Name the publisher and the
+        dataset you opened, and the button or menu you selected.
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+
+  - type: textarea
+    id: why-it-matters
+    attributes:
+      label: Why does it matter?
+      description: >-
+        Tell us what this stops you from doing. Does it happen each time?
+        Did you find a way around it?
+    validations:
+      required: true
+
+  - type: textarea
+    id: messages
+    attributes:
+      label: Messages from QGIS
+      description: >-
+        Optional. In QGIS, open View > Panels > Log Messages. Copy the lines
+        on the Portolan Registry tab and paste them here.
+    validations:
+      required: false
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: >-
+        Report a bug in the plugin fills this in. Did you open this form
+        yourself? Then copy the plugin version from Plugins > Manage and
+        Install Plugins, and the QGIS version from Help > About.
+    validations:
+      required: true

@@ -1,0 +1,76 @@
+name: Bug report
+description: Report a problem or crash
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Thanks for reporting a bug! Please explain what went wrong and how
+        it affects your work before getting into implementation details.
+        Include commands, output, and links where they help us understand
+        or reproduce the problem.
+
+
+        If the fix is small and clear, we'd really appreciate a fix PR
+        alongside the issue. Please report security issues privately,
+        following our security policy.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: >-
+        What were you trying to do, what did you expect, and what happened
+        instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: why-it-matters
+    attributes:
+      label: Why it matters
+      description: >-
+        How does this affect your work? Let us know who encounters the
+        problem, how often it happens, and whether you have a workaround.
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: How to reproduce
+      description: >-
+        Include the steps or command that caused the problem, the output,
+        and a link or path to the data you used. A failing run or a real
+        dataset is fine; a smaller example helps if you already have one.
+        Remove private information before posting.
+    validations:
+      required: true
+
+  - type: textarea
+    id: implementation
+    attributes:
+      label: Implementation notes
+      description: >-
+        Optional. Include any suspected causes, relevant files or code
+        paths, and edge cases a fix should handle.
+    validations:
+      required: false
+
+  - type: textarea
+    id: done
+    attributes:
+      label: How to confirm the fix
+      description: >-
+        What steps or command should a reviewer run, and what result
+        would confirm that the problem is fixed?
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Tool version, or commit SHA for an unreleased build.
+    validations:
+      required: true

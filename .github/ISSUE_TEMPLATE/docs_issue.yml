@@ -1,0 +1,50 @@
+name: Documentation
+description: Report docs that are wrong, missing, or hard to follow
+labels: [documentation]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Thanks for helping improve the docs! Please point us to the relevant
+        page and explain what needs correcting or clarifying. If the change
+        is small and clear, we'd really appreciate a fix PR alongside the issue.
+
+  - type: input
+    id: where
+    attributes:
+      label: Where
+      description: >-
+        Include the URL or the file and heading. For missing documentation,
+        name the page where you expected to find it.
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What needs to change?
+      description: >-
+        Explain what is incorrect, missing, or hard to follow. Include a
+        short quote if it helps, and describe what you expected to learn.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reader
+    attributes:
+      label: Who does this affect?
+      description: >-
+        Who would use this documentation, and what would they be trying
+        to do? Your own experience is a useful example.
+    validations:
+      required: true
+
+  - type: textarea
+    id: done
+    attributes:
+      label: How to confirm the fix
+      description: >-
+        Describe what the page should explain and how a reviewer can
+        check that it is correct. Suggest replacement text if you have it.
+    validations:
+      required: true

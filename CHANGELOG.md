@@ -8,6 +8,8 @@
 - **Load full data** finds the geometry of a GeoParquet file without geo metadata in a WKB column named `shape` or `geog`, the same names that the STAC table columns use.
 - A PMTiles style or sprite on an S3 website endpoint loads over HTTPS, as the catalog itself does.
 - **Cancel** stops the search for the files of a mosaic, the build of the mosaic, and the listing of the files to download. Before, it stopped only a download. The progress bar shows while the mosaic builds.
+- **Report a problem ↗** under **Details** opens the registry's dataset problem form on GitHub, filled with the catalog ID, the dataset URL, the date, and the plugin and QGIS versions. The button shows only for a catalog that has an ID in the registry.
+- **Report a bug** in **Web > Portolan Registry** and in the window header opens the plugin's problem form on GitHub, with the plugin, QGIS, Qt, Python, GDAL, and DuckDB versions and the operating system filled in.
 
 ## 0.2.0 - 2026-10-11
 

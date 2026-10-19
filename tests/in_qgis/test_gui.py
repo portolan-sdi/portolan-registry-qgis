@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import dataclasses
 import threading
 import time
 from html import escape as html_escape
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from qgis.core import (
@@ -223,6 +225,60 @@ def test_details_buttons_start_in_their_sections(collection_window):
     assert details.title_row.isAncestorOf(details.open_browser)
     add_layout = details.scope_row.parentWidget().layout()
     assert add_layout.indexOf(details.scope_row) == 0
+
+
+def form_fields(url):
+    return {key: values[0] for key, values in parse_qs(urlsplit(url).query).items()}
+
+
+def test_report_a_problem_opens_the_registry_form(collection_window, monkeypatch):
+    opened = []
+    monkeypatch.setattr(QDesktopServices, "openUrl", lambda url: opened.append(url.toString()))
+    details = collection_window.details
+    assert details.details_box.isAncestorOf(details.report)
+    assert not details.report.isHidden()
+    details.report.click()
+    (url,) = opened
+    assert url.startswith("https://github.com/portolan-sdi/portolan-registry/issues/new?")
+    fields = form_fields(url)
+    href = collection_window.document.href
+    assert fields["template"] == "dataset-problem.yml"
+    assert fields["catalog-id"] == "test"
+    assert fields["dataset"].startswith(f"STAC document: {href}\nBrowser page: https://")
+    assert fields["observed"].count("-") == 2
+    assert fields["tool"].startswith("Portolan Registry QGIS plugin ")
+    assert f", QGIS {Qgis.version()}" in fields["tool"]
+
+
+def test_report_a_problem_hides_outside_the_registry(collection_window):
+    window = collection_window
+    entry = window.registry_list.catalogs.item(0).data(ROLE)
+    outside = dataclasses.replace(entry, id=entry.url)
+    window.details.show_document(window.document, outside, None)
+    assert window.details.report.isHidden()
+    window.details.show_document(window.document, None, None)
+    assert window.details.report.isHidden()
+    window.details.show_document(window.document, entry, None)
+    assert not window.details.report.isHidden()
+
+
+@pytest.mark.parametrize("duckdb", ["1.5.0", None], ids=["duckdb", "no-duckdb"])
+def test_report_a_bug_fills_the_versions(iface, server, catalog, monkeypatch, duckdb):
+    opened = []
+    monkeypatch.setattr(QDesktopServices, "openUrl", lambda url: opened.append(url.toString()))
+    monkeypatch.setattr(parquet_query, "duckdb_status", lambda: (duckdb is not None, duckdb))
+    window = open_window(iface, server, catalog)
+    assert window.report_bug.text() == "Report a bug"
+    window.report_bug.click()
+    (url,) = opened
+    assert url.startswith("https://github.com/portolan-sdi/portolan-registry-qgis/issues/new?")
+    fields = form_fields(url)
+    assert fields["template"] == "plugin-problem.yml"
+    version = fields["version"]
+    for name in ("Portolan Registry 0.", f"QGIS {Qgis.version()}", "Qt ", "Python ", "GDAL "):
+        assert name in version
+    assert f"DuckDB {duckdb or 'not installed'}" in version
+    window.disconnect_canvas()
 
 
 def test_a_missing_collection_says_so_in_the_details(collection_window):
@@ -487,7 +543,7 @@ def test_plugin_lifecycle(iface, catalog):
     settings.setValue(REGISTRY_URL_SETTING, f"{catalog['base']}/registry.json")
     plugin = portolan_registry_qgis.classFactory(iface)
     plugin.initGui()
-    assert len(iface.menu) == 1
+    assert [action.text() for action in iface.menu] == ["Portolan Registry", "Report a bug"]
     assert Path(portolan_registry_qgis.__file__).with_name("icon.svg").is_file()
     plugin.action.setChecked(True)
     window = plugin.window

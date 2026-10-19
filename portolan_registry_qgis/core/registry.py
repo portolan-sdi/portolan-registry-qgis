@@ -46,6 +46,11 @@ class CatalogEntry:
     logo_url: str | None
     failure_reason: str | None
 
+    @property
+    def registered(self) -> bool:
+        """Return whether the registry gave the catalog an ID of its own."""
+        return self.id != self.url
+
     def matches(self, text: str) -> bool:
         """Return whether ``text`` appears in the title, id, URL, or licenses."""
         needle = text.strip().casefold()

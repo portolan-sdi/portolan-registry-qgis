@@ -49,6 +49,7 @@ class PortolanRegistryPlugin:
         self.iface = iface
         self.server = TileServer()
         self.action: QAction | None = None
+        self.bug_action: QAction | None = None
         self.window: Any = None
         self._preprocessor: str | None = None
         self._warned_save = False
@@ -66,6 +67,11 @@ class PortolanRegistryPlugin:
         self.action.toggled.connect(self._toggle)
         self.iface.addPluginToWebMenu(MENU, self.action)
         self.iface.addWebToolBarIcon(self.action)
+        from portolan_registry_qgis.gui.report import bug_label, open_bug_report
+
+        self.bug_action = QAction(bug_label(), self.iface.mainWindow())
+        self.bug_action.triggered.connect(open_bug_report)
+        self.iface.addPluginToWebMenu(MENU, self.bug_action)
         QgsProject.instance().layersAdded.connect(self._reconnect)
         # A GeoParquet layer reads a GeoPackage in the scratch folder. The
         # file goes when the last layer that reads it is removed.
@@ -104,6 +110,10 @@ class PortolanRegistryPlugin:
             self.iface.removeWebToolBarIcon(self.action)
             self.action.deleteLater()
             self.action = None
+        if self.bug_action is not None:
+            self.iface.removePluginWebMenu(MENU, self.bug_action)
+            self.bug_action.deleteLater()
+            self.bug_action = None
         self.server.stop()
         parquet_query.close()
         parquet_layer.close_session()

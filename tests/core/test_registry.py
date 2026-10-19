@@ -90,6 +90,7 @@ def test_empty_registry_is_empty():
 def test_registry_fields_are_kept():
     anncsu, bologna = parse_registry(registry(ANNCSU, BOLOGNA))
     assert anncsu.id == "anncsu"
+    assert anncsu.registered
     assert anncsu.status == "valid"
     assert anncsu.bbox == (6.7003259, 35.5017421, 18.660009, 47.0805336)
     assert anncsu.licenses == ("CC-BY-4.0",)
@@ -107,6 +108,7 @@ def test_registry_fields_are_kept():
 def test_missing_fields_fall_back():
     (entry,) = parse_registry(registry({"rel": "child", "href": "https://x.test/catalog.json"}))
     assert entry.id == "https://x.test/catalog.json"
+    assert not entry.registered
     assert entry.status == "unknown"
     assert entry.bbox is None
     assert entry.licenses == ()

@@ -1,5 +1,5 @@
 ---
-source_sha256: a73dc24723ffeda6e6ad9fed1d45206fe2aadf9c25a44af7515299f13992eb04
+source_sha256: ab1a1fd4b52f5faa609887ddc46d65b95ad8773830e11a4ae4b0c475e4fc7c60
 ---
 
 <!-- vale off -->
@@ -110,6 +110,12 @@ Une ressource GeoParquet partitionnée se télécharge sous la forme de chaque f
 La barre compte les octets téléchargés quand le catalogue donne la taille de chaque fichier, et sinon les fichiers. Elle montre le temps restant.
 
 L'extension enregistre chaque fichier dans le dossier que vous choisissez, au même chemin relatif que dans le catalogue, donc la copie s'ouvre comme un catalogue STAC local. Après chaque téléchargement, l'extension vérifie le fichier avec sa `file:checksum` quand le catalogue en donne une. Une seconde exécution ignore les fichiers déjà complets, donc elle reprend un téléchargement interrompu.
+
+## Signaler un problème
+
+**Signaler un problème ↗**, à la fin de **Détails**, ouvre le formulaire de problème sur un jeu de données du registre sur GitHub. Le formulaire arrive avec l'ID du catalogue, le document STAC et sa page dans le navigateur, la date du jour et les versions de l'extension et de QGIS. Choisissez le type de problème, puis dites ce qui ne va pas, comment vous l'avez trouvé et pourquoi c'est important. Le registre écrit alors à la personne qui a enregistré le catalogue. L'extension n'envoie rien elle-même. Le bouton s'affiche seulement pour un catalogue qui a un ID dans le registre.
+
+**Signaler un bogue**, dans **Internet > Portolan Registry** et dans l'en-tête de la fenêtre, ouvre le formulaire de problème de l'extension sur GitHub. Ses champs couvrent ce qui n'a pas fonctionné, les étapes dans QGIS et pourquoi c'est important. Le champ **Version** arrive avec les versions de l'extension, de QGIS, de Qt, de Python, de GDAL et de DuckDB, et le système d'exploitation. Il vous faut un compte GitHub pour envoyer l'un ou l'autre formulaire.
 
 ## Utiliser un autre registre ou navigateur
 

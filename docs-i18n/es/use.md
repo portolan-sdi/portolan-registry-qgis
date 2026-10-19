@@ -1,5 +1,5 @@
 ---
-source_sha256: a73dc24723ffeda6e6ad9fed1d45206fe2aadf9c25a44af7515299f13992eb04
+source_sha256: ab1a1fd4b52f5faa609887ddc46d65b95ad8773830e11a4ae4b0c475e4fc7c60
 ---
 
 <!-- vale off -->
@@ -110,6 +110,12 @@ Un recurso GeoParquet particionado se descarga como cada archivo que coincide co
 La barra cuenta los bytes descargados cuando el catálogo da el tamaño de cada archivo, y si no, los archivos. Muestra el tiempo restante.
 
 El complemento guarda cada archivo en la carpeta que usted elige, en la misma ruta relativa que en el catálogo, así que la copia se abre como un catálogo STAC local. Después de cada descarga, el complemento verifica el archivo con su `file:checksum` cuando el catálogo lo da. Una segunda ejecución omite los archivos que ya están completos, así que reanuda una descarga interrumpida.
+
+## Informar de un problema
+
+**Informar de un problema ↗**, al final de **Detalles**, abre el formulario de problemas con conjuntos de datos del registro en GitHub. El formulario llega con el ID del catálogo, el documento STAC y su página del navegador, la fecha de hoy y las versiones del complemento y de QGIS. Elija el tipo de problema y luego indique qué está mal, cómo lo encontró y por qué importa. El registro envía entonces un correo a la persona que registró el catálogo. El complemento no envía nada por sí mismo. El botón solo se muestra para un catálogo que tiene un ID en el registro.
+
+**Informar de un error**, en **Web > Portolan Registry** y en la cabecera de la ventana, abre el formulario de problemas del complemento en GitHub. Sus campos cubren qué salió mal, los pasos en QGIS y por qué importa. El campo **Version** llega con las versiones del complemento, QGIS, Qt, Python, GDAL y DuckDB, y el sistema operativo. Necesita una cuenta de GitHub para enviar cualquiera de los dos formularios.
 
 ## Usar otro registro u otro navegador
 

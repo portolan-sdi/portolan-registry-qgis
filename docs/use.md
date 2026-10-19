@@ -105,6 +105,12 @@ The bar counts the bytes downloaded when the catalog gives the size of every fil
 
 The plugin saves each file in the folder you pick, at the same relative path as in the catalog, so the copy opens as a local STAC catalog. After each download, the plugin checks the file against its `file:checksum` when the catalog gives one. A second run skips files that are already complete, so it resumes an interrupted download.
 
+## Report a problem
+
+**Report a problem ↗** at the end of **Details** opens the registry's dataset problem form on GitHub. The form arrives with the catalog ID, the STAC document and its browser page, the date of today, and the plugin and QGIS versions. Choose the kind of problem, then say what is wrong, how you found it, and why it matters. The registry then mails the person who registered the catalog. The plugin sends nothing itself. The button shows only for a catalog that has an ID in the registry.
+
+**Report a bug** in **Web > Portolan Registry** and in the window header opens the plugin's problem form on GitHub. Its fields cover what went wrong, the steps in QGIS, and why it matters. The **Version** field arrives with the versions of the plugin, QGIS, Qt, Python, GDAL, and DuckDB, and the operating system. You need a GitHub account to submit either form.
+
 ## Use another registry or browser
 
 The plugin reads the Portolan registry export at `exports/catalogs.json` and links to the browser at `https://browser.portolan-sdi.org/`. To point the plugin at a mirror, open **Settings > Options > Advanced**. Set `PortolanRegistry/registry_url` for the registry or `PortolanRegistry/browser_url` for the browser, then reopen the window.

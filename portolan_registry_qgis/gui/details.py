@@ -52,6 +52,7 @@ from portolan_registry_qgis.gui.pictures import ACCENT, mix, muted
 from portolan_registry_qgis.gui.scope import ScopePicker
 from portolan_registry_qgis.gui.widgets import (
     BADGE_ROLE,
+    EXTERNAL,
     ON_MAP_ROLE,
     ROLE,
     AssetDelegate,
@@ -306,6 +307,18 @@ class DetailsPanel(QScrollArea):
         self.details_box, details = section(_("Details"), "details")
         self.facts = _label(Qt.TextFormat.RichText)
         details.addWidget(self.facts)
+        # Hidden for a catalog without a registry ID, which the form needs.
+        self.report = QToolButton()
+        # Translators: {arrow} is an arrow that marks a link that leaves QGIS.
+        self.report.setText(_("Report a problem {arrow}").format(arrow=EXTERNAL))
+        self.report.setIcon(theme_icon("mIconWarning"))
+        self.report.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.report.setAutoRaise(True)
+        self.report.setToolTip(
+            _("Tell the publisher about wrong or broken data in this dataset, on GitHub")
+        )
+        self.report.hide()
+        details.addWidget(self.report, 0, Qt.AlignmentFlag.AlignLeft)
         return self.details_box
 
     def _connect(self) -> None:
@@ -362,6 +375,7 @@ class DetailsPanel(QScrollArea):
         """Show ``title`` while its document is read. Call when the window has no document."""
         self._targets = Targets(None, None)
         self.show_browser_link(link)
+        self.report.hide()
         self.title.setText(title)
         self.description.setText(_("Reading…"))
         self.facts.clear()
@@ -408,6 +422,7 @@ class DetailsPanel(QScrollArea):
         size = document_size(document, catalog)
         self.facts.setText(facts_html(document, publisher, size, self._muted(), link))
         self.show_browser_link(link)
+        self.report.setVisible(catalog is not None and catalog.registered)
         self.download_all.setToolTip(
             _("Download the files of {title} in the area").format(title=document.title)
         )

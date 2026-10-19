@@ -43,6 +43,7 @@ from portolan_registry_qgis.gui.pictures import (
     pixmap,
 )
 from portolan_registry_qgis.gui.registry_list import RegistryList
+from portolan_registry_qgis.gui.report import bug_label, open_bug_report, open_problem_report
 from portolan_registry_qgis.gui.scope import ScopeError
 from portolan_registry_qgis.gui.tasks import TaskController
 from portolan_registry_qgis.gui.widgets import open_url, theme_icon
@@ -169,6 +170,11 @@ class RegistryWindow(QDialog):
         self.tagline = QLabel(_("Open data registry"))
         layout.addWidget(self.tagline)
         layout.addStretch(1)
+        self.report_bug = QToolButton()
+        self.report_bug.setText(bug_label())
+        self.report_bug.setAutoRaise(True)
+        self.report_bug.setToolTip(_("Tell the plugin maintainers about a fault, on GitHub"))
+        layout.addWidget(self.report_bug)
         self.refresh = QToolButton()
         self.refresh.setIcon(theme_icon("mActionRefresh"))
         self.refresh.setAutoRaise(True)
@@ -211,6 +217,7 @@ class RegistryWindow(QDialog):
 
     def _connect(self) -> None:
         self.refresh.clicked.connect(self.reload)
+        self.report_bug.clicked.connect(open_bug_report)
         self.registry_list.catalog_chosen.connect(self._catalog_chosen)
         self.catalog_tree.back.clicked.connect(lambda: self.pages.setCurrentIndex(_REGISTRY_PAGE))
         self.catalog_tree.header.clicked.connect(self._show_catalog_details)
@@ -227,6 +234,7 @@ class RegistryWindow(QDialog):
         details.load_button.clicked.connect(self._load_full_data)
         details.mosaic_button.clicked.connect(self.add_mosaic)
         details.open_browser.clicked.connect(self._open_in_browser)
+        details.report.clicked.connect(self._report_problem)
 
     def showEvent(self, event: Any) -> None:
         """Report that the window shows."""
@@ -462,3 +470,8 @@ class RegistryWindow(QDialog):
         link = self.browser_link(self._browser_target())
         if link is not None:
             open_url(link)
+
+    def _report_problem(self) -> None:
+        document, entry = self._document, self._catalog
+        if document is not None and entry is not None:
+            open_problem_report(entry.id, document.href, self.browser_link(document.href))

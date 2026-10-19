@@ -969,6 +969,16 @@ msgstr "Supprimé"
 msgid "Reopen {url}"
 msgstr "Rouvrir {url}"
 
+#: portolan_registry_qgis/gui/report.py
+msgid "Report a bug"
+msgstr "Signaler un bogue"
+
+#. {arrow} is an arrow that marks a link that leaves QGIS.
+#: portolan_registry_qgis/gui/details.py
+#, python-brace-format
+msgid "Report a problem {arrow}"
+msgstr "Signaler un problème {arrow}"
+
 #: portolan_registry_qgis/core/loadable.py
 #, python-brace-format
 msgid "Roles: {roles}"
@@ -1074,6 +1084,16 @@ msgstr ""
 #: portolan_registry_qgis/core/format.py
 msgid "TB"
 msgstr "To"
+
+#: portolan_registry_qgis/gui/window.py
+msgid "Tell the plugin maintainers about a fault, on GitHub"
+msgstr "Signaler un défaut aux mainteneurs de l'extension, sur GitHub"
+
+#: portolan_registry_qgis/gui/details.py
+msgid "Tell the publisher about wrong or broken data in this dataset, on GitHub"
+msgstr ""
+"Signaler à l'éditeur des données erronées ou cassées dans ce jeu de données,"
+" sur GitHub"
 
 #: portolan_registry_qgis/core/registry.py
 msgid "The Portolan registry returned an invalid catalog list"

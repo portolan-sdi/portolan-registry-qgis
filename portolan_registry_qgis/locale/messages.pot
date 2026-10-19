@@ -919,6 +919,16 @@ msgstr ""
 msgid "Reopen {url}"
 msgstr ""
 
+#: portolan_registry_qgis/gui/report.py
+msgid "Report a bug"
+msgstr ""
+
+#. {arrow} is an arrow that marks a link that leaves QGIS.
+#: portolan_registry_qgis/gui/details.py
+#, python-brace-format
+msgid "Report a problem {arrow}"
+msgstr ""
+
 #: portolan_registry_qgis/core/loadable.py
 #, python-brace-format
 msgid "Roles: {roles}"
@@ -1021,6 +1031,14 @@ msgstr ""
 #. The symbol for terabytes in a file size. French writes "To", for téraoctet.
 #: portolan_registry_qgis/core/format.py
 msgid "TB"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+msgid "Tell the plugin maintainers about a fault, on GitHub"
+msgstr ""
+
+#: portolan_registry_qgis/gui/details.py
+msgid "Tell the publisher about wrong or broken data in this dataset, on GitHub"
 msgstr ""
 
 #: portolan_registry_qgis/core/registry.py

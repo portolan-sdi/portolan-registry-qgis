@@ -1,0 +1,53 @@
+name: Task
+description: Chore, refactor, CI, or maintenance work
+labels: [task]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Please explain what needs to change, why it matters, and how to
+        confirm it's done. For large changes, discuss the proposal here
+        before starting implementation. For small changes with a clear
+        solution, we'd really appreciate a fix PR alongside the issue.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What needs doing?
+      description: >-
+        Describe the intended outcome and the files or systems involved.
+        For example, "All Python repos should run the same lint checks,"
+        rather than a list of edits to individual workflow files.
+    validations:
+      required: true
+
+  - type: textarea
+    id: why-now
+    attributes:
+      label: Why is this needed?
+      description: >-
+        Explain what this would improve or unblock, or what could go wrong
+        if it waits. Link any issue or pull request that prompted the task.
+    validations:
+      required: true
+
+  - type: textarea
+    id: implementation
+    attributes:
+      label: Implementation notes
+      description: >-
+        Optional. Include constraints, dependencies between steps, and
+        anything else someone would need to know before starting.
+    validations:
+      required: false
+
+  - type: textarea
+    id: done
+    attributes:
+      label: How to confirm it's done
+      description: >-
+        What steps or command should a reviewer run, and what result
+        would confirm the task is complete? If the work changes behavior,
+        include the data or example used to check it.
+    validations:
+      required: true

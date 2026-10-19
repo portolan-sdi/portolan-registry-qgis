@@ -1,0 +1,74 @@
+name: Feature request
+description: Propose a new capability
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Thanks for proposing a feature! Please include a concrete use case
+        that explains who needs it and what they want to do. For large
+        changes, discuss the proposal here before starting implementation.
+        For small changes with a clear solution, we'd really appreciate
+        a fix PR alongside the issue.
+
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Use case
+      description: >-
+        Describe who would use this feature, what they want to accomplish,
+        and why. For example, "A user wants to visualize PMTiles with
+        different styles for different audiences," and not, "It would be good if the Portolan spec supported listing multiple styles as assets in the STAC JSON."
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Current limitations
+      description: >-
+        What prevents this use case today? For spec-related features,
+        include the relevant requirement.
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Example
+      description: >-
+        Include an example using real data, with the command, output, and
+        dataset URL or catalog path. If the capability is missing entirely,
+        describe your current workaround and the time or effort it takes.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: >-
+        What should a user be able to do with this feature? Include an
+        example command or output where useful.
+    validations:
+      required: true
+
+  - type: textarea
+    id: implementation
+    attributes:
+      label: Implementation notes
+      description: >-
+        Optional. Describe possible approaches, where the change would
+        belong, alternatives you considered, and edge cases to handle.
+    validations:
+      required: false
+
+  - type: textarea
+    id: done
+    attributes:
+      label: How to confirm it works
+      description: >-
+        Optional. Suggest a command or example a reviewer could run,
+        the data it would use, and the expected result.
+    validations:
+      required: false

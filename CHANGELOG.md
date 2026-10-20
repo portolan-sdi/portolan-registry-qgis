@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.3.1 - 2026-10-20
+
 - QGIS does not freeze when a background read ends while the window updates. A thumbnail, a catalog document, or a PMTiles tile read could stop QGIS at random before.
 
 ## 0.3.0 - 2026-10-20

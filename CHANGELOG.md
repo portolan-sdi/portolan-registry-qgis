@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- QGIS does not freeze when a background read ends while the window updates. A thumbnail, a catalog document, or a PMTiles tile read could stop QGIS at random before.
+
 ## 0.3.0 - 2026-10-20
 
 - **Add to map** has a **SQL** tab for GeoParquet. Filter the rows with a QGIS expression, select the columns, preview the first 100 rows, and copy the DuckDB query as a script. **Write my own SQL** replaces the choice with your own `SELECT`. Loads, downloads, and saved projects keep the choice, and a project asks before it runs SQL that its author wrote.

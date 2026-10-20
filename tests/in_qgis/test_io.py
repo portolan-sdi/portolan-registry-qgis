@@ -975,9 +975,9 @@ def area_calls(monkeypatch):
     estimate, write_gpkg = parquet_query.estimate, parquet_query.write_gpkg
 
     def call(function, name, args, kwargs):
-        # estimate takes the clip fourth, after the plan. write_gpkg takes
-        # the target there, which holds the clip.
-        clip = args[3] if name == "estimate" else args[3].clip
+        # estimate takes the rows fourth, after the plan. write_gpkg takes
+        # the target there. Both hold the clip.
+        clip = args[3].clip
         calls.append((name, clip))
         return function(*args, **kwargs)
 
@@ -1007,9 +1007,9 @@ def test_parquet_layer_area(catalog, area_calls):
 
     # A saved project copies the same area again.
     area_calls.clear()
-    url, bbox, area = parquet_layer.saved_copy(layer)
-    assert area == planned.clip.area
-    restored = parquet_layer.restore(url, bbox, area_text=area)
+    saved = parquet_layer.saved_copy(layer)
+    assert saved.area == planned.clip.area
+    restored = parquet_layer.restore(saved)
     assert restored.clip == planned.clip
     assert area_calls == [("write_gpkg", planned.clip)]
     parquet_layer.discard_path(prepared.path)
@@ -1022,7 +1022,7 @@ def test_parquet_layer_without_area_keeps_its_property_empty(catalog, area_calls
     assert all(clip.area is None for _, clip in area_calls)
     layer, _ = parquet_layer.build(prepared, "points")
     assert layer.customProperty(parquet_layer.AREA_PROPERTY) == ""
-    assert parquet_layer.saved_copy(layer)[2] == ""
+    assert parquet_layer.saved_copy(layer).area == ""
 
 
 def test_file_area_transforms_to_the_file_crs():

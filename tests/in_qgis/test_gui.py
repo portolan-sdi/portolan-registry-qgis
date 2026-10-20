@@ -46,7 +46,6 @@ from portolan_registry_qgis.plugin import BROWSER_URL_SETTING, REGISTRY_URL_SETT
 from portolan_registry_qgis.qgis_io import mosaic, network, parquet_layer
 from portolan_registry_qgis.qgis_io.downloader import DownloadJob
 from portolan_registry_qgis.qgis_io.layers import PMTILES_PROPERTY
-from portolan_registry_qgis.qgis_io.tileserver import TileServer
 
 from .conftest import wait_for
 
@@ -66,30 +65,6 @@ def fresh_layout():
     _forget_layout()
     yield
     _forget_layout()
-
-
-@pytest.fixture
-def asked(tmp_path, monkeypatch):
-    """Download into ``tmp_path`` and answer Yes to each question.
-
-    The list collects the text of each question the window asks.
-    """
-    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *a: str(tmp_path))
-    texts = []
-
-    def answer(*args):
-        texts.append(args[2])
-        return QMessageBox.StandardButton.Yes
-
-    monkeypatch.setattr(QMessageBox, "question", answer)
-    return texts
-
-
-@pytest.fixture
-def server():
-    tiles = TileServer()
-    yield tiles
-    tiles.stop()
 
 
 def rows(view):

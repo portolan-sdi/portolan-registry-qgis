@@ -6,7 +6,7 @@ With an area, each GeoParquet file downloads as a GeoPackage of its features.
 from __future__ import annotations
 
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -20,6 +20,7 @@ from portolan_registry_qgis.core.loadable import (
     plan_summary,
     split_plan,
 )
+from portolan_registry_qgis.core.query import DEFAULT_QUERY
 from portolan_registry_qgis.gui.loading import duckdb_ready
 from portolan_registry_qgis.gui.tasks import Busy
 from portolan_registry_qgis.qgis_io import parquet_layer
@@ -122,9 +123,9 @@ class Downloads:
         """Download everything below ``document`` in ``scope``.
 
         The walk leaves out the items outside the scope. ``limits`` clips
-        each GeoParquet file of the document.
+        each GeoParquet file of the document. Its query applies to ``limits.queried`` only.
         """
-        clip = parquet_to_clip(document, scope)
+        clip = parquet_to_clip(document, scope, limits.queried)
         if clip and not duckdb_ready(self._parent):
             return
         folder = self._choose_folder()
@@ -167,7 +168,10 @@ class Downloads:
             self._tasks.start_job(listed.folder, whole.files)
         for asset in listed.clip:
             target = listed.folder / download.clipped_path(asset.glob or asset.href, listed.root)
-            self._download_clipped(asset, target, listed.limits)
+            limits = listed.limits
+            if asset.href != limits.queried:
+                limits = replace(limits, query=DEFAULT_QUERY)
+            self._download_clipped(asset, target, limits)
 
     def _confirm(self, plan: download.Plan, clipped: int = 0) -> bool:
         text = f"{plan_summary(plan, clipped)}\n\n{_('Download now?')}"

@@ -21,6 +21,7 @@ from qgis.PyQt.QtWidgets import QAction
 
 from portolan_registry_qgis.core import parquet_query
 from portolan_registry_qgis.core.i18n import _
+from portolan_registry_qgis.core.query import QueryError
 from portolan_registry_qgis.qgis_io import mosaic, parquet_layer
 from portolan_registry_qgis.qgis_io.layers import (
     PMTILES_PROPERTY,
@@ -194,23 +195,31 @@ class PortolanRegistryPlugin:
         run_task(_("Reopen {url}").format(url=url), lambda _task: open_archive(url), done)
 
     def _restore(self, layer: QgsVectorLayer) -> None:
-        url, bbox, area = parquet_layer.saved_copy(layer)
-        ok, version = parquet_query.duckdb_status()
-        if not ok:
-            if version:
-                log(
-                    # Translators: {version} is the installed DuckDB version, which is too old.
-                    _("Could not copy {url} again: DuckDB {version}.").format(
-                        url=url, version=version
-                    )
+        from portolan_registry_qgis.gui.sql_prompt import confirm_sql
+
+        saved = parquet_layer.saved_copy(layer)
+        url = saved.url
+        if not _duckdb_ready_for(url):
+            return
+        try:
+            query = saved.query()
+        except QueryError as error:
+            log(_("Could not copy {url} again: {error}").format(url=url, error=error))
+            return
+        # Custom SQL in a project can read local files, so it runs only after the user agrees.
+        if query.sql is not None and not confirm_sql(
+            layer.name(), query.sql, self.iface.mainWindow()
+        ):
+            log(
+                _("Kept {name} empty. Its SQL from the project did not run.").format(
+                    name=layer.name()
                 )
-            else:
-                log(_("Could not copy {url} again: DuckDB is not installed.").format(url=url))
+            )
             return
         extension_dir = parquet_layer.extension_directory()
 
         def copy(task: Any) -> parquet_layer.Prepared:
-            return parquet_layer.restore(url, bbox, extension_dir, task.isCanceled, area)
+            return parquet_layer.restore(saved, query, extension_dir, task.isCanceled)
 
         def done(result: object, error: BaseException | None) -> None:
             if not isinstance(result, parquet_layer.Prepared):
@@ -252,3 +261,18 @@ class PortolanRegistryPlugin:
                 log(str(failure))
 
         mosaic.start_vrt(_("Build the mosaic {name} again").format(name=name), hrefs, clip, done)
+
+
+def _duckdb_ready_for(url: str) -> bool:
+    """Return whether DuckDB can copy ``url`` again. If not, log why."""
+    ok, version = parquet_query.duckdb_status()
+    if ok:
+        return True
+    if version:
+        log(
+            # Translators: {version} is the installed DuckDB version, which is too old.
+            _("Could not copy {url} again: DuckDB {version}.").format(url=url, version=version)
+        )
+    else:
+        log(_("Could not copy {url} again: DuckDB is not installed.").format(url=url))
+    return False

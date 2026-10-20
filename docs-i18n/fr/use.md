@@ -1,5 +1,5 @@
 ---
-source_sha256: ab1a1fd4b52f5faa609887ddc46d65b95ad8773830e11a4ae4b0c475e4fc7c60
+source_sha256: 2bbb614db290e57532439399fd9fda6d3e5415d08c4642828313d29fbc75fb9f
 ---
 
 <!-- vale off -->
@@ -56,7 +56,7 @@ Un CSV s'ouvre en points en EPSG:4326 quand sa première ligne a une colonne de 
 
 ## Choisir la zone d'intérêt
 
-La zone d'intérêt en haut de **Ajouter à la carte** limite les données que lisent les boutons situés en dessous. Le choix s'affiche quand le nœud a du GeoParquet ou des nœuds enfants.
+La zone d'intérêt en haut de l'onglet **Charger** de **Ajouter à la carte** limite les données que lisent les boutons situés en dessous. Le choix s'affiche quand le nœud a du GeoParquet ou des nœuds enfants.
 
 | Choix | Zone |
 |---|---|
@@ -80,6 +80,30 @@ Les chargements n'ont pas de limite d'entités. Pour une estimation de plus de 1
 Une couche stocke un seul type de géométrie. Quand une entité a un autre type, elle conserve ses attributs mais n'a pas de géométrie, et la fenêtre indique combien d'entités sont concernées. Un fichier Parquet sans colonne de géométrie se charge comme une table avec toutes ses lignes, quelle que soit la zone.
 
 L'extension supprime un GeoPackage quand vous retirez la dernière couche qui le lit. Un projet enregistré conserve chaque couche GeoParquet comme un lien vers son fichier source et sa zone. À l'ouverture du projet, l'extension copie à nouveau les entités. La nouvelle copie perd vos modifications, donc exportez la couche pour les conserver.
+
+## Choisir les lignes et les colonnes
+
+Pour un nœud avec du GeoParquet, **Ajouter à la carte** a deux onglets. **Charger** contient la zone d'intérêt et les boutons. **SQL** choisit ce que garde un chargement GeoParquet et affiche la requête DuckDB qui le fait.
+
+| Contrôle | Usage |
+|---|---|
+| Fichier | Le fichier GeoParquet à interroger, quand le nœud en a plusieurs |
+| Lignes | Une expression QGIS, comme `"type" = 'school'`. Sélectionnez **ε** pour la construire à partir des colonnes du fichier |
+| Colonnes | Une case à cocher par colonne. La géométrie se charge toujours |
+| Aperçu des lignes | Les 100 premières lignes correspondantes, dans un tableau sous la requête, sans nouvelle couche |
+| Copier le SQL | Un script pour la ligne de commande DuckDB qui écrit le même GeoPackage |
+
+Le filtre peut utiliser des comparaisons, `IN`, `LIKE`, `ILIKE`, `IS NULL`, `AND`, `OR` et `NOT`. L'extension passe chaque valeur à DuckDB comme paramètre, jamais comme texte SQL. La requête se met à jour pendant la saisie et ne lit que la zone d'intérêt. Le script copié installe les extensions DuckDB et crée le secret S3 dont a besoin un bucket qui a un point dans son nom.
+
+Un choix s'applique tout de suite. L'onglet **Charger** indique alors ce que garde le prochain chargement, par exemple **Charge 2 colonnes sur 14, uniquement les lignes où "cod_estado" = 'MT'.**, et **Charger toutes les données** devient **Charger les données**. **Télécharger** écrit le fichier choisi comme un GeoPackage avec les mêmes lignes et colonnes. Sélectionnez **Effacer** au bout de cette ligne pour charger de nouveau toutes les lignes et colonnes.
+
+Pour écrire la requête vous-même, cochez **Écrire mon propre SQL**, puis modifiez le `SELECT`. Il doit renvoyer la géométrie dans une colonne qui porte le nom de géométrie du fichier. L'extension accepte une seule instruction `SELECT` et refuse tout autre texte avant que DuckDB l'exécute. Votre SQL remplace les lignes, les colonnes et la zone d'intérêt.
+
+Un projet enregistré garde le filtre, les colonnes et votre SQL. Le SQL d'un projet peut lire des fichiers de votre ordinateur et les envoyer à un autre serveur. À l'ouverture du projet, l'extension affiche ce SQL en entier et demande avant de l'exécuter. **Garder la couche vide** n'exécute rien.
+
+## Répéter un chargement hors de QGIS
+
+La petite flèche à côté de **Voir sur la carte** pour un COG, à côté de **Charger toutes les données** pour un fichier FlatGeobuf, GeoJSON ou CSV, et à côté de **Ajouter en une seule couche** ouvre **Copier comme commande GDAL**. La commande fait le même travail hors de QGIS avec `gdal_translate`, `ogr2ogr`, ou `gdalbuildvrt` et `gdalwarp`. Pour une mosaïque, l'extension trouve d'abord les COG de la zone d'intérêt, comme **Ajouter en une seule couche**, et les commandes écrivent la zone dans `clip.geojson` pour la découpe.
 
 ## Charger du GeoParquet partitionné
 

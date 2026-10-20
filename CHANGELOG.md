@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Add to map** has a **SQL** tab for GeoParquet. Filter the rows with a QGIS expression, select the columns, preview the first 100 rows, and copy the DuckDB query as a script. **Write my own SQL** replaces the choice with your own `SELECT`. Loads, downloads, and saved projects keep the choice, and a project asks before it runs SQL that its author wrote.
+- **Copy as GDAL command**, in the arrow menu next to **View on map**, **Load full data**, and **Add as one layer**, copies the `gdal_translate`, `ogr2ogr`, or mosaic commands that do the same outside QGIS.
 - **Zoom to Layer** on a PMTiles layer frames the data instead of the whole world. The layer properties show the extent of the archive.
 - The plugin shows its window, messages, and plugin manager description in Spanish and French when QGIS runs in either language. Numbers and file sizes use that language's separators.
 - The documentation site is available in Spanish at `/es/` and in French at `/fr/`, with a language menu in the header.

@@ -1,5 +1,5 @@
 ---
-source_sha256: ab1a1fd4b52f5faa609887ddc46d65b95ad8773830e11a4ae4b0c475e4fc7c60
+source_sha256: 2bbb614db290e57532439399fd9fda6d3e5415d08c4642828313d29fbc75fb9f
 ---
 
 <!-- vale off -->
@@ -56,7 +56,7 @@ Un CSV se abre como puntos en EPSG:4326 cuando su primera línea tiene una colum
 
 ## Elegir el área de interés
 
-El área de interés, en la parte superior de **Añadir al mapa**, limita los datos que leen los botones que hay debajo. La opción aparece cuando el nodo tiene GeoParquet o nodos hijos.
+El área de interés, en la parte superior de la pestaña **Cargar** de **Añadir al mapa**, limita los datos que leen los botones que hay debajo. La opción aparece cuando el nodo tiene GeoParquet o nodos hijos.
 
 | Opción | Área |
 |---|---|
@@ -80,6 +80,30 @@ Las cargas no tienen límite de objetos espaciales. Para una estimación de más
 Una capa almacena un solo tipo de geometría. Cuando un objeto espacial tiene otro tipo, conserva sus atributos y no tiene geometría, y la ventana informa de cuántos objetos espaciales afecta. Un archivo Parquet sin columna de geometría se carga como una tabla con todas las filas, sea cual sea el área.
 
 El complemento elimina un GeoPackage cuando usted quita la última capa que lo lee. Un proyecto guardado conserva cada capa GeoParquet como un enlace a su archivo de origen y a su área. Al abrir el proyecto, el complemento vuelve a copiar los objetos espaciales. La copia nueva descarta sus ediciones, así que exporte la capa para conservarlas.
+
+## Elegir filas y columnas
+
+Para un nodo con GeoParquet, **Añadir al mapa** tiene dos pestañas. **Cargar** contiene el área de interés y los botones. **SQL** elige lo que conserva una carga de GeoParquet y muestra la consulta de DuckDB que la hace.
+
+| Control | Uso |
+|---|---|
+| Archivo | El archivo GeoParquet que se consulta, cuando el nodo tiene más de uno |
+| Filas | Una expresión de QGIS, como `"type" = 'school'`. Seleccione **ε** para construirla con las columnas del archivo |
+| Columnas | Una casilla por columna. La geometría siempre se carga |
+| Previsualizar filas | Las primeras 100 filas que coinciden, en una tabla bajo la consulta, sin crear una capa |
+| Copiar SQL | Un script para la línea de comandos de DuckDB que escribe el mismo GeoPackage |
+
+El filtro puede usar comparaciones, `IN`, `LIKE`, `ILIKE`, `IS NULL`, `AND`, `OR` y `NOT`. La extensión pasa cada valor a DuckDB como parámetro, nunca como texto SQL. La consulta se actualiza mientras escribe y solo lee el área de interés. El script copiado instala las extensiones de DuckDB y crea el secreto de S3 que necesita un bucket con un punto en el nombre.
+
+Una elección se aplica en el acto. La pestaña **Cargar** dice entonces lo que conserva la próxima carga, por ejemplo **Carga 2 de 14 columnas, solo las filas donde "cod_estado" = 'MT'.**, y **Cargar datos completos** pasa a **Cargar datos**. **Descargar** escribe el archivo elegido como un GeoPackage con las mismas filas y columnas. Seleccione **Borrar** al final de esa línea para volver a cargar todas las filas y columnas.
+
+Para escribir la consulta usted mismo, marque **Escribir mi propio SQL** y edite el `SELECT`. Debe devolver la geometría en una columna con el nombre de geometría del propio archivo. La extensión acepta una sola sentencia `SELECT` y rechaza cualquier otro texto antes de que DuckDB lo ejecute. Su SQL sustituye las filas, las columnas y el área de interés.
+
+Un proyecto guardado conserva el filtro, las columnas y su SQL. El SQL de un proyecto puede leer archivos de su equipo y enviarlos a otro servidor. Al abrir el proyecto, la extensión muestra ese SQL completo y pregunta antes de ejecutarlo. **Mantener la capa vacía** no ejecuta nada.
+
+## Repetir una carga fuera de QGIS
+
+La pequeña flecha junto a **Ver en el mapa** para un COG, junto a **Cargar datos completos** para un archivo FlatGeobuf, GeoJSON o CSV, y junto a **Añadir como una capa** abre **Copiar como comando GDAL**. El comando hace lo mismo fuera de QGIS con `gdal_translate`, `ogr2ogr`, o `gdalbuildvrt` y `gdalwarp`. Para un mosaico, la extensión busca primero los COG del área de interés, como hace **Añadir como una capa**, y los comandos escriben el área en `clip.geojson` para el recorte.
 
 ## Cargar GeoParquet particionado
 

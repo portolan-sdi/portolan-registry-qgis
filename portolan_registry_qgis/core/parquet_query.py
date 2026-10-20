@@ -17,6 +17,7 @@ from urllib.parse import urlsplit
 
 from portolan_registry_qgis.core.geoparquet import (
     NO_GEOMETRY,
+    UNKNOWN,
     WHOLE_FILE,
     Clip,
     ReadPlan,
@@ -30,7 +31,18 @@ from portolan_registry_qgis.core.geoparquet import (
     type_from_first,
 )
 from portolan_registry_qgis.core.hrefs import bucket_region
-from portolan_registry_qgis.core.i18n import _
+from portolan_registry_qgis.core.i18n import _, ngettext
+from portolan_registry_qgis.core.query import (
+    ALL_ROWS,
+    DEFAULT_QUERY,
+    Query,
+    QueryError,
+    Rows,
+    inline,
+    pretty,
+    result_plan,
+    selection,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -45,6 +57,12 @@ MEMORY_LIMIT = "4GB"
 _EXTENSIONS = ("httpfs", "spatial")
 # The temporary table that holds a copy's features before GDAL writes them.
 _STAGED = "portolan_staged"
+# The alias of a custom SELECT that a copy, a count, or a preview reads from.
+_CUSTOM = "portolan_custom"
+# The rows that a preview shows.
+PREVIEW_ROWS = 100
+# The statements that load the extensions in the DuckDB CLI.
+SCRIPT_START = ("INSTALL spatial;", "LOAD spatial;", "INSTALL httpfs;", "LOAD httpfs;")
 _lock = threading.Lock()
 _connection: Any = None
 
@@ -190,20 +208,89 @@ def source_from_text(text: str) -> Source:
     return lines if len(lines) > 1 else text.strip()
 
 
-def use_bucket(con: Any, source: Source) -> None:
-    """Give DuckDB the path style and region of each S3 bucket whose name holds a dot.
+def bucket_secrets(source: Source) -> list[str]:
+    """Return a ``CREATE SECRET`` for each S3 bucket of ``source`` whose name holds a dot.
 
     The virtual-hosted certificate covers one label, so such a bucket needs the path style.
     """
     urls = [source] if isinstance(source, str) else source
     buckets = {urlsplit(url).hostname for url in urls if url.startswith("s3://")}
+    secrets = []
     for bucket in sorted(b for b in buckets if b and "." in b):
         name = "bucket_" + re.sub(r"\W", "_", bucket)
         region = bucket_region(bucket) or "us-east-1"
-        con.execute(
+        secrets.append(
             f"CREATE SECRET IF NOT EXISTS {name} (TYPE s3, PROVIDER config, "
             f"REGION {literal(region)}, URL_STYLE 'path', SCOPE {literal(f's3://{bucket}')})"
         )
+    return secrets
+
+
+def use_bucket(con: Any, source: Source) -> None:
+    """Give DuckDB the path style and region of each S3 bucket whose name holds a dot."""
+    for secret in bucket_secrets(source):
+        con.execute(secret)
+
+
+def check_select(sql: str) -> str:
+    """Return ``sql`` as one SELECT statement, without its final semicolon. Nothing runs.
+
+    Raises:
+        QueryError: The text does not parse, or is not exactly one SELECT.
+        DuckDBMissingError: DuckDB is absent or too old.
+    """
+    ok, version = duckdb_status()
+    if not ok:
+        raise DuckDBMissingError(f"DuckDB {version}" if version else _("DuckDB is not installed"))
+    import duckdb
+
+    with contextlib.closing(duckdb.connect()) as parser:
+        try:
+            statements = parser.extract_statements(sql)
+        except duckdb.Error as error:
+            raise QueryError(str(error)) from error
+    if len(statements) != 1:
+        raise QueryError(
+            ngettext(
+                "Write one SELECT statement. The SQL holds {n} statement.",
+                "Write one SELECT statement. The SQL holds {n} statements.",
+                len(statements),
+            ).format(n=len(statements))
+        )
+    if statements[0].type != duckdb.StatementType.SELECT:
+        raise QueryError(_("The SQL must be a SELECT statement"))
+    return without_terminator(str(statements[0].query)).strip()
+
+
+def without_terminator(sql: str) -> str:
+    """Return one SQL statement without its final semicolon and what follows it.
+
+    A semicolon inside a string literal, a quoted name, or a comment stays.
+    """
+    index, closing = 0, None
+    while index < len(sql):
+        if closing is not None:
+            if sql.startswith(closing, index):
+                index, closing = index + len(closing), None
+                continue
+        elif sql.startswith("--", index):
+            closing = "\n"
+        elif sql.startswith("/*", index):
+            closing = "*/"
+        elif sql[index] in "'\"":
+            closing = sql[index]
+        elif sql[index] == ";":
+            return sql[:index]
+        index += 1
+    return sql
+
+
+def custom_table(sql: str) -> str:
+    """Return the FROM item that reads the rows of the custom SELECT ``sql``.
+
+    The line breaks keep a final ``--`` comment from hiding the parenthesis.
+    """
+    return f"(\n{sql}\n) AS {_CUSTOM}"
 
 
 def read_error(source: Source, error: BaseException | str | None) -> str:
@@ -258,21 +345,30 @@ def estimate(
     con: Any,
     url: Source,
     plan: ReadPlan,
-    clip: Clip = WHOLE_FILE,
+    rows: Rows = ALL_ROWS,
     watch: Watch | None = None,
 ) -> int | None:
-    """Return about how many features a copy of ``url`` in ``clip`` holds.
+    """Return about how many features a copy of the ``rows`` of ``url`` holds.
 
-    With a clip the count is an upper bound. Returns None when the file has no
-    covering column to count a box with.
+    With a clip the count is an upper bound, and custom SQL counts exactly.
+    Returns None when the file has no covering column to count a box with.
     """
-    query = build_estimate(plan, clip)
-    if query is None:
+    if rows.query.sql is not None:
+        counted: tuple[str, list[object]] | None = (
+            f"SELECT count(*) FROM {custom_table(check_select(rows.query.sql))}",  # noqa: S608  # nosec B608 - the user's own SELECT, checked
+            [],
+        )
+        use_bucket(con, url)
+    else:
+        counted = build_estimate(plan, rows.clip, selection(rows.query, plan))
+        if counted is not None:
+            counted = (counted[0], [url, *counted[1]])
+    if counted is None:
         return None
-    sql, params = query
+    sql, params = counted
     watch = watch or Watch()
     with cursor(con, watch.cancelled, watch.progress) as cur:
-        return int(cur.execute(sql, [url, *params]).fetchone()[0])
+        return int(cur.execute(sql, params).fetchone()[0])
 
 
 @dataclass(frozen=True)
@@ -296,6 +392,8 @@ class Target:
     clip: Clip = WHOLE_FILE
     # The CRS to record in the GeoPackage.
     srs: str | None = None
+    # The rows and columns to keep, or the SELECT that replaces them.
+    query: Query = DEFAULT_QUERY
 
 
 def _geometry_column(gpkg: sqlite3.Connection) -> tuple[str, str] | None:
@@ -335,13 +433,11 @@ def write_gpkg(
     """
     watch = watch or Watch()
     with cursor(con, watch.cancelled, watch.progress) as cur:
-        layer_type = plan.geometry_type
-        if layer_type == "Unknown":
-            sql, params = build_first_type(plan, target.clip)
-            layer_type = type_from_first(cur.execute(sql, [url, *params]).fetchone())
         # COPY to GDAL scans on one thread. A table first lets DuckDB read the row groups in parallel.
-        query, params = build_select(plan, layer_type, target.clip)
-        cur.execute(f"CREATE OR REPLACE TEMP TABLE {_STAGED} AS {query}", [url, *params])
+        if target.query.sql is None:
+            layer_type = _stage(cur, url, plan, target)
+        else:
+            plan, layer_type = _stage_custom(cur, url, plan, target.query.sql)
         try:
             written = cur.execute(
                 build_write(plan, f"SELECT * FROM {_STAGED}", target.path, layer_type, target.srs)  # noqa: S608  # nosec B608 - a fixed table name
@@ -353,6 +449,125 @@ def write_gpkg(
         drop_geometry(target.path)
         return Written(features, NO_GEOMETRY, 0)
     return Written(features, layer_type, null_geometries(target.path) if features else 0)
+
+
+def _stage(cur: Any, url: Source, plan: ReadPlan, target: Target) -> str:
+    """Put the rows of ``target`` in the staging table, and return the layer type."""
+    chosen = selection(target.query, plan)
+    layer_type = plan.geometry_type
+    if layer_type == UNKNOWN:
+        sql, params = build_first_type(plan, target.clip, chosen)
+        layer_type = type_from_first(cur.execute(sql, [url, *params]).fetchone())
+    query, params = build_select(plan, layer_type, target.clip, chosen)
+    cur.execute(f"CREATE OR REPLACE TEMP TABLE {_STAGED} AS {query}", [url, *params])
+    return layer_type
+
+
+def _describe(cur: Any, sql: str, params: list[object]) -> list[tuple[str, str]]:
+    """Return the names and DuckDB types of the columns of the rows of ``sql``."""
+    rows = cur.execute(f"DESCRIBE SELECT * FROM (\n{sql}\n) AS portolan_described", params)  # noqa: S608  # nosec B608 - SQL the plugin built or checked
+    return [(str(row[0]), str(row[1])) for row in rows.fetchall()]
+
+
+def _stage_custom(cur: Any, url: Source, plan: ReadPlan, sql: str) -> tuple[ReadPlan, str]:
+    """Put the rows of the custom SELECT ``sql`` in the staging table.
+
+    Returns:
+        The plan of those rows, and the layer type.
+    """
+    sql = check_select(sql)
+    use_bucket(cur, url)
+    staged = result_plan(plan, _describe(cur, sql, []))
+    table = custom_table(sql)
+    layer_type = staged.geometry_type
+    if layer_type == UNKNOWN:
+        first, params = build_first_type(staged, table=table)
+        layer_type = type_from_first(cur.execute(first, params).fetchone())
+    query, params = build_select(staged, layer_type, table=table)
+    cur.execute(f"CREATE OR REPLACE TEMP TABLE {_STAGED} AS {query}", params)
+    return staged, layer_type
+
+
+def _rows_query(url: Source, plan: ReadPlan, rows: Rows) -> tuple[str, list[object]]:
+    """Return the SELECT of the rows a copy keeps, and its parameters."""
+    if rows.query.sql is not None:
+        return check_select(rows.query.sql), []
+    sql, params = build_select(plan, plan.geometry_type, rows.clip, selection(rows.query, plan))
+    return sql, [url, *params]
+
+
+def _shown(name: str, duckdb_type: str, plan: ReadPlan) -> str:
+    """Return the SQL that shows one column in a preview, with a geometry as its type."""
+    column = quote(name)
+    upper = duckdb_type.upper()
+    if upper.startswith("GEOMETRY"):
+        return f"ST_GeometryType({column})::VARCHAR AS {column}"
+    if upper == "BLOB" and name == plan.geometry:
+        return f"ST_GeometryType(ST_GeomFromWKB({column}))::VARCHAR AS {column}"
+    return column
+
+
+@dataclass(frozen=True)
+class Preview:
+    """The first rows that a copy keeps, with the names of their columns."""
+
+    columns: tuple[str, ...]
+    rows: list[tuple[object, ...]]
+
+
+def preview(
+    con: Any,
+    url: Source,
+    plan: ReadPlan,
+    rows: Rows = ALL_ROWS,
+    watch: Watch | None = None,
+) -> Preview:
+    """Return the first ``PREVIEW_ROWS`` of the ``rows`` of ``url``.
+
+    Each geometry shows as its type name.
+    """
+    sql, params = _rows_query(url, plan, rows)
+    use_bucket(con, url)
+    watch = watch or Watch()
+    with cursor(con, watch.cancelled, watch.progress) as cur:
+        schema = _describe(cur, sql, params)
+        shown = ", ".join(_shown(name, duckdb_type, plan) for name, duckdb_type in schema)
+        found = cur.execute(
+            f"SELECT {shown} FROM (\n{sql}\n) AS portolan_preview LIMIT {PREVIEW_ROWS}",  # noqa: S608  # nosec B608 - SQL the plugin built or checked
+            params,
+        ).fetchall()
+    return Preview(tuple(name for name, _type in schema), [tuple(row) for row in found])
+
+
+def display_select(url: Source, plan: ReadPlan, rows: Rows = ALL_ROWS) -> str:
+    """Return the SELECT of the rows a copy keeps, with every value in the text.
+
+    Custom SQL comes back as the user wrote it.
+    """
+    if rows.query.sql is not None:
+        return rows.query.sql.strip()
+    sql, params = _rows_query(url, plan, rows)
+    return pretty(inline(sql, params))
+
+
+def copy_script(
+    url: Source,
+    plan: ReadPlan,
+    path: str,
+    rows: Rows = ALL_ROWS,
+    srs: str | None = None,
+) -> str:
+    """Return a DuckDB CLI script that writes the copy of ``url`` to a GeoPackage at ``path``.
+
+    The script puts every value into the SQL. Custom SQL goes in unchecked.
+    """
+    select = without_terminator(display_select(url, plan, rows)).strip()
+    layer_type = UNKNOWN if rows.query.sql is not None else plan.geometry_type
+    if not plan.has_geometry:
+        layer_type = NO_GEOMETRY
+    lines = [*SCRIPT_START, *(f"{secret};" for secret in bucket_secrets(url))]
+    lines.append(build_write(plan, f"\n{select}\n", path, layer_type, srs) + ";")
+    return "\n".join(lines) + "\n"
 
 
 def drop_geometry(path: str) -> None:

@@ -6,6 +6,7 @@ The window enables the buttons. ``state_changed`` asks it to decide again.
 from __future__ import annotations
 
 import contextlib
+import html
 from typing import TYPE_CHECKING, Any
 
 from qgis.core import QgsProject
@@ -18,8 +19,10 @@ from qgis.PyQt.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QPushButton,
     QScrollArea,
+    QTabBar,
     QToolButton,
     QTreeWidget,
     QTreeWidgetItem,
@@ -44,12 +47,14 @@ from portolan_registry_qgis.core.loadable import (
     only_items,
     pick_targets,
 )
+from portolan_registry_qgis.core.query import Query, load_text
 from portolan_registry_qgis.core.scope import Everything, Scope
 from portolan_registry_qgis.core.stac import Asset, Document, Loadable, Node
 from portolan_registry_qgis.core.style import archive_urls
 from portolan_registry_qgis.gui import widgets
 from portolan_registry_qgis.gui.pictures import ACCENT, mix, muted
 from portolan_registry_qgis.gui.scope import ScopePicker
+from portolan_registry_qgis.gui.sql_tab import SqlTab
 from portolan_registry_qgis.gui.widgets import (
     BADGE_ROLE,
     EXTERNAL,
@@ -115,6 +120,23 @@ def _button(text: str, icon: str) -> QPushButton:
     button = QPushButton(text)
     button.setIcon(theme_icon(icon))
     return button
+
+
+def _gdal_menu(parent: QWidget) -> tuple[QToolButton, QAction]:
+    """Return a small arrow button whose menu copies a GDAL command, and its action."""
+    tip = _("Copy an equivalent GDAL command to run outside QGIS.")
+    action = QAction(_("Copy as GDAL command"), parent)
+    action.setToolTip(tip)
+    menu = QMenu(parent)
+    menu.setToolTipsVisible(True)
+    menu.addAction(action)
+    button = QToolButton()
+    button.setMenu(menu)
+    button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+    button.setArrowType(Qt.ArrowType.DownArrow)
+    button.setAutoRaise(True)
+    button.setToolTip(tip)
+    return button, action
 
 
 def _label(text_format: Qt.TextFormat) -> QLabel:
@@ -238,7 +260,17 @@ class DetailsPanel(QScrollArea):
     def _add_section(self, iface: Any) -> QgsCollapsibleGroupBox:
         # Every action in this section reads only the data in the area, so
         # the area comes first.
-        self.add_box, add = section(_("Add to map"), "add")
+        self.add_box, section_layout = section(_("Add to map"), "add")
+        # A tab bar over two pages, not a QTabWidget: a hidden page takes no
+        # height, so each tab is as tall as its own content.
+        self.add_tabs = QTabBar()
+        self.add_tabs.setDocumentMode(True)
+        self.add_tabs.setExpanding(False)
+        load_tab = QWidget()
+        self.load_tab = load_tab
+        add = QVBoxLayout(load_tab)
+        add.setContentsMargins(0, 6, 0, 0)
+        add.setSpacing(8)
         add.addWidget(self._scope_row(iface))
         actions = QHBoxLayout()
         actions.setSpacing(6)
@@ -256,15 +288,47 @@ class DetailsPanel(QScrollArea):
         self.download_area = QToolButton()
         self.download_area.setDefaultAction(self.download_all)
         self.download_area.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        for widget in (self.view_button, self.load_button, self.mosaic_button):
+        self.view_gdal, self.copy_view_gdal = _gdal_menu(self)
+        self.load_gdal, self.copy_load_gdal = _gdal_menu(self)
+        self.mosaic_gdal, self.copy_mosaic_gdal = _gdal_menu(self)
+        for widget in (
+            self.view_button,
+            self.view_gdal,
+            self.load_button,
+            self.load_gdal,
+            self.mosaic_button,
+            self.mosaic_gdal,
+        ):
             actions.addWidget(widget)
         actions.addWidget(self.download_area)
         actions.addStretch(1)
         add.addLayout(actions)
+        add.addWidget(self._query_line())
         self.tile_styles = QLabel()
         self.tile_styles.setWordWrap(True)
         add.addWidget(self.tile_styles)
+        add.addStretch(1)
+        self.sql_tab = SqlTab()
+        self.sql_tab.hide()
+        # Translators: the tab with the area of interest and the buttons that add the data.
+        self.add_tabs.addTab(_("Load"))
+        self.add_tabs.addTab(_("SQL"))
+        self.add_tabs.setTabToolTip(0, _("Add the data to the map, or download it."))
+        self.add_tabs.setTabToolTip(1, _("View the DuckDB query used to load the layer."))
+        section_layout.setSpacing(0)
+        section_layout.addWidget(self.add_tabs)
+        section_layout.addWidget(load_tab)
+        section_layout.addWidget(self.sql_tab)
         return self.add_box
+
+    def _query_line(self) -> QLabel:
+        """Return the line that says what the SQL tab changes, with a Clear link at its end."""
+        self.query_line = QLabel()
+        self.query_line.setWordWrap(True)
+        self.query_line.setTextFormat(Qt.TextFormat.RichText)
+        self.query_line.setToolTip(_("Remove all row and column selections."))
+        self.query_line.hide()
+        return self.query_line
 
     def _files_section(self) -> QgsCollapsibleGroupBox:
         # The buttons in "Add to map" cover most needs. The list of every file
@@ -325,6 +389,11 @@ class DetailsPanel(QScrollArea):
         self.assets.itemSelectionChanged.connect(self.state_changed)
         self.assets.itemClicked.connect(self._asset_clicked)
         self.scope_picker.changed.connect(self.state_changed)
+        self.query_line.linkActivated.connect(lambda _link: self.sql_tab.clear())
+        self.sql_tab.changed.connect(self._show_query)
+        self.sql_tab.changed.connect(self.state_changed)
+        self.scope_picker.changed.connect(self.sql_tab.scope_changed)
+        self.add_tabs.currentChanged.connect(self._tab_changed)
         project = QgsProject.instance()
         project.layersAdded.connect(self.mark_on_map)
         project.layersRemoved.connect(self.mark_on_map)
@@ -349,6 +418,9 @@ class DetailsPanel(QScrollArea):
             self.mosaic_button,
             self.tile_styles,
             self.scope_row,
+            self.view_gdal,
+            self.load_gdal,
+            self.mosaic_gdal,
         )
 
     # ---------- what shows ----------
@@ -452,17 +524,19 @@ class DetailsPanel(QScrollArea):
     def _show_actions(self, document: Document, loadable: tuple[Loadable, ...]) -> None:
         """Show the primary buttons, the style note, and the scope picker that fit the document."""
         self._targets = pick_targets(loadable, duckdb_ok=parquet_query.duckdb_status()[0])
-        load = self._targets.load
-        # A table has no geometry, so it loads whole and says so.
-        table = load is not None and is_table(load)
-        self.load_button.setText(_("Load table") if table else _("Load full data"))
-        for button, target in ((self.view_button, self._targets.view), (self.load_button, load)):
-            button.setVisible(target is not None)
-            if target is not None:
-                button.setToolTip(
-                    button_tip(target, view=button is self.view_button, document=document)
-                )
+        view, load = self._targets
+        self.view_button.setVisible(view is not None)
+        if view is not None:
+            self.view_button.setToolTip(button_tip(view, view=True, document=document))
+        self.load_button.setVisible(load is not None)
         self.mosaic_button.setVisible(only_items(document))
+        self.view_gdal.setVisible(view is not None and view.format == "cog")
+        parquet = load is not None and load.format == "parquet"
+        self.load_gdal.setVisible(load is not None and not parquet)
+        self.mosaic_gdal.setVisible(only_items(document))
+        self.sql_tab.show_document(document)
+        self._show_sql_tab()
+        self._show_query()
 
         styles = len(document.styles)
         self.tile_styles.setText(
@@ -478,6 +552,55 @@ class DetailsPanel(QScrollArea):
         self.tile_styles.setVisible(bool(styles and archive_urls(document)))
         # The scope limits GeoParquet reads, mosaics, and the walk of a download.
         self.scope_row.setVisible(has_parquet(loadable) or bool(document.children))
+
+    # ---------- rows and columns ----------
+
+    def query_for(self, asset: Asset) -> Query:
+        """Return the query for a load of ``asset``. Another file than the SQL tab's gets the default."""
+        return self.sql_tab.query_for(asset)
+
+    def load_asset(self) -> Asset | None:
+        """Return the file that Load data adds: the SQL tab's file when it has a choice."""
+        chosen = self.sql_tab.asset()
+        if chosen is not None and not self.sql_tab.query().is_default:
+            return chosen
+        load = self._targets.load
+        return load.asset if load is not None else None
+
+    def _show_sql_tab(self) -> None:
+        """Show the SQL tab only for a document with GeoParquet, and the tab bar only with two tabs."""
+        shown = self.sql_tab.has_files()
+        self.add_tabs.setVisible(shown)
+        if not shown:
+            self.add_tabs.setCurrentIndex(0)
+
+    def _tab_changed(self, index: int) -> None:
+        self.load_tab.setVisible(index == 0)
+        self.sql_tab.setVisible(index == 1)
+        if index == 1:
+            self.sql_tab.opened()
+
+    def _query_text(self, query: Query) -> str:
+        return load_text(query, self.sql_tab.plan())
+
+    def _show_query(self) -> None:
+        """Show the line that says what the SQL tab changes, and name the load button after it."""
+        query = self.sql_tab.query()
+        active = not query.is_default
+        self.query_line.setVisible(active)
+        clear = f'<a href="clear">{html.escape(_("Clear"))}</a>'
+        self.query_line.setText(f"{html.escape(self._query_text(query))} {clear}" if active else "")
+        load = self._targets.load
+        if load is None:
+            return
+        # A table has no geometry, so it loads whole and says so.
+        if is_table(load):
+            label = _("Load table")
+        else:
+            label = _("Load data") if active else _("Load full data")
+        self.load_button.setText(label)
+        tip = button_tip(load, view=False, document=self._current())
+        self.load_button.setToolTip(f"{tip}\n{self._query_text(query)}" if active else tip)
 
     # ---------- item files ----------
 
@@ -623,7 +746,10 @@ class DetailsPanel(QScrollArea):
         )
         self.add.setEnabled(state.add)
         self.view_button.setEnabled(state.view)
-        self.load_button.setEnabled(state.load)
+        # A filter or SQL with an error stops the load until the user fixes or clears it.
+        self.load_button.setEnabled(state.load and self.sql_tab.problem() is None)
         self.mosaic_button.setEnabled(state.mosaic)
+        self.load_gdal.setEnabled(state.load)
+        self.mosaic_gdal.setEnabled(state.mosaic)
         self.download_selected.setEnabled(state.download_selected)
         self.download_all.setEnabled(state.download_all)

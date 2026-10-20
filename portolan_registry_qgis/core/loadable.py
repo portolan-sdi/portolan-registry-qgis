@@ -250,22 +250,23 @@ def files_hint(document: Document | None, rows: int) -> str:
     return _("This entry lists no files QGIS can open.")
 
 
-def parquet_to_clip(document: Document, scope: Scope) -> list[Asset]:
+def parquet_to_clip(document: Document, scope: Scope, queried: str | None = None) -> list[Asset]:
     """Return the GeoParquet files that a download of ``scope`` clips.
 
     With a map view or an area, each GeoParquet file of the document
     downloads as a GeoPackage of the features in the area. A table has no
-    geometry, so it downloads whole.
+    geometry, so it downloads whole. The file at ``queried`` always clips.
     """
-    if isinstance(scope, Everything):
-        return []
     return [
         item.asset
         for item in document.loadable()
         if item.asset is not None
         and item.format == "parquet"
-        and not item.asset.tabular
         and item.asset.read_url is not None
+        and (
+            item.asset.href == queried
+            or (not isinstance(scope, Everything) and not item.asset.tabular)
+        )
     ]
 
 

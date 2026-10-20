@@ -40,6 +40,9 @@ jobs:
             image: qgis/qgis@sha256:8996496c15887a8fae0da05fa38103093ddbf104525bcbd67bf733a914fb1444
     container:
       image: ${{ matrix.qgis.image }}
+      # gdb attaches to the test process when it hangs. Docker removes this
+      # capability by default.
+      options: --cap-add=SYS_PTRACE
     env:
       QT_QPA_PLATFORM: offscreen
     steps:
@@ -59,10 +62,31 @@ jobs:
         # The thread method stops a test that hangs inside Qt, GDAL, or a
         # network call, where the signal method cannot reach it. It prints
         # the stack of every thread, so the log shows where the test hung.
+        # That thread needs the Python lock. A main thread that holds the lock
+        # inside Qt or QGIS stops it, and the job then stops at its limit with
+        # no stack. The faulthandler watchdog runs in C, so it prints every
+        # stack in that case too.
+        # At 5 minutes the run is a hang. Then gdb prints the C++ stack of
+        # every thread, which shows the lock or the wait that holds it, and
+        # the step stops the run before the job limit.
         # Coverage counts plugin.py, gui, and qgis_io only. The uv suite in
         # ci.yml measures the core.
-        run: >-
-          /tmp/venv/bin/python -m pytest tests/in_qgis -p no:cacheprovider
-          --timeout 120 --timeout-method=thread
-          --cov=portolan_registry_qgis --cov-config=tests/in_qgis/coverage.ini
-          --cov-report=term-missing --cov-fail-under=87
+        shell: bash
+        run: |
+          /tmp/venv/bin/python -m pytest tests/in_qgis -p no:cacheprovider \
+            --timeout 120 --timeout-method=thread -o faulthandler_timeout=100 \
+            --cov=portolan_registry_qgis --cov-config=tests/in_qgis/coverage.ini \
+            --cov-report=term-missing --cov-fail-under=87 &
+          pid=$!
+          for _ in $(seq 300); do
+            kill -0 "$pid" 2>/dev/null || break
+            sleep 1
+          done
+          if kill -0 "$pid" 2>/dev/null; then
+            echo "::warning::The QGIS tests hang. The C++ stack of each thread follows."
+            apt-get update -qq
+            apt-get install -y -qq gdb > /dev/null
+            gdb -p "$pid" -batch -ex "thread apply all bt" || true
+            kill "$pid"
+          fi
+          wait "$pid"

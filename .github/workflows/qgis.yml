@@ -59,10 +59,14 @@ jobs:
         # The thread method stops a test that hangs inside Qt, GDAL, or a
         # network call, where the signal method cannot reach it. It prints
         # the stack of every thread, so the log shows where the test hung.
+        # That thread needs the Python lock. A main thread that holds the lock
+        # inside Qt or QGIS stops it, and the job then stops at its limit with
+        # no stack. The faulthandler watchdog runs in C, so it prints every
+        # stack in that case too.
         # Coverage counts plugin.py, gui, and qgis_io only. The uv suite in
         # ci.yml measures the core.
         run: >-
           /tmp/venv/bin/python -m pytest tests/in_qgis -p no:cacheprovider
-          --timeout 120 --timeout-method=thread
+          --timeout 120 --timeout-method=thread -o faulthandler_timeout=100
           --cov=portolan_registry_qgis --cov-config=tests/in_qgis/coverage.ini
           --cov-report=term-missing --cov-fail-under=87

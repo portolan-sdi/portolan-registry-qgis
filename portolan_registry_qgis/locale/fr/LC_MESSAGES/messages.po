@@ -1097,7 +1097,7 @@ msgstr "Relire le registre"
 
 #. A background task that reads the image at {url}.
 #. a task in the QGIS task manager that reads the document at {url}.
-#: portolan_registry_qgis/gui/pictures.py
+#: portolan_registry_qgis/gui/loading.py portolan_registry_qgis/gui/pictures.py
 #: portolan_registry_qgis/qgis_io/documents.py
 #, python-brace-format
 msgid "Read {url}"

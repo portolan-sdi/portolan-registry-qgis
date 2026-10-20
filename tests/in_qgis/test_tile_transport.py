@@ -18,7 +18,6 @@ from qgis.core import (
     Qgis,
     QgsCoordinateReferenceSystem,
     QgsCoordinateTransform,
-    QgsFeedback,
     QgsMapRendererParallelJob,
     QgsMapSettings,
     QgsProject,
@@ -267,8 +266,8 @@ def test_fetch_range_rejects_a_server_that_ignores_ranges(catalog):
 
 
 def test_fetch_range_cancels_a_body_longer_than_the_range(tmp_path):
-    """QGIS 3.34 and 3.36 read a 200 to the end. A 206 that sends the whole
-    file takes the same path on every version, so this test covers the cancel.
+    """A 206 that sends the whole file passes the status check, so the size
+    check must cancel it.
     """
     (tmp_path / "big.bin").write_bytes(bytes(8 << 20))
     sent = []
@@ -304,6 +303,6 @@ def test_fetch_range_cancels_a_body_longer_than_the_range(tmp_path):
     [(0, 10, False), (10, 10, False), (4, -1, False), (11, -1, True), (0, 11, True)],
 )
 def test_cancel_past(received, total, cancelled):
-    feedback = QgsFeedback()
-    cancel_past(10, feedback)(received, total)
-    assert feedback.isCanceled() is cancelled
+    calls = []
+    cancel_past(10, lambda: calls.append(True))(received, total)
+    assert bool(calls) is cancelled

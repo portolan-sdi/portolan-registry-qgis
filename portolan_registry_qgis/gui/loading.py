@@ -165,9 +165,27 @@ class Loader:
         run_task(_("Open vector tiles of {title}").format(title=document.title), prepare, done)
 
     def add_asset(self, asset: Asset) -> None:
-        """Add ``asset`` whole, read in place."""
+        """Add ``asset`` whole, read in place. A task reads the header of a CSV first."""
+        if asset.format != "csv":
+            self._add_read_asset(asset, layer_io.csv_header)
+            return
+
+        def done(header: object, error: BaseException | None) -> None:
+            if not isinstance(header, bytes):
+                self._messages.warn(str(error))
+                return
+            self._add_read_asset(asset, lambda _url: header)
+
+        run_task(
+            _("Read {url}").format(url=asset.href),
+            lambda _task: layer_io.csv_header(asset.href),
+            done,
+            hidden=True,
+        )
+
+    def _add_read_asset(self, asset: Asset, header: Callable[[str], bytes]) -> None:
         try:
-            layer = layer_io.asset_layer(asset)
+            layer = layer_io.asset_layer(asset, header=header)
         except layer_io.LayerError as failure:
             self._messages.warn(str(failure))
             return

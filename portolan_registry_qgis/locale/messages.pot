@@ -17,6 +17,15 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Generated-By: Babel 2.18.0\n"
 
+#: portolan_registry_qgis/core/query.py
+#, python-brace-format
+msgid "A filter cannot use the operator {op}"
+msgstr ""
+
+#: portolan_registry_qgis/core/query.py
+msgid "A filter compares a column with text or a number only"
+msgstr ""
+
 #: portolan_registry_qgis/core/loadable.py
 msgid "A layer in the project already reads this file."
 msgstr ""
@@ -40,6 +49,10 @@ msgstr ""
 
 #: portolan_registry_qgis/gui/details.py
 msgid "Add the COG files in the area as one raster layer, clipped to the area"
+msgstr ""
+
+#: portolan_registry_qgis/gui/details.py
+msgid "Add the data to the map, or download it."
 msgstr ""
 
 #: portolan_registry_qgis/gui/loading.py
@@ -221,9 +234,57 @@ msgstr ""
 msgid "Choose a publisher on the left to see its data here."
 msgstr ""
 
+#: portolan_registry_qgis/gui/sql_tab.py
+msgid "Choose the GeoParquet file to query."
+msgstr ""
+
 #: portolan_registry_qgis/gui/catalog_tree.py
 #, python-brace-format
 msgid "Choose {title} to add or download these files"
+msgstr ""
+
+#: portolan_registry_qgis/gui/details.py
+msgid "Clear"
+msgstr ""
+
+#: portolan_registry_qgis/gui/sql_tab.py
+msgid "Columns"
+msgstr ""
+
+#: portolan_registry_qgis/qgis_io/filter_expression.py
+msgid "Compare with NULL as IS NULL or IS NOT NULL"
+msgstr ""
+
+#: portolan_registry_qgis/gui/sql_tab.py
+msgid "Copied"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "Copied the GDAL command for {name}."
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "Copied the GDAL commands for a mosaic of {n} file."
+msgid_plural "Copied the GDAL commands for a mosaic of {n} files."
+msgstr[0] ""
+msgstr[1] ""
+
+#: portolan_registry_qgis/gui/sql_tab.py
+msgid "Copy SQL"
+msgstr ""
+
+#: portolan_registry_qgis/gui/sql_tab.py
+msgid "Copy a DuckDB command-line script to export the same layer."
+msgstr ""
+
+#: portolan_registry_qgis/gui/details.py
+msgid "Copy an equivalent GDAL command to run outside QGIS."
+msgstr ""
+
+#: portolan_registry_qgis/gui/details.py
+msgid "Copy as GDAL command"
 msgstr ""
 
 #: portolan_registry_qgis/plugin.py
@@ -321,6 +382,16 @@ msgstr ""
 #: portolan_registry_qgis/gui/registry_list.py
 #, python-brace-format
 msgid "Could not read the Portolan registry: {error}"
+msgstr ""
+
+#: portolan_registry_qgis/gui/sql_tab.py
+#, python-brace-format
+msgid "Could not read the columns: {error}"
+msgstr ""
+
+#: portolan_registry_qgis/gui/sql_tab.py
+#, python-brace-format
+msgid "Could not read the rows: {error}"
 msgstr ""
 
 #: portolan_registry_qgis/qgis_io/layers.py
@@ -487,7 +558,7 @@ msgid "Fast. Draws with the publisher's style."
 msgstr ""
 
 #. The format of a file whose format is not known.
-#: portolan_registry_qgis/core/format.py
+#: portolan_registry_qgis/core/format.py portolan_registry_qgis/gui/sql_tab.py
 msgid "File"
 msgstr ""
 
@@ -495,6 +566,16 @@ msgstr ""
 #: portolan_registry_qgis/core/loadable.py
 #, python-brace-format
 msgid "File: {title} ({format})"
+msgstr ""
+
+#: portolan_registry_qgis/gui/sql_tab.py
+msgid "Filter rows"
+msgstr ""
+
+#: portolan_registry_qgis/gui/sql_tab.py
+msgid ""
+"Filter rows with a QGIS expression, such as \"type\" = 'school'. Leave blank"
+" to include all rows."
 msgstr ""
 
 #: portolan_registry_qgis/gui/loading.py
@@ -505,6 +586,13 @@ msgstr ""
 #: portolan_registry_qgis/gui/scope.py
 msgid "Finish the area on the map first."
 msgstr ""
+
+#: portolan_registry_qgis/gui/sql_tab.py
+#, python-brace-format
+msgid "First {n} matching row"
+msgid_plural "First {n} matching rows"
+msgstr[0] ""
+msgstr[1] ""
 
 #: portolan_registry_qgis/gui/loading.py
 msgid "For a quick look, use View on map instead."
@@ -578,6 +666,15 @@ msgstr ""
 msgid "KB"
 msgstr ""
 
+#: portolan_registry_qgis/gui/sql_prompt.py
+msgid "Keep empty layer"
+msgstr ""
+
+#: portolan_registry_qgis/plugin.py
+#, python-brace-format
+msgid "Kept {name} empty. Its SQL from the project did not run."
+msgstr ""
+
 #: portolan_registry_qgis/core/loadable.py
 #, python-brace-format
 msgid "Layers: {layers}"
@@ -612,6 +709,10 @@ msgstr ""
 msgid "Listing of {title} cancelled."
 msgstr ""
 
+#: portolan_registry_qgis/gui/sql_tab.py
+msgid "Listing the files of the items in the area…"
+msgstr ""
+
 #: portolan_registry_qgis/core/download.py
 #, python-brace-format
 msgid "Listing the files of {glob} needs DuckDB"
@@ -632,8 +733,17 @@ msgid ""
 "the install command when it is missing."
 msgstr ""
 
+#. the tab with the area of interest and the buttons that add the data.
+#: portolan_registry_qgis/gui/details.py
+msgid "Load"
+msgstr ""
+
 #: portolan_registry_qgis/gui/loading.py
 msgid "Load GeoParquet"
+msgstr ""
+
+#: portolan_registry_qgis/gui/details.py
+msgid "Load data"
 msgstr ""
 
 #: portolan_registry_qgis/gui/details.py
@@ -646,6 +756,11 @@ msgstr ""
 
 #: portolan_registry_qgis/gui/loading.py
 msgid "Load the features?"
+msgstr ""
+
+#: portolan_registry_qgis/core/query.py
+#, python-brace-format
+msgid "Loads only rows where {filter}."
 msgstr ""
 
 #: portolan_registry_qgis/core/loadable.py
@@ -668,6 +783,21 @@ msgstr ""
 msgid "Loads the Parquet table. It has no geometry, so it loads whole."
 msgstr ""
 
+#: portolan_registry_qgis/core/query.py
+msgid "Loads with custom SQL. The area of interest does not apply."
+msgstr ""
+
+#. {filter} is the QGIS expression that the rows match.
+#: portolan_registry_qgis/core/query.py
+#, python-brace-format
+msgid "Loads {columns}, only rows where {filter}."
+msgstr ""
+
+#: portolan_registry_qgis/core/query.py
+#, python-brace-format
+msgid "Loads {columns}."
+msgstr ""
+
 #. The symbol for megabytes in a file size. French writes "Mo", for mégaoctet.
 #: portolan_registry_qgis/core/format.py
 msgid "MB"
@@ -680,6 +810,11 @@ msgstr ""
 #. the label of the row that links to more about the dataset.
 #: portolan_registry_qgis/core/facts.py
 msgid "More"
+msgstr ""
+
+#: portolan_registry_qgis/gui/window.py
+#, python-brace-format
+msgid "No COG of {title} lies in the chosen area."
 msgstr ""
 
 #: portolan_registry_qgis/gui/loading.py
@@ -695,6 +830,10 @@ msgstr ""
 msgid "No file of {title} lies in the chosen area."
 msgstr ""
 
+#: portolan_registry_qgis/gui/sql_tab.py
+msgid "No item in the area has a GeoParquet file."
+msgstr ""
+
 #: portolan_registry_qgis/gui/loading.py
 #, python-brace-format
 msgid "No item of {title} in the chosen area has a GeoParquet file."
@@ -702,6 +841,10 @@ msgstr ""
 
 #: portolan_registry_qgis/gui/registry_list.py
 msgid "No publisher matches these filters."
+msgstr ""
+
+#: portolan_registry_qgis/gui/sql_tab.py
+msgid "No row matches in the area of interest."
 msgstr ""
 
 #: portolan_registry_qgis/qgis_io/layers.py
@@ -742,6 +885,10 @@ msgstr ""
 msgid "Open it in a QGIS whose GDAL includes {name}."
 msgstr ""
 
+#: portolan_registry_qgis/gui/sql_tab.py
+msgid "Open the expression builder."
+msgstr ""
+
 #: portolan_registry_qgis/gui/loading.py
 #, python-brace-format
 msgid "Open vector tiles of {title}"
@@ -766,6 +913,22 @@ msgstr ""
 
 #: portolan_registry_qgis/gui/loading.py
 msgid "Portolan Registry: DuckDB needed"
+msgstr ""
+
+#: portolan_registry_qgis/gui/sql_tab.py
+msgid "Preview rows"
+msgstr ""
+
+#: portolan_registry_qgis/gui/sql_tab.py
+#, python-brace-format
+msgid "Preview the first {n} matching row without loading the layer."
+msgid_plural "Preview the first {n} matching rows without loading the layer."
+msgstr[0] ""
+msgstr[1] ""
+
+#: portolan_registry_qgis/gui/sql_tab.py
+#, python-brace-format
+msgid "Preview {name} with DuckDB"
 msgstr ""
 
 #: portolan_registry_qgis/core/format.py
@@ -869,6 +1032,11 @@ msgstr ""
 msgid "Read the Portolan registry"
 msgstr ""
 
+#: portolan_registry_qgis/gui/sql_tab.py
+#, python-brace-format
+msgid "Read the columns of {url}"
+msgstr ""
+
 #: portolan_registry_qgis/gui/window.py
 msgid "Read the registry again"
 msgstr ""
@@ -890,6 +1058,14 @@ msgstr ""
 msgid "Reading the Portolan registry…"
 msgstr ""
 
+#: portolan_registry_qgis/gui/sql_tab.py
+msgid "Reading the columns…"
+msgstr ""
+
+#: portolan_registry_qgis/gui/sql_tab.py
+msgid "Reading the first rows…"
+msgstr ""
+
 #: portolan_registry_qgis/gui/loading.py
 #, python-brace-format
 msgid "Reading {name} with DuckDB…"
@@ -909,6 +1085,10 @@ msgstr ""
 msgid "Reads the GeoParquet file of each item in the area."
 msgstr ""
 
+#: portolan_registry_qgis/gui/details.py
+msgid "Remove all row and column selections."
+msgstr ""
+
 #. A catalog status. The catalog is gone from its address.
 #: portolan_registry_qgis/gui/widgets.py
 msgid "Removed"
@@ -917,6 +1097,10 @@ msgstr ""
 #: portolan_registry_qgis/plugin.py
 #, python-brace-format
 msgid "Reopen {url}"
+msgstr ""
+
+#: portolan_registry_qgis/gui/sql_tab.py
+msgid "Replace the row and column selections with a custom SELECT query."
 msgstr ""
 
 #: portolan_registry_qgis/gui/report.py
@@ -934,12 +1118,32 @@ msgstr ""
 msgid "Roles: {roles}"
 msgstr ""
 
+#: portolan_registry_qgis/gui/sql_tab.py
+msgid "Rows"
+msgstr ""
+
+#: portolan_registry_qgis/gui/sql_prompt.py
+msgid "Run SQL"
+msgstr ""
+
+#: portolan_registry_qgis/gui/sql_prompt.py
+msgid "Run SQL from this project?"
+msgstr ""
+
+#: portolan_registry_qgis/gui/details.py
+msgid "SQL"
+msgstr ""
+
 #: portolan_registry_qgis/gui/registry_list.py
 msgid "Search publishers by name or license"
 msgstr ""
 
 #: portolan_registry_qgis/gui/details.py
 msgid "See every file and all metadata of this dataset"
+msgstr ""
+
+#: portolan_registry_qgis/gui/sql_tab.py
+msgid "Select columns to include. Geometry is always included."
 msgstr ""
 
 #: portolan_registry_qgis/gui/details.py
@@ -1052,6 +1256,15 @@ msgid ""
 "your Linux distribution, conda-forge, or the QGIS installers."
 msgstr ""
 
+#: portolan_registry_qgis/core/parquet_query.py
+msgid "The SQL must be a SELECT statement"
+msgstr ""
+
+#: portolan_registry_qgis/core/query.py
+#, python-brace-format
+msgid "The SQL must return the geometry in a column named {name}"
+msgstr ""
+
 #: portolan_registry_qgis/gui/scope.py
 msgid "The area is empty."
 msgstr ""
@@ -1076,6 +1289,11 @@ msgstr ""
 msgid "The file has no bbox or assets column"
 msgstr ""
 
+#: portolan_registry_qgis/core/query.py
+#, python-brace-format
+msgid "The file has no column named {name}"
+msgstr ""
+
 #: portolan_registry_qgis/core/geoparquet.py
 msgid "The file has no columns"
 msgstr ""
@@ -1090,6 +1308,29 @@ msgid "The files of {n} partitioned dataset could not be listed and are left out
 msgid_plural "The files of {n} partitioned datasets could not be listed and are left out."
 msgstr[0] ""
 msgstr[1] ""
+
+#: portolan_registry_qgis/qgis_io/filter_expression.py
+msgid ""
+"The filter can use comparisons, IN, LIKE, IS NULL, AND, OR, and NOT. For "
+"anything else, check Write my own SQL."
+msgstr ""
+
+#: portolan_registry_qgis/qgis_io/filter_expression.py
+#, python-brace-format
+msgid "The filter does not parse: {error}"
+msgstr ""
+
+#: portolan_registry_qgis/qgis_io/filter_expression.py
+msgid "The filter is empty"
+msgstr ""
+
+#: portolan_registry_qgis/gui/sql_prompt.py
+#, python-brace-format
+msgid ""
+"The layer {name} runs SQL that the author of this project wrote. The SQL can"
+" read files on this computer and send them to other hosts. Run it only if "
+"you trust the project."
+msgstr ""
 
 #: portolan_registry_qgis/core/stac.py
 msgid "The link did not return a STAC document"
@@ -1193,6 +1434,10 @@ msgstr ""
 msgid "View on map"
 msgstr ""
 
+#: portolan_registry_qgis/gui/details.py portolan_registry_qgis/gui/sql_tab.py
+msgid "View the DuckDB query used to load the layer."
+msgstr ""
+
 #: portolan_registry_qgis/gui/tasks.py
 msgid "Wait for the download to finish, or cancel it."
 msgstr ""
@@ -1204,6 +1449,17 @@ msgstr ""
 #: portolan_registry_qgis/gui/tasks.py
 msgid "Wait for the mosaic to finish, or cancel it."
 msgstr ""
+
+#: portolan_registry_qgis/gui/sql_tab.py
+msgid "Write my own SQL"
+msgstr ""
+
+#: portolan_registry_qgis/core/parquet_query.py
+#, python-brace-format
+msgid "Write one SELECT statement. The SQL holds {n} statement."
+msgid_plural "Write one SELECT statement. The SQL holds {n} statements."
+msgstr[0] ""
+msgstr[1] ""
 
 #: portolan_registry_qgis/gui/downloads.py
 #, python-brace-format
@@ -1271,6 +1527,14 @@ msgstr ""
 #, python-brace-format
 msgid "{first} and {second}"
 msgstr ""
+
+#. {kept} columns of the {n} in the file go into the load.
+#: portolan_registry_qgis/core/query.py portolan_registry_qgis/gui/sql_tab.py
+#, python-brace-format
+msgid "{kept} of {n} column"
+msgid_plural "{kept} of {n} columns"
+msgstr[0] ""
+msgstr[1] ""
 
 #: portolan_registry_qgis/gui/scope.py
 #, python-brace-format

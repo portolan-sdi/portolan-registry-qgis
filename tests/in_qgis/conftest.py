@@ -536,3 +536,31 @@ def catalog(tmp_path_factory):
             "requests": server.requests,
             **info,
         }
+
+
+@pytest.fixture
+def asked(tmp_path, monkeypatch):
+    """Download into ``tmp_path`` and answer Yes to each question.
+
+    The list collects the text of each question the window asks.
+    """
+    from qgis.PyQt.QtWidgets import QFileDialog, QMessageBox
+
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *a: str(tmp_path))
+    texts = []
+
+    def answer(*args):
+        texts.append(args[2])
+        return QMessageBox.StandardButton.Yes
+
+    monkeypatch.setattr(QMessageBox, "question", answer)
+    return texts
+
+
+@pytest.fixture
+def server():
+    from portolan_registry_qgis.qgis_io.tileserver import TileServer
+
+    tiles = TileServer()
+    yield tiles
+    tiles.stop()

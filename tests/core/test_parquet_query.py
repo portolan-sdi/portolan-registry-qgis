@@ -12,6 +12,7 @@ import pytest
 from portolan_registry_qgis.core import parquet_query
 from portolan_registry_qgis.core.geoparquet import Clip, Covering, plan_read
 from portolan_registry_qgis.core.parquet_query import Target
+from portolan_registry_qgis.core.query import And, Compare, InList, Query, QueryError, Rows
 from tests.points import write_points
 
 pytest.importorskip("duckdb")
@@ -158,7 +159,7 @@ def test_dates_and_times_survive_the_copy(con, tmp_path):
 def test_bbox(con, points, tmp_path):
     plan = parquet_query.read_plan(con, points)
     box = (11.095, 44.0, 11.305, 45.0)
-    assert parquet_query.estimate(con, points, plan, Clip(box)) == 21
+    assert parquet_query.estimate(con, points, plan, Rows(Clip(box))) == 21
     written = parquet_query.write_gpkg(
         con, points, plan, Target(str(tmp_path / "box.gpkg"), Clip(box))
     )
@@ -172,7 +173,7 @@ def test_box_estimate_needs_a_covering_column(con, tmp_path):
     plan = parquet_query.read_plan(con, str(source))
     assert plan.covering is None
     assert parquet_query.estimate(con, str(source), plan) == 1
-    assert parquet_query.estimate(con, str(source), plan, Clip((0, 0, 5, 5))) is None
+    assert parquet_query.estimate(con, str(source), plan, Rows(Clip((0, 0, 5, 5)))) is None
 
 
 def test_area_keeps_fewer_rows_than_its_envelope(con, points, tmp_path):
@@ -184,7 +185,7 @@ def test_area_keeps_fewer_rows_than_its_envelope(con, points, tmp_path):
     )
     box = (11.095, 44.0, 11.305, 45.0)
     # The estimate counts by the envelope, an upper bound.
-    assert parquet_query.estimate(con, points, plan, Clip(box, area)) == 21
+    assert parquet_query.estimate(con, points, plan, Rows(Clip(box, area))) == 21
     target = tmp_path / "area.gpkg"
     written = parquet_query.write_gpkg(con, points, plan, Target(str(target), Clip(box, area)))
     assert written == parquet_query.Written(features=11, geometry_type="Point", refused=0)
@@ -216,7 +217,7 @@ def test_table_becomes_an_attribute_table(con, tmp_path, rows):
     )
     plan = parquet_query.read_plan(con, str(source))
     assert not plan.has_geometry
-    assert parquet_query.estimate(con, str(source), plan, Clip((0, 0, 1, 1))) == rows
+    assert parquet_query.estimate(con, str(source), plan, Rows(Clip((0, 0, 1, 1)))) == rows
     target = tmp_path / "table.gpkg"
     written = parquet_query.write_gpkg(
         con, str(source), plan, Target(str(target), Clip((0, 0, 1, 1)), srs="EPSG:4326")
@@ -501,3 +502,143 @@ def test_read_error_names_a_bucket_that_amazon_does_not_have():
 )
 def test_read_error_keeps_other_errors(source, error):
     assert parquet_query.read_error(source, error) == error
+
+
+def test_a_filter_and_two_columns_shape_the_copy(con, points, tmp_path):
+    plan = parquet_query.read_plan(con, points)
+    rows = And(Compare("val", ">=", 30.0), InList("name", ("n20", "n21", "n90")))
+    query = Query("filter", rows, ("name", "val"))
+    assert parquet_query.estimate(con, points, plan, Rows(Clip((11, 44, 11.5, 44.2)), query)) == 2
+    target = tmp_path / "query.gpkg"
+    written = parquet_query.write_gpkg(con, points, plan, Target(str(target), query=query))
+    assert written.features == 3
+    described = con.execute("DESCRIBE SELECT * FROM ST_Read(?)", [str(target)]).fetchall()
+    assert [row[0] for row in described] == ["fid", "name", "val", "geom"]
+
+
+def test_custom_sql_replaces_the_generated_query(con, points, tmp_path):
+    plan = parquet_query.read_plan(con, points)
+    sql = (
+        f"SELECT id, ST_Buffer(geometry, 0.001) AS geometry FROM read_parquet('{points}') "
+        "WHERE id < 7; -- seven rows"
+    )
+    query = Query(sql=sql)
+    assert parquet_query.estimate(con, points, plan, Rows(query=query)) == 7
+    target = tmp_path / "custom.gpkg"
+    written = parquet_query.write_gpkg(con, points, plan, Target(str(target), query=query))
+    assert written == parquet_query.Written(features=7, geometry_type="MultiPolygon", refused=0)
+
+
+def test_custom_sql_must_return_the_geometry(con, points, tmp_path):
+    plan = parquet_query.read_plan(con, points)
+    query = Query(sql=f"SELECT id FROM read_parquet('{points}')")
+    with pytest.raises(QueryError, match="geometry"):
+        parquet_query.write_gpkg(con, points, plan, Target(str(tmp_path / "x.gpkg"), query=query))
+    assert not (tmp_path / "x.gpkg").exists()
+
+
+@pytest.mark.parametrize(
+    ("sql", "message"),
+    [
+        ("SELECT 1; SELECT 2", "2 statements"),
+        ("CREATE TABLE marker AS SELECT 1", "SELECT statement"),
+        ("SELEC 1", "syntax error"),
+        ("  ", "0 statements"),
+    ],
+)
+def test_check_select_runs_nothing_it_refuses(con, points, tmp_path, sql, message):
+    plan = parquet_query.read_plan(con, points)
+    with pytest.raises(QueryError, match=message):
+        parquet_query.check_select(sql)
+    with pytest.raises(QueryError, match=message):
+        parquet_query.write_gpkg(
+            con, points, plan, Target(str(tmp_path / "x.gpkg"), query=Query(sql=sql))
+        )
+    tables = con.execute("SELECT table_name FROM duckdb_tables() WHERE table_name = 'marker'")
+    assert tables.fetchall() == []
+
+
+def test_check_select_drops_the_final_semicolon():
+    assert parquet_query.check_select("WITH t AS (SELECT 1 AS a) SELECT a FROM t;") == (
+        "WITH t AS (SELECT 1 AS a) SELECT a FROM t"
+    )
+
+
+def test_preview_shows_the_first_rows_with_geometry_types(con, points):
+    plan = parquet_query.read_plan(con, points)
+    shown = parquet_query.preview(con, points, plan, Rows(query=Query(columns=("name",))))
+    assert shown.columns == ("geometry", "name")
+    assert len(shown.rows) == parquet_query.PREVIEW_ROWS
+    assert shown.rows[0] == ("POINT", "n0")
+    custom = parquet_query.preview(
+        con, points, plan, Rows(query=Query(sql=f"SELECT id FROM read_parquet('{points}') LIMIT 3"))
+    )
+    assert custom == parquet_query.Preview(("id",), [(0,), (1,), (2,)])
+
+
+def test_preview_stops_on_cancel(con, points):
+    import duckdb
+
+    plan = parquet_query.read_plan(con, points)
+    slow = Query(sql="SELECT i AS id FROM range(10000000000) t(i) ORDER BY random()")
+    with pytest.raises(duckdb.InterruptException):
+        parquet_query.preview(
+            con, points, plan, Rows(query=slow), parquet_query.Watch(lambda: True)
+        )
+
+
+def test_copy_script_runs_in_a_fresh_duckdb(con, points, tmp_path):
+    import duckdb
+
+    plan = parquet_query.read_plan(con, points)
+    clip = Clip((11.095, 44.0, 11.305, 45.0))
+    query = Query("filter", Compare("val", ">", 20.0), ("name",))
+    target = tmp_path / "plugin.gpkg"
+    written = parquet_query.write_gpkg(con, points, plan, Target(str(target), clip, query=query))
+    script_target = tmp_path / "script.gpkg"
+    script = parquet_query.copy_script(
+        points, plan, str(script_target), Rows(clip, query), "EPSG:4326"
+    )
+    assert script.startswith("INSTALL spatial;\nLOAD spatial;\nINSTALL httpfs;\nLOAD httpfs;\n")
+    with contextlib.closing(duckdb.connect()) as fresh:
+        fresh.execute(script)
+    with contextlib.closing(sqlite3.connect(script_target)) as gpkg:
+        assert gpkg.execute("SELECT count(*) FROM features").fetchone() == (written.features,)
+
+
+def test_copy_script_holds_the_bucket_secret():
+    plan = plan_read([("id", "BIGINT")], None)
+    script = parquet_query.copy_script("s3://a.b/f.parquet", plan, "out.gpkg")
+    assert "CREATE SECRET IF NOT EXISTS bucket_a_b" in script
+    assert "read_parquet('s3://a.b/f.parquet')" in script
+
+
+def test_display_select_keeps_custom_sql():
+    plan = plan_read([("id", "BIGINT")], None)
+    assert parquet_query.display_select("f.parquet", plan, Rows(query=Query(sql=" SELECT 1 "))) == (
+        "SELECT 1"
+    )
+    assert parquet_query.display_select("f.parquet", plan) == (
+        'SELECT\n  "id" AS "id"\nFROM read_parquet(\'f.parquet\')'
+    )
+
+
+@pytest.mark.parametrize(
+    ("sql", "kept"),
+    [
+        ("SELECT 1; -- end", "SELECT 1"),
+        ("SELECT ';' AS a, \"b;\" FROM t;", "SELECT ';' AS a, \"b;\" FROM t"),
+        ("SELECT 1 -- a; b\n /* c; */ ;", "SELECT 1 -- a; b\n /* c; */ "),
+        ("SELECT 1", "SELECT 1"),
+    ],
+)
+def test_without_terminator(sql, kept):
+    assert parquet_query.without_terminator(sql) == kept
+
+
+def test_copy_script_cuts_custom_sql_at_its_semicolon():
+    plan = plan_read([("id", "BIGINT")], None)
+    script = parquet_query.copy_script(
+        "f.parquet", plan, "out.gpkg", Rows(query=Query(sql="SELECT 1 AS id; -- done"))
+    )
+    assert "COPY (\nSELECT 1 AS id\n) TO 'out.gpkg'" in script

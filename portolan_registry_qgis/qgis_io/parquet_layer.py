@@ -8,6 +8,7 @@ project whose copy is gone opens a placeholder, and ``restore`` copies again.
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import re
 import shutil
@@ -15,7 +16,7 @@ import tempfile
 import threading
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -37,7 +38,9 @@ from qgis.core import (
 from portolan_registry_qgis.core import parquet_query
 from portolan_registry_qgis.core.geoparquet import LAYER, WHOLE_FILE, Clip
 from portolan_registry_qgis.core.i18n import _
+from portolan_registry_qgis.core.query import DEFAULT_QUERY, Query, Rows
 from portolan_registry_qgis.qgis_io.crs import wgs84
+from portolan_registry_qgis.qgis_io.filter_expression import parse_filter
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -54,6 +57,12 @@ BBOX_PROPERTY = "portolan/parquet_bbox"
 # The polygon of the copy in the file's CRS, as WKT, or empty when the copy
 # has no polygon.
 AREA_PROPERTY = "portolan/parquet_area"
+# The QGIS expression that filters the rows of the copy, or empty.
+FILTER_PROPERTY = "portolan/parquet_filter"
+# The columns the copy keeps, as a JSON list, or empty for every column.
+COLUMNS_PROPERTY = "portolan/parquet_columns"
+# The custom SELECT that replaced the filter and the columns, or empty.
+SQL_PROPERTY = "portolan/parquet_sql"
 # A session folder with no file newer than this belongs to a session that
 # ended without cleaning up.
 STALE_SECONDS = 7 * 24 * 3600
@@ -96,6 +105,10 @@ class Limits:
     # Keep only features that intersect this Polygon or MultiPolygon WKT in
     # EPSG:4326. It replaces ``extent``.
     area: str | None = None
+    # The rows and columns to keep, or the SELECT that replaces them.
+    query: Query = DEFAULT_QUERY
+    # The href of the one file that ``query`` applies to, for a download of many files.
+    queried: str | None = None
 
 
 @dataclass(frozen=True)
@@ -108,6 +121,12 @@ class Planned:
     # The part of the file the copy keeps, in the file's CRS.
     clip: Clip
     estimate: int | None
+    query: Query = DEFAULT_QUERY
+
+    @property
+    def rows(self) -> Rows:
+        """The rows that the copy keeps."""
+        return Rows(self.clip, self.query)
 
 
 @dataclass(frozen=True)
@@ -118,6 +137,7 @@ class Prepared:
     path: Path
     written: parquet_query.Written
     clip: Clip = WHOLE_FILE
+    query: Query = DEFAULT_QUERY
 
 
 def crs_for(plan: ReadPlan) -> QgsCoordinateReferenceSystem:
@@ -202,14 +222,64 @@ def plan(
     limits = limits or Limits()
     watch = watch or parquet_query.Watch()
     con = parquet_query.connection(extension_dir)
+    described = describe(url, extension_dir, watch)
+    clip = clip_for(limits, described.crs, context)
+    planned = replace(described, clip=clip, query=limits.query)
+    count = parquet_query.estimate(con, url, planned.plan, planned.rows, watch)
+    return replace(planned, estimate=count)
+
+
+def describe(
+    url: parquet_query.Source,
+    extension_dir: str | None = None,
+    watch: parquet_query.Watch | None = None,
+) -> Planned:
+    """Read a GeoParquet file's columns and CRS, with no clip and no estimate. Safe off the main thread."""
+    watch = watch or parquet_query.Watch()
+    con = parquet_query.connection(extension_dir)
     read = parquet_query.read_plan(con, url, watch.cancelled)
-    crs = crs_for(read)
+    return Planned(url, read, crs_for(read), WHOLE_FILE, None)
+
+
+def describer(
+    url: parquet_query.Source, extension_dir: str | None = None
+) -> Callable[[QgsTask], Planned]:
+    """Return a task function that runs ``describe`` on ``url``."""
+    return lambda task: describe(url, extension_dir, task_watch(task))
+
+
+def clip_for(
+    limits: Limits, crs: QgsCoordinateReferenceSystem, context: QgsCoordinateTransformContext
+) -> Clip:
+    """Return the clip of ``limits`` in the file CRS ``crs``.
+
+    Raises:
+        ValueError: The area is not a polygon, or the transform fails.
+    """
     if limits.area is None:
-        clip = Clip(file_bbox(limits.extent, limits.extent_crs, crs, context))
-    else:
-        clip = file_area(limits.area, crs, context)
-    count = parquet_query.estimate(con, url, read, clip, watch)
-    return Planned(url, read, crs, clip, count)
+        return Clip(file_bbox(limits.extent, limits.extent_crs, crs, context))
+    return file_area(limits.area, crs, context)
+
+
+def previewer(
+    planned: Planned, extension_dir: str | None = None
+) -> Callable[[QgsTask], parquet_query.Preview]:
+    """Return a task function that reads the first rows the copy of ``planned`` keeps."""
+
+    def read(task: QgsTask) -> parquet_query.Preview:
+        con = parquet_query.connection(extension_dir)
+        return parquet_query.preview(con, planned.url, planned.plan, planned.rows, task_watch(task))
+
+    return read
+
+
+def _srs(planned: Planned) -> str | None:
+    return planned.crs.authid() or planned.plan.crs or None
+
+
+def script(planned: Planned, path: str) -> str:
+    """Return the DuckDB CLI script that writes the copy of ``planned`` to ``path``."""
+    return parquet_query.copy_script(planned.url, planned.plan, path, planned.rows, _srs(planned))
 
 
 def planner(
@@ -254,14 +324,13 @@ def prepare(
     """
     con = parquet_query.connection(extension_dir)
     path = new_path(".gpkg")
-    srs = planned.crs.authid() or planned.plan.crs or None
     try:
-        target = parquet_query.Target(str(path), planned.clip, srs)
+        target = parquet_query.Target(str(path), planned.clip, _srs(planned), planned.query)
         written = parquet_query.write_gpkg(con, planned.url, planned.plan, target, watch)
     except BaseException:
         discard_path(path)
         raise
-    return Prepared(planned.url, path, written, planned.clip)
+    return Prepared(planned.url, path, written, planned.clip, planned.query)
 
 
 def build(prepared: Prepared, name: str) -> tuple[QgsVectorLayer, int]:
@@ -285,7 +354,24 @@ def build(prepared: Prepared, name: str) -> tuple[QgsVectorLayer, int]:
     bbox, area = prepared.clip.to_text()
     layer.setCustomProperty(BBOX_PROPERTY, bbox)
     layer.setCustomProperty(AREA_PROPERTY, area)
+    query = prepared.query
+    layer.setCustomProperty(FILTER_PROPERTY, query.filter_text if query.filter else "")
+    layer.setCustomProperty(COLUMNS_PROPERTY, columns_text(query.columns))
+    layer.setCustomProperty(SQL_PROPERTY, query.sql or "")
     return layer, prepared.written.refused
+
+
+def columns_text(columns: tuple[str, ...] | None) -> str:
+    """Return ``columns`` as the text of ``COLUMNS_PROPERTY``."""
+    return "" if columns is None else json.dumps(list(columns))
+
+
+def columns_from_text(text: str) -> tuple[str, ...] | None:
+    """Return the columns that ``columns_text`` wrote, or None for every column."""
+    value = json.loads(text) if text else None
+    if not isinstance(value, list):
+        return None
+    return tuple(str(name) for name in value)
 
 
 def placeholder() -> Path:
@@ -375,32 +461,58 @@ def needs_restore(layer: object) -> bool:
     return path is not None and is_lost_copy(path)
 
 
+@dataclass(frozen=True)
+class SavedCopy:
+    """What a saved project keeps of a copy, as the text of its layer properties.
+
+    The box and the area are in the file's CRS.
+    """
+
+    url: str
+    bbox: str = ""
+    area: str = ""
+    filter_text: str = ""
+    columns: str = ""
+    sql: str = ""
+
+    def query(self) -> Query:
+        """Return the saved query. Call on the main thread.
+
+        Raises:
+            FilterError: The saved filter is not one the plugin turns into SQL.
+        """
+        if self.sql:
+            return Query(sql=self.sql)
+        condition = parse_filter(self.filter_text) if self.filter_text else None
+        return Query(self.filter_text, condition, columns_from_text(self.columns))
+
+
 def restore(
-    layer_url: str,
-    bbox_text: str,
+    saved: SavedCopy,
+    query: Query = DEFAULT_QUERY,
     extension_dir: str | None = None,
     cancelled: Callable[[], bool] | None = None,
-    area_text: str = "",
 ) -> Prepared:
-    """Copy a saved layer's features again. Safe off the main thread.
-
-    The arguments are the layer's ``SOURCE_PROPERTY``, ``BBOX_PROPERTY``, and
-    ``AREA_PROPERTY`` values. The area is already in the file's CRS.
-    """
-    con = parquet_query.connection(extension_dir)
-    source = parquet_query.source_from_text(layer_url)
-    read = parquet_query.read_plan(con, source, cancelled)
-    clip = Clip.from_text(bbox_text, area_text)
-    planned = Planned(source, read, crs_for(read), clip, None)
+    """Copy a saved layer's features again with ``query``. Safe off the main thread."""
+    source = parquet_query.source_from_text(saved.url)
+    described = describe(source, extension_dir, parquet_query.Watch(cancelled))
+    planned = replace(described, clip=Clip.from_text(saved.bbox, saved.area), query=query)
     return prepare(planned, extension_dir, parquet_query.Watch(cancelled))
 
 
-def saved_copy(layer: QgsVectorLayer) -> tuple[str, str, str]:
-    """Return what ``restore`` needs from a saved layer: its URL, box, and area."""
-    return (
-        str(layer.customProperty(SOURCE_PROPERTY) or ""),
-        str(layer.customProperty(BBOX_PROPERTY) or ""),
-        str(layer.customProperty(AREA_PROPERTY) or ""),
+def saved_copy(layer: QgsVectorLayer) -> SavedCopy:
+    """Return what ``restore`` needs from a saved layer."""
+
+    def text(name: str) -> str:
+        return str(layer.customProperty(name) or "")
+
+    return SavedCopy(
+        text(SOURCE_PROPERTY),
+        text(BBOX_PROPERTY),
+        text(AREA_PROPERTY),
+        text(FILTER_PROPERTY),
+        text(COLUMNS_PROPERTY),
+        text(SQL_PROPERTY),
     )
 
 

@@ -5,12 +5,15 @@ Background results compare the open document by identity before they show.
 
 from __future__ import annotations
 
+import contextlib
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from qgis.core import QgsSettings
 from qgis.PyQt.QtCore import QByteArray, QEvent, QSize, Qt, pyqtSignal
 from qgis.PyQt.QtGui import QPalette
 from qgis.PyQt.QtWidgets import (
+    QApplication,
     QDialog,
     QHBoxLayout,
     QLabel,
@@ -22,12 +25,13 @@ from qgis.PyQt.QtWidgets import (
     QWidget,
 )
 
-from portolan_registry_qgis.core import registry
+from portolan_registry_qgis.core import mirror, registry
+from portolan_registry_qgis.core.commands import mosaic_commands, ogr2ogr_command, translate_command
 from portolan_registry_qgis.core.facts import document_extent
 from portolan_registry_qgis.core.hrefs import BROWSER_URL, browser_url
-from portolan_registry_qgis.core.i18n import _
+from portolan_registry_qgis.core.i18n import _, count
 from portolan_registry_qgis.core.loadable import only_items
-from portolan_registry_qgis.core.scope import Area, Everything, MapView, Scope
+from portolan_registry_qgis.core.scope import Area, Everything, MapView, Scope, clip_wkt
 from portolan_registry_qgis.core.stac import Asset, Document
 from portolan_registry_qgis.core.style import archive_urls
 from portolan_registry_qgis.gui.catalog_tree import CatalogTree
@@ -51,6 +55,7 @@ from portolan_registry_qgis.qgis_io import parquet_layer
 from portolan_registry_qgis.qgis_io.canvas import CanvasError, zoom_to
 from portolan_registry_qgis.qgis_io.documents import DocumentCache
 from portolan_registry_qgis.qgis_io.log import Messages
+from portolan_registry_qgis.qgis_io.mosaic import clip_geojson
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -113,6 +118,7 @@ class RegistryWindow(QDialog):
         )
         self._loader = Loader(self, iface, server, self.messages, self.tasks)
         self._downloads = Downloads(self, self.messages, self.tasks)
+        self.details.sql_tab.set_limits(self._quiet_limits)
         self._build()
         self._restore_layout()
         self.reload()
@@ -235,6 +241,11 @@ class RegistryWindow(QDialog):
         details.mosaic_button.clicked.connect(self.add_mosaic)
         details.open_browser.clicked.connect(self._open_in_browser)
         details.report.clicked.connect(self._report_problem)
+        details.sql_tab.files_needed.connect(self._list_sql_files)
+        self._iface.mapCanvas().extentsChanged.connect(self._map_moved)
+        details.copy_view_gdal.triggered.connect(self._copy_view_command)
+        details.copy_load_gdal.triggered.connect(self._copy_load_command)
+        details.copy_mosaic_gdal.triggered.connect(self._copy_mosaic_commands)
 
     def showEvent(self, event: Any) -> None:
         """Report that the window shows."""
@@ -256,6 +267,8 @@ class RegistryWindow(QDialog):
         """Stop following the map canvas and the project. Call before the window is deleted."""
         self.registry_list.release()
         self.details.release()
+        with contextlib.suppress(TypeError):
+            self._iface.mapCanvas().extentsChanged.disconnect(self._map_moved)
 
     def reload(self) -> None:
         """Read the registry and list its catalogs."""
@@ -360,9 +373,9 @@ class RegistryWindow(QDialog):
             self._add_file(target.asset)
 
     def _load_full_data(self) -> None:
-        target = self.details.targets.load
-        if target is not None and target.asset is not None:
-            self._add_file(target.asset)
+        asset = self.details.load_asset()
+        if asset is not None:
+            self._add_file(asset)
 
     def _parquet_scope(self) -> tuple[Scope, parquet_layer.Limits] | None:
         """Return the scope and the ``parquet_layer.Limits`` it gives.
@@ -376,13 +389,21 @@ class RegistryWindow(QDialog):
         except ScopeError as error:
             self.messages.warn(str(error))
             return None
+        return scope, self._limits_for(scope)
+
+    def _limits_for(self, scope: Scope) -> parquet_layer.Limits:
         canvas = self._iface.mapCanvas()
         if isinstance(scope, MapView):
             crs = canvas.mapSettings().destinationCrs()
-            return scope, parquet_layer.Limits(extent=canvas.extent(), extent_crs=crs)
+            return parquet_layer.Limits(extent=canvas.extent(), extent_crs=crs)
         if isinstance(scope, Area):
-            return scope, parquet_layer.Limits(area=scope.wkt)
-        return scope, parquet_layer.Limits()
+            return parquet_layer.Limits(area=scope.wkt)
+        return parquet_layer.Limits()
+
+    def _with_query(self, asset: Asset, limits: parquet_layer.Limits) -> parquet_layer.Limits:
+        """Add the chosen rows and columns of ``asset`` to ``limits``."""
+        query = self.details.query_for(asset)
+        return limits if query.is_default else replace(limits, query=query, queried=asset.href)
 
     def _add_parquet(self, asset: Asset, *, whole: bool = False) -> None:
         if not duckdb_ready(self):
@@ -395,9 +416,12 @@ class RegistryWindow(QDialog):
             scoped = self._parquet_scope()
         if scoped is None:
             return
+        scope, limits = scoped
+        if not whole:
+            limits = self._with_query(asset, limits)
         document = self._document
         has_tiles = document is not None and bool(archive_urls(document))
-        self._loader.add_parquet(asset, document, *scoped, has_tiles=has_tiles)
+        self._loader.add_parquet(asset, document, scope, limits, has_tiles=has_tiles)
 
     def _zoom(self) -> None:
         bbox = self._extent()
@@ -443,7 +467,95 @@ class RegistryWindow(QDialog):
         scoped = self._parquet_scope()
         if scoped is None:
             return
-        self._downloads.download_all(document, self._root_url(document), *scoped)
+        scope, limits = scoped
+        queried = self.details.sql_tab.asset()
+        if queried is not None:
+            limits = self._with_query(queried, limits)
+        self._downloads.download_all(document, self._root_url(document), scope, limits)
+
+    # ---------- SQL tab ----------
+
+    def _list_sql_files(self, asset: Asset) -> None:
+        """List the files of the items in the area, for the SQL tab's query of ``asset``."""
+        document = self._document
+        if document is None or self.tasks.refuse_when_busy():
+            return
+        scoped = self._parquet_scope()
+        if scoped is None:
+            return
+
+        def listed(hrefs: list[str]) -> None:
+            if self._document is document:
+                self.details.sql_tab.set_item_files(asset, hrefs)
+
+        self._loader.list_item_files(document, scoped[0], listed)
+
+    def _map_moved(self) -> None:
+        """Follow the map with the SQL of a map-view scope."""
+        if self.isVisible() and isinstance(self._quiet_scope(), MapView):
+            self.details.sql_tab.scope_changed()
+
+    def _quiet_scope(self) -> Scope | None:
+        try:
+            return self.details.scope()
+        except ScopeError:
+            return None
+
+    def _quiet_limits(self) -> parquet_layer.Limits | None:
+        """Return the limits of the chosen scope, or None while the choice is not complete."""
+        scope = self._quiet_scope()
+        return None if scope is None else self._limits_for(scope)
+
+    # ---------- GDAL commands ----------
+
+    def _copied(self, text: str, message: str) -> None:
+        QApplication.clipboard().setText(text)
+        self.messages.info(message)
+
+    def _copy_view_command(self) -> None:
+        view = self.details.targets.view
+        if view is not None:
+            self._copied(
+                translate_command(view.href),
+                _("Copied the GDAL command for {name}.").format(name=view.title),
+            )
+
+    def _copy_load_command(self) -> None:
+        load = self.details.targets.load
+        if load is not None:
+            self._copied(
+                ogr2ogr_command(load.href),
+                _("Copied the GDAL command for {name}.").format(name=load.title),
+            )
+
+    def _copy_mosaic_commands(self) -> None:
+        """List the COGs of the items in the area, then copy the commands that build their mosaic."""
+        document = self._document
+        if document is None or self.tasks.refuse_when_busy():
+            return
+        scoped = self._parquet_scope()
+        if scoped is None:
+            return
+        clip = clip_wkt(scoped[0])
+
+        def listed(hrefs: list[str]) -> None:
+            cogs = mirror.split_files(hrefs)[0]
+            if not cogs:
+                self.messages.info(
+                    _("No COG of {title} lies in the chosen area.").format(title=document.title)
+                )
+                return
+            text = mosaic_commands(cogs, clip_geojson(clip) if clip else None)
+            self._copied(
+                text,
+                count(
+                    "Copied the GDAL commands for a mosaic of {n} file.",
+                    "Copied the GDAL commands for a mosaic of {n} files.",
+                    len(cogs),
+                ),
+            )
+
+        self._loader.list_item_files(document, scoped[0], listed)
 
     # ---------- browser ----------
 

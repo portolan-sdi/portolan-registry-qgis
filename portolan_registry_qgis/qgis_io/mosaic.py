@@ -254,6 +254,20 @@ def _mosaic_error(files: int, error: str, reasons: dict[str, str]) -> LayerError
     )
 
 
+def clip_geojson(clip: str) -> str:
+    """Return the WKT polygon ``clip`` as a GeoJSON FeatureCollection, the cutline GDAL reads.
+
+    Raises:
+        RuntimeError: ``clip`` is not WKT.
+    """
+    shape = ogr.CreateGeometryFromWkt(clip)
+    if shape is None:
+        raise RuntimeError(_("The clip is not WKT"))
+    geometry = json.loads(shape.ExportToJson())
+    feature = {"type": "Feature", "properties": {}, "geometry": geometry}  # i18n: skip - GeoJSON
+    return json.dumps({"type": "FeatureCollection", "features": [feature]})
+
+
 def _warp(mosaic: Any, path: Path, clip: str) -> None:
     """Write a warped VRT of ``mosaic`` at ``path`` that ``clip`` cuts and crops.
 
@@ -261,15 +275,8 @@ def _warp(mosaic: Any, path: Path, clip: str) -> None:
     polygon in the VRT. A band with no nodata value gets an alpha band, so
     the pixels outside the polygon draw as transparent.
     """
-    shape = ogr.CreateGeometryFromWkt(clip)
-    if shape is None:
-        raise RuntimeError(_("The clip is not WKT"))
     cutline = f"/vsimem/portolan-clip-{uuid.uuid4().hex}.geojson"
-    geometry = json.loads(shape.ExportToJson())
-    feature = {"type": "Feature", "properties": {}, "geometry": geometry}  # i18n: skip - GeoJSON
-    gdal.FileFromMemBuffer(
-        cutline, json.dumps({"type": "FeatureCollection", "features": [feature]})
-    )
+    gdal.FileFromMemBuffer(cutline, clip_geojson(clip))
     # The plain mosaic lives in memory. Its XML text is a dataset name that
     # GDAL opens, so the warped VRT keeps the mosaic inline.
     source = gdal.Open(mosaic.GetMetadata("xml:VRT")[0])

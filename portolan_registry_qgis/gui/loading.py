@@ -23,13 +23,14 @@ from portolan_registry_qgis.qgis_io.log import log
 from portolan_registry_qgis.qgis_io.network import fetch_bytes, fetch_document, run_task
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     from qgis.PyQt.QtWidgets import QWidget
 
     from portolan_registry_qgis.core.scope import Scope
     from portolan_registry_qgis.core.stac import Asset, Document
-    from portolan_registry_qgis.gui.tasks import TaskController
+    from portolan_registry_qgis.gui.tasks import TaskController, Walked
     from portolan_registry_qgis.qgis_io.log import Messages
     from portolan_registry_qgis.qgis_io.tileserver import TileServer
 
@@ -350,11 +351,6 @@ class Loader:
         ``tables_only`` reads only the GeoParquet files, which DuckDB copies as one table.
         """
 
-        def find(task: Any, executor: Any) -> list[str]:
-            return mosaic.item_hrefs_in(
-                document, scope, fetch_document, executor, cancelled=task.isCanceled
-            )
-
         def found(result: object, error: BaseException | None, *, cancelled: bool) -> None:
             hrefs = self._mosaic_files(
                 result, error, title, cancelled=cancelled, confirm=not tables_only
@@ -376,6 +372,16 @@ class Loader:
             if cogs:
                 self._build_mosaic(cogs, title, clip_wkt(scope))
 
+        self._walk_items(document, title, scope, found)
+
+    def _walk_items(self, document: Document, title: str, scope: Scope, found: Walked) -> None:
+        """Find the files of the items of ``document`` in ``scope``, then call ``found``."""
+
+        def find(task: Any, executor: Any) -> list[str]:
+            return mosaic.item_hrefs_in(
+                document, scope, fetch_document, executor, cancelled=task.isCanceled
+            )
+
         self._tasks.run_walk(
             Busy.MOSAIC,
             _("List the files of {title}").format(title=title),
@@ -383,6 +389,20 @@ class Loader:
             find,
             found,
         )
+
+    def list_item_files(
+        self, document: Document, scope: Scope, on_files: Callable[[list[str]], None]
+    ) -> None:
+        """List the files of the items of ``document`` in ``scope``, then give them to ``on_files``."""
+        title = document.title
+
+        def found(result: object, error: BaseException | None, *, cancelled: bool) -> None:
+            self._tasks.finish(Busy.MOSAIC)
+            hrefs = self._mosaic_files(result, error, title, cancelled=cancelled, confirm=False)
+            if hrefs is not None:
+                on_files(hrefs)
+
+        self._walk_items(document, title, scope, found)
 
     def _mosaic_files(
         self,

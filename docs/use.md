@@ -50,7 +50,7 @@ A CSV opens as points in EPSG:4326 when its first line has a longitude column (`
 
 ## Choose the area of interest
 
-The area of interest at the top of **Add to map** limits the data that the buttons below it read. The choice shows when the node has GeoParquet or child nodes.
+The area of interest at the top of the **Load** tab in **Add to map** limits the data that the buttons below it read. The choice shows when the node has GeoParquet or child nodes.
 
 | Choice | Area |
 |---|---|
@@ -74,6 +74,30 @@ Loads have no feature limit. For an estimate of more than 1,000,000 features, th
 A layer stores one geometry type. When a feature has another type, it keeps its attributes and has no geometry, and the window reports how many features this affects. A Parquet file with no geometry column loads as a table with every row, whatever the area.
 
 The plugin deletes a GeoPackage when you remove the last layer that reads it. A saved project keeps each GeoParquet layer as a link to its source file and its area. When the project opens, the plugin copies the features again. The new copy drops your edits, so export the layer to keep them.
+
+## Choose rows and columns
+
+For a node with GeoParquet, **Add to map** has two tabs. **Load** holds the area of interest and the buttons. **SQL** chooses what a GeoParquet load keeps, and shows the DuckDB query behind it.
+
+| Control | Use |
+|---|---|
+| File | The GeoParquet file to query, when the node has more than one |
+| Rows | A QGIS expression, such as `"type" = 'school'`. Select **ε** to build it from the file's columns |
+| Columns | A check box for each column. The geometry always loads |
+| Preview rows | The first 100 matching rows, in a table under the query, without a new layer |
+| Copy SQL | A script for the DuckDB command line that writes the same GeoPackage |
+
+The filter can use comparisons, `IN`, `LIKE`, `ILIKE`, `IS NULL`, `AND`, `OR`, and `NOT`. The plugin passes each value to DuckDB as a parameter, never as SQL text. The query updates as you type, and reads only the area of interest. The copied script installs the DuckDB extensions and creates the S3 secret that a bucket with a dot in its name needs.
+
+A choice applies at once. The **Load** tab then says what the next load keeps, such as **Loads 2 of 14 columns, only rows where "cod_estado" = 'MT'.**, and **Load full data** reads **Load data**. **Download** writes the chosen file as a GeoPackage of the same rows and columns. Select **Clear** at the end of that line to load every row and column again.
+
+To write the query yourself, check **Write my own SQL**, then edit the `SELECT`. It must return the geometry in a column with the file's own geometry name. The plugin accepts one `SELECT` statement and refuses any other text before DuckDB runs it. Your SQL replaces the rows, the columns, and the area of interest.
+
+A saved project keeps the filter, the columns, and your SQL. SQL in a project can read files on your computer and send them to another host. When the project opens, the plugin shows that SQL in full and asks before it runs it. **Keep empty layer** runs nothing.
+
+## Repeat a load outside QGIS
+
+The small arrow next to **View on map** for a COG, next to **Load full data** for a FlatGeobuf, GeoJSON, or CSV file, and next to **Add as one layer** opens **Copy as GDAL command**. The command does the same work outside QGIS with `gdal_translate`, `ogr2ogr`, or `gdalbuildvrt` and `gdalwarp`. For a mosaic, the plugin first finds the COGs in the area of interest, as **Add as one layer** does, and the commands write the area to `clip.geojson` for the cut.
 
 ## Load partitioned GeoParquet
 

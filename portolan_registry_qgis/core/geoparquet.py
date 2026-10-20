@@ -46,6 +46,10 @@ NO_GEOMETRY = "None"  # i18n: skip - a QGIS geometry type
 # The name of the one layer in each GeoPackage. A fixed name lets a saved
 # project open a placeholder in place of a file that is gone.
 LAYER = "features"
+# The layer type of a file that declares mixed or no geometry types.
+UNKNOWN = "Unknown"  # i18n: skip - a QGIS geometry type
+# The table that each builder reads. Its ``?`` takes the URL.
+PARQUET = "read_parquet(?)"
 
 
 @dataclass(frozen=True)
@@ -134,6 +138,23 @@ class Clip:
 WHOLE_FILE = Clip()
 
 
+@dataclass(frozen=True)
+class Selection:
+    """The columns and the rows that a copy keeps.
+
+    ``columns`` None keeps every column. ``where`` is a SQL condition whose
+    ``?`` marks take ``params`` in order.
+    """
+
+    columns: tuple[str, ...] | None = None
+    where: str | None = None
+    params: tuple[object, ...] = ()
+
+
+# The selection that keeps every column and every row.
+EVERYTHING = Selection()
+
+
 def field_kind(duckdb_type: str) -> FieldKind:
     """Map a DuckDB column type to the QGIS field kind that holds it."""
     upper = duckdb_type.upper()
@@ -209,7 +230,7 @@ def layer_geometry_type(types: list[str]) -> str:
     else:
         families = {_MULTI.get(name, name) for name in names}
         if len(families) != 1:
-            return "Unknown"  # i18n: skip - a QGIS geometry type
+            return UNKNOWN
         family = families.pop()
     return f"{family}Z" if has_z else family
 
@@ -362,11 +383,13 @@ def shape(plan: ReadPlan) -> str:
     return f"ST_GeomFromWKB({geometry})" if plan.geometry_is_wkb_blob else geometry
 
 
-def _where(plan: ReadPlan, clip: Clip, *, exact: bool = True) -> tuple[str, list[object]]:
+def _where(
+    plan: ReadPlan, clip: Clip, *, exact: bool = True, selection: Selection = EVERYTHING
+) -> tuple[str, list[object]]:
     """Return the WHERE clause and its parameters.
 
-    Without ``exact``, only the covering column filters, so DuckDB reads no geometry.
-    The covering bounds are float literals, which DuckDB prunes row groups with fastest.
+    Without ``exact``, only the covering column and the selection filter, so DuckDB
+    reads no geometry. The covering bounds are float literals, which prune row groups fastest.
     """
     where = [f"{quote(_geometry(plan))} IS NOT NULL"] if exact else ["TRUE"]
     params: list[object] = []
@@ -384,34 +407,52 @@ def _where(plan: ReadPlan, clip: Clip, *, exact: bool = True) -> tuple[str, list
         elif exact:
             where.append(f"ST_Intersects({shape(plan)}, ST_MakeEnvelope(?, ?, ?, ?))")
             params += [west, south, east, north]
+    if selection.where is not None:
+        where.append(f"({selection.where})")
+        params += selection.params
     return " AND ".join(where), params
 
 
-def build_estimate(plan: ReadPlan, clip: Clip = WHOLE_FILE) -> tuple[str, list[object]] | None:
+def _table_where(selection: Selection) -> tuple[str, list[object]]:
+    """Return the WHERE clause of a table, which has no clip, and its parameters."""
+    if selection.where is None:
+        return "", []
+    return f" WHERE ({selection.where})", list(selection.params)
+
+
+def build_estimate(
+    plan: ReadPlan, clip: Clip = WHOLE_FILE, selection: Selection = EVERYTHING
+) -> tuple[str, list[object]] | None:
     """Build a query that estimates the feature count, with the URL first.
 
     With a clip the count is an upper bound. Returns None when the clip has a
     box and the file has no covering column.
     """
     if clip.bbox is None or not plan.has_geometry:
-        return "SELECT count(*) FROM read_parquet(?)", []
+        where, params = _table_where(selection)
+        return f"SELECT count(*) FROM read_parquet(?){where}", params  # noqa: S608  # nosec B608 - values are parameters
     if plan.covering is None:
         return None
-    where, params = _where(plan, clip, exact=False)
+    where, params = _where(plan, clip, exact=False, selection=selection)
     return f"SELECT count(*) FROM read_parquet(?) WHERE {where}", params  # noqa: S608  # nosec B608 - identifiers are quoted, values are parameters
 
 
-def build_first_type(plan: ReadPlan, clip: Clip = WHOLE_FILE) -> tuple[str, list[object]]:
+def build_first_type(
+    plan: ReadPlan,
+    clip: Clip = WHOLE_FILE,
+    selection: Selection = EVERYTHING,
+    table: str = PARQUET,
+) -> tuple[str, list[object]]:
     """Build a query for the type and Z of the first geometry, with the URL first.
 
     Raises:
         GeoParquetError: The plan is for a table.
     """
-    where, params = _where(plan, clip)
+    where, params = _where(plan, clip, selection=selection)
     geometry = shape(plan)
     sql = (
         f"SELECT ST_GeometryType({geometry})::VARCHAR, ST_HasZ({geometry}) "  # noqa: S608  # nosec B608 - identifiers are quoted, values are parameters
-        f"FROM read_parquet(?) WHERE {where} LIMIT 1"
+        f"FROM {table} WHERE {where} LIMIT 1"
     )
     return sql, params
 
@@ -501,22 +542,42 @@ def _gdal_options(creation: list[str]) -> list[str]:
     ]
 
 
+def selected_columns(plan: ReadPlan, selection: Selection = EVERYTHING) -> tuple[Column, ...]:
+    """Return the attribute columns of ``plan`` that ``selection`` keeps, in file order."""
+    if selection.columns is None:
+        return plan.columns
+    keep = set(selection.columns)
+    return tuple(column for column in plan.columns if column.name in keep)
+
+
 def build_select(
-    plan: ReadPlan, layer_type: str, clip: Clip = WHOLE_FILE
+    plan: ReadPlan,
+    layer_type: str,
+    clip: Clip = WHOLE_FILE,
+    selection: Selection = EVERYTHING,
+    table: str = PARQUET,
 ) -> tuple[str, list[object]]:
     """Build the query of the features a copy writes, with the URL first.
 
-    A feature not of ``layer_type`` gets a NULL geometry. A table selects every
-    row, and ignores the clip.
+    A feature not of ``layer_type`` gets a NULL geometry, and an ``Unknown`` type
+    keeps every geometry. A table ignores the clip. ``table`` replaces the file.
     """
-    selected = [f"{_value(column)} AS {quote(output_name(column.name))}" for column in plan.columns]
+    selected = [
+        f"{_value(column)} AS {quote(output_name(column.name))}"
+        for column in selected_columns(plan, selection)
+    ]
     if plan.geometry is None:
-        return f"SELECT {', '.join(selected)} FROM read_parquet(?)", []  # noqa: S608  # nosec B608 - identifiers are quoted
-    fits, promote = _type_condition(plan, layer_type)
-    geometry = f"ST_Multi({shape(plan)})" if promote else shape(plan)
-    selected.insert(0, f"CASE WHEN {fits} THEN {geometry} END AS {quote(plan.geometry)}")
-    where, params = _where(plan, clip)
-    sql = f"SELECT {', '.join(selected)} FROM read_parquet(?) WHERE {where}"  # noqa: S608  # nosec B608 - identifiers are quoted, values are parameters
+        where, params = _table_where(selection)
+        return f"SELECT {', '.join(selected)} FROM {table}{where}", params  # noqa: S608  # nosec B608 - identifiers are quoted, values are parameters
+    if layer_type == UNKNOWN:
+        geometry = shape(plan)
+    else:
+        fits, promote = _type_condition(plan, layer_type)
+        multi = f"ST_Multi({shape(plan)})" if promote else shape(plan)
+        geometry = f"CASE WHEN {fits} THEN {multi} END"
+    selected.insert(0, f"{geometry} AS {quote(plan.geometry)}")
+    where, params = _where(plan, clip, selection=selection)
+    sql = f"SELECT {', '.join(selected)} FROM {table} WHERE {where}"  # noqa: S608  # nosec B608 - identifiers are quoted, values are parameters
     return sql, params
 
 
@@ -532,7 +593,7 @@ def build_write(
         creation.append("SPATIAL_INDEX=NO")
         return f"COPY ({query}) TO {literal(path)} ({', '.join(_gdal_options(creation))})"
     options = _gdal_options(creation)
-    if not layer_type.endswith("Z"):
+    if not layer_type.endswith("Z") and layer_type != UNKNOWN:
         # GDAL takes no Z types here. Without the option it reads the type
         # from the first feature, which gives an empty layer no geometry.
         options.append(f"GEOMETRY_TYPE {literal(layer_type.upper())}")

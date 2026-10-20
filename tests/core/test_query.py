@@ -162,3 +162,25 @@ def test_result_plan_needs_the_geometry_column():
         result_plan(PLAN, [("geometry", "VARCHAR")])
     table = plan_read([("id", "BIGINT")], None)
     assert not result_plan(table, [("n", "BIGINT")]).has_geometry
+
+
+def test_a_filter_value_must_be_text_or_a_number():
+    with pytest.raises(QueryError, match="text or a number"):
+        filter_sql(Compare("year", "=", [1, 2]), PLAN)
+
+
+def test_selection_of_a_filter_alone_keeps_every_column():
+    query = Query('"year" = 1', Compare("year", "=", 1))
+    assert selection(query, PLAN) == Selection(None, '"year" = ?', (1,))
+    with pytest.raises(QueryError):
+        selection(Query(sql="SELECT 1"), PLAN)
+
+
+def test_pretty_leaves_a_statement_that_is_not_a_select_on_one_list():
+    assert pretty("COPY t TO 'x', y FROM z") == "COPY t TO 'x', y\nFROM z"
+
+
+def test_an_unknown_layer_type_keeps_every_geometry():
+    sql, _params = build_select(PLAN, "Unknown")
+    assert sql.startswith('SELECT "geometry" AS "geometry"')
+    assert "CASE WHEN" not in sql

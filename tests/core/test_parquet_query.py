@@ -504,7 +504,8 @@ def test_read_error_keeps_other_errors(source, error):
     assert parquet_query.read_error(source, error) == error
 
 
-def test_a_filter_and_two_columns_shape_the_copy(con, points, tmp_path):
+def test_a_filter_and_two_columns_shape_the_copy(live, points, tmp_path):
+    con = live
     plan = parquet_query.read_plan(con, points)
     rows = And(Compare("val", ">=", 30.0), InList("name", ("n20", "n21", "n90")))
     query = Query("filter", rows, ("name", "val"))
@@ -516,7 +517,8 @@ def test_a_filter_and_two_columns_shape_the_copy(con, points, tmp_path):
     assert [row[0] for row in described] == ["fid", "name", "val", "geom"]
 
 
-def test_custom_sql_replaces_the_generated_query(con, points, tmp_path):
+def test_custom_sql_replaces_the_generated_query(live, points, tmp_path):
+    con = live
     plan = parquet_query.read_plan(con, points)
     sql = (
         f"SELECT id, ST_Buffer(geometry, 0.001) AS geometry FROM read_parquet('{points}') "
@@ -529,7 +531,8 @@ def test_custom_sql_replaces_the_generated_query(con, points, tmp_path):
     assert written == parquet_query.Written(features=7, geometry_type="MultiPolygon", refused=0)
 
 
-def test_custom_sql_must_return_the_geometry(con, points, tmp_path):
+def test_custom_sql_must_return_the_geometry(live, points, tmp_path):
+    con = live
     plan = parquet_query.read_plan(con, points)
     query = Query(sql=f"SELECT id FROM read_parquet('{points}')")
     with pytest.raises(QueryError, match="geometry"):
@@ -546,7 +549,8 @@ def test_custom_sql_must_return_the_geometry(con, points, tmp_path):
         ("  ", "0 statements"),
     ],
 )
-def test_check_select_runs_nothing_it_refuses(con, points, tmp_path, sql, message):
+def test_check_select_runs_nothing_it_refuses(live, points, tmp_path, sql, message):
+    con = live
     plan = parquet_query.read_plan(con, points)
     with pytest.raises(QueryError, match=message):
         parquet_query.check_select(sql)
@@ -564,7 +568,8 @@ def test_check_select_drops_the_final_semicolon():
     )
 
 
-def test_preview_shows_the_first_rows_with_geometry_types(con, points):
+def test_preview_shows_the_first_rows_with_geometry_types(live, points):
+    con = live
     plan = parquet_query.read_plan(con, points)
     shown = parquet_query.preview(con, points, plan, Rows(query=Query(columns=("name",))))
     assert shown.columns == ("geometry", "name")
@@ -576,7 +581,8 @@ def test_preview_shows_the_first_rows_with_geometry_types(con, points):
     assert custom == parquet_query.Preview(("id",), [(0,), (1,), (2,)])
 
 
-def test_preview_stops_on_cancel(con, points):
+def test_preview_stops_on_cancel(live, points):
+    con = live
     import duckdb
 
     plan = parquet_query.read_plan(con, points)
@@ -587,7 +593,8 @@ def test_preview_stops_on_cancel(con, points):
         )
 
 
-def test_copy_script_runs_in_a_fresh_duckdb(con, points, tmp_path):
+def test_copy_script_runs_in_a_fresh_duckdb(live, points, tmp_path):
+    con = live
     import duckdb
 
     plan = parquet_query.read_plan(con, points)
@@ -642,3 +649,35 @@ def test_copy_script_cuts_custom_sql_at_its_semicolon():
         "f.parquet", plan, "out.gpkg", Rows(query=Query(sql="SELECT 1 AS id; -- done"))
     )
     assert "COPY (\nSELECT 1 AS id\n) TO 'out.gpkg'" in script
+
+
+def test_check_select_needs_duckdb(monkeypatch):
+    monkeypatch.setattr(parquet_query, "duckdb_status", lambda: (False, None))
+    with pytest.raises(parquet_query.DuckDBMissingError):
+        parquet_query.check_select("SELECT 1")
+
+
+def test_custom_sql_on_a_table_writes_a_table(live, tmp_path):
+    con = live
+    source = tmp_path / "table.parquet"
+    con.execute(f"COPY (SELECT i AS id FROM range(6) t(i)) TO '{source}' (FORMAT parquet)")
+    plan = parquet_query.read_plan(con, str(source))
+    query = Query(sql=f"SELECT id * 10 AS tens FROM read_parquet('{source}') WHERE id < 4")
+    target = tmp_path / "table.gpkg"
+    written = parquet_query.write_gpkg(con, str(source), plan, Target(str(target), query=query))
+    assert written == parquet_query.Written(features=4, geometry_type="None", refused=0)
+    values = con.execute("SELECT tens FROM ST_Read(?) ORDER BY tens", [str(target)]).fetchall()
+    assert values == [(0,), (10,), (20,), (30,)]
+
+
+def test_preview_shows_a_wkb_geometry_as_its_type(live, tmp_path):
+    con = live
+    source = tmp_path / "wkb.parquet"
+    con.execute(
+        f"COPY (SELECT 1 AS id, ST_AsWKB(ST_Point(1, 2)) AS geometry) TO '{source}' (FORMAT parquet)"
+    )
+    plan = parquet_query.read_plan(con, str(source))
+    assert plan.geometry_is_wkb_blob
+    custom = Query(sql=f"SELECT id, geometry FROM read_parquet('{source}')")
+    shown = parquet_query.preview(con, str(source), plan, Rows(query=custom))
+    assert shown == parquet_query.Preview(("id", "geometry"), [(1, "POINT")])

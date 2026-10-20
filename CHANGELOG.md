@@ -7,6 +7,14 @@
 - **Zoom to Layer** on a PMTiles layer frames the data instead of the whole world. The layer properties show the extent of the archive.
 - The plugin shows its window, messages, and plugin manager description in Spanish and French when QGIS runs in either language. Numbers and file sizes use that language's separators.
 - The documentation site is available in Spanish at `/es/` and in French at `/fr/`, with a language menu in the header.
+- **Load full data** reads partitioned GeoParquet that a `partition:glob` or `glob` asset names. DuckDB reads an `s3://` or `gs://` glob directly. For a glob that only HTTPS serves, the plugin loads the GeoParquet file of each item in the area of interest. **Download** lists and saves the partition files.
+- A partitioned Source Cooperative product loads from the bucket prefix that the Source Cooperative API gives, such as `tge-labs/ftw-global-data/` for `ftw/global-data`.
+- When an `s3://` glob names a bucket that Amazon S3 does not have, the message says so and says that the catalog gives no other endpoint.
+- A clipped GeoParquet load counts and copies the features faster. A load of 17 files takes about 33 seconds instead of 584.
+- GeoParquet loads, COG mosaics, and downloads show the percentage done and the time left.
+- **Add as one layer** also adds a collection of GeoParquet items. Item rows show any data file.
+- A style that gives a `pmtiles://` tiles template loads, and the plugin matches a style to its archive by file name.
+- Relative links resolve against the final URL after a redirect.
 - **Load full data** finds the geometry of a GeoParquet file without geo metadata in a WKB column named `shape` or `geog`, the same names that the STAC table columns use.
 - A PMTiles style or sprite on an S3 website endpoint loads over HTTPS, as the catalog itself does.
 - **Cancel** stops the search for the files of a mosaic, the build of the mosaic, and the listing of the files to download. Before, it stopped only a download. The progress bar shows while the mosaic builds.

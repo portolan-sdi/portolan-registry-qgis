@@ -31,7 +31,7 @@ from portolan_registry_qgis.core import facts as facts_module
 from portolan_registry_qgis.core import loadable, parquet_query
 from portolan_registry_qgis.core import stac as stac_module
 from portolan_registry_qgis.core.format import human_size
-from portolan_registry_qgis.core.stac import read_document
+from portolan_registry_qgis.core.stac import Asset, read_document
 from portolan_registry_qgis.gui import downloads as downloads_module
 from portolan_registry_qgis.gui import loading as loading_module
 from portolan_registry_qgis.gui import pictures
@@ -326,6 +326,34 @@ def test_add_styled_tiles_and_assets(iface, server, catalog):
     extent = iface.canvas.extent()
     assert extent.contains(QgsRectangle(11.5, 44.2, 12.5, 44.8))
     window.disconnect_canvas()
+
+
+def test_add_csv_reads_its_header_off_the_main_thread(iface, server, catalog, monkeypatch):
+    on_main = []
+    real = loading_module.layer_io.csv_header
+
+    def header(url):
+        on_main.append(threading.current_thread() is threading.main_thread())
+        return real(url)
+
+    monkeypatch.setattr(loading_module.layer_io, "csv_header", header)
+    said = []
+
+    class Messages:
+        def info(self, text):
+            said.append(text)
+
+        warn = info
+
+    loader = loading_module.Loader(None, iface, server, Messages(), None)
+    href = f"{catalog['base']}/table/points.csv"
+    loader.add_asset(Asset("points", href, None, "text/csv", ("data",), None, None, "csv"))
+    wait_for(lambda: said, timeout=60)
+    assert said[0].startswith("Added points.")
+    assert on_main == [False]
+    (layer,) = QgsProject.instance().mapLayers().values()
+    assert layer.crs().authid() == "EPSG:4326"
+    assert layer.featureCount() == 20
 
 
 def test_parquet_in_a_small_extent(iface, server, catalog):

@@ -1,6 +1,6 @@
 """Fetch documents through QGIS's network stack.
 
-Every request goes through ``QgsBlockingNetworkRequest``, so the user's proxy,
+Every request goes through ``QgsNetworkAccessManager``, so the user's proxy,
 SSL, and authentication settings apply. A blocking request is safe off the
 main thread, which is where ``run_task`` sends it.
 """
@@ -16,12 +16,12 @@ from typing import TYPE_CHECKING, Any
 from qgis.core import (
     Qgis,
     QgsApplication,
-    QgsBlockingNetworkRequest,
-    QgsFeedback,
+    QgsNetworkAccessManager,
+    QgsNetworkReplyContent,
     QgsTask,
 )
-from qgis.PyQt.QtCore import QRunnable, Qt, QThreadPool, QUrl
-from qgis.PyQt.QtNetwork import QNetworkRequest
+from qgis.PyQt.QtCore import QEventLoop, QRunnable, QThreadPool, QUrl
+from qgis.PyQt.QtNetwork import QNetworkReply, QNetworkRequest
 
 from portolan_registry_qgis.core.hrefs import is_http_url
 from portolan_registry_qgis.core.i18n import _
@@ -51,23 +51,28 @@ def fetch_bytes(url: str, accept: bytes = _ACCEPT) -> bytes:
     return _fetch(url, accept)[0]
 
 
+# No request here uses a QObject that Python creates. QGIS calls the
+# disconnectNotify of such an object with a Qt signal lock held, and the sip
+# override then waits for the GIL. The main thread can hold the GIL and wait
+# for the same lock, and then both threads stop. QgsNetworkAccessManager
+# makes its blocking request in C++, and a raw reply is a C++ object.
+
+
 def _fetch(url: str, accept: bytes = _ACCEPT) -> tuple[bytes, str]:
     """Return the body at ``url`` and the URL it came from after any redirect."""
     request = QNetworkRequest(QUrl(url))
     request.setRawHeader(b"Accept", accept)
-    blocking = QgsBlockingNetworkRequest()
-    code = blocking.get(request, forceRefresh=False)
-    _raise_for(code, blocking, url)
-    reply = blocking.reply()
+    reply = QgsNetworkAccessManager.blockingGet(request, forceRefresh=False)
+    _raise_for(reply, url)
     final = reply.request().url().toString()
     return bytes(reply.content()), final or url
 
 
-def _raise_for(code: Any, blocking: QgsBlockingNetworkRequest, url: str) -> None:
-    """Raise a ``NetworkError`` when ``code`` from ``blocking.get`` is an error."""
-    if code != QgsBlockingNetworkRequest.ErrorCode.NoError:
+def _raise_for(reply: QgsNetworkReplyContent | QNetworkReply, url: str) -> None:
+    """Raise a ``NetworkError`` when ``reply`` ended with an error."""
+    if reply.error() != QNetworkReply.NetworkError.NoError:
         # Translators: An error about the file at {url}.
-        raise NetworkError(_("{url}: {error}").format(url=url, error=blocking.errorMessage()))
+        raise NetworkError(_("{url}: {error}").format(url=url, error=reply.errorString()))
 
 
 def http_status(url: str) -> tuple[int | None, str]:
@@ -79,18 +84,17 @@ def http_status(url: str) -> tuple[int | None, str]:
     request = QNetworkRequest(QUrl(url))
     request.setRawHeader(b"Range", b"bytes=0-0")
     request.setAttribute(QNetworkRequest.Attribute.CacheSaveControlAttribute, False)
-    blocking = QgsBlockingNetworkRequest()
-    code = blocking.get(request, forceRefresh=True)
-    status = blocking.reply().attribute(QNetworkRequest.Attribute.HttpStatusCodeAttribute)
-    error = "" if code == QgsBlockingNetworkRequest.ErrorCode.NoError else blocking.errorMessage()
+    reply = QgsNetworkAccessManager.blockingGet(request, forceRefresh=True)
+    status = reply.attribute(QNetworkRequest.Attribute.HttpStatusCodeAttribute)
+    error = "" if reply.error() == QNetworkReply.NetworkError.NoError else reply.errorString()
     return (int(status) if status else None), error
 
 
 def fetch_range(url: str, offset: int, length: int) -> bytes:
     """Return ``length`` bytes of ``url`` from ``offset``.
 
-    QGIS 3.34 and 3.36 read a 200 reply to the end, so the read cancels a body
-    longer than ``length``. Raise NetworkError when the server ignores ranges.
+    The read cancels a 200 reply or a body longer than ``length``, and raises
+    NetworkError. It runs a local event loop, so call it off the main thread.
     """
     return _range(url, offset, length)[0]
 
@@ -101,36 +105,48 @@ def _range(url: str, offset: int, length: int) -> tuple[bytes, bytes]:
     request.setRawHeader(b"Range", f"bytes={offset}-{offset + length - 1}".encode())
     # Qt's disk cache keys on the URL alone. A cached range would answer a
     # request for a different range, so ranges bypass the cache both ways.
+    request.setAttribute(
+        QNetworkRequest.Attribute.CacheLoadControlAttribute,
+        QNetworkRequest.CacheLoadControl.AlwaysNetwork,
+    )
     request.setAttribute(QNetworkRequest.Attribute.CacheSaveControlAttribute, False)
-    # QGIS 3.34 and 3.36 follow a redirect themselves and drop the Range
-    # header, so the target answers 200 with the whole file. Qt keeps the
-    # header when it follows the redirect, as QGIS 3.38 and later make it do.
+    # Qt keeps the Range header when it follows a redirect.
     request.setAttribute(
         QNetworkRequest.Attribute.RedirectPolicyAttribute,
         QNetworkRequest.RedirectPolicy.NoLessSafeRedirectPolicy,
     )
-    feedback = QgsFeedback()
-    blocking = QgsBlockingNetworkRequest()
-    check = cancel_past(length, feedback)
-    # Direct, because the calling thread runs no event loop. The slot
-    # disconnects before the function returns, because the request's
-    # destructor aborts its reply and emits progress on whatever thread
-    # collects it.
-    blocking.downloadProgress.connect(check, Qt.ConnectionType.DirectConnection)
+    reply = QgsNetworkAccessManager.instance().get(request)
+    cut: list[bool] = []
+
+    def cancel() -> None:
+        cut.append(True)
+        reply.abort()
+
+    def check_status() -> None:
+        if reply.attribute(QNetworkRequest.Attribute.HttpStatusCodeAttribute) == 200:
+            cancel()
+
+    check_size = cancel_past(length, cancel)
+    loop = QEventLoop()
+    reply.metaDataChanged.connect(check_status)
+    reply.downloadProgress.connect(check_size)
+    reply.finished.connect(loop.quit)
     try:
-        code = blocking.get(request, forceRefresh=True, feedback=feedback)
+        if not reply.isFinished():
+            loop.exec()
+        if cut or reply.attribute(QNetworkRequest.Attribute.HttpStatusCodeAttribute) == 200:
+            raise NetworkError(_("{url}: the server ignores HTTP range requests").format(url=url))
+        _raise_for(reply, url)
+        return bytes(reply.readAll()), bytes(reply.rawHeader(b"Cache-Control"))
     finally:
-        blocking.downloadProgress.disconnect(check)
-    reply = blocking.reply()
-    status = reply.attribute(QNetworkRequest.Attribute.HttpStatusCodeAttribute)
-    if feedback.isCanceled() or status == 200:
-        raise NetworkError(_("{url}: the server ignores HTTP range requests").format(url=url))
-    _raise_for(code, blocking, url)
-    return bytes(reply.content()), bytes(reply.rawHeader(b"Cache-Control"))
+        # The slots go first, so a signal from the reply's destructor reaches no slot.
+        reply.metaDataChanged.disconnect(check_status)
+        reply.downloadProgress.disconnect(check_size)
+        reply.deleteLater()
 
 
-def cancel_past(length: int, feedback: QgsFeedback) -> Callable[[int, int], None]:
-    """Return a ``downloadProgress`` slot that cancels a body longer than ``length``.
+def cancel_past(length: int, cancel: Callable[[], None]) -> Callable[[int, int], None]:
+    """Return a ``downloadProgress`` slot that calls ``cancel`` for a body longer than ``length``.
 
     A 206 reply holds ``length`` bytes or fewer. More bytes, received or
     announced, mean that the server sends the whole file.
@@ -138,7 +154,7 @@ def cancel_past(length: int, feedback: QgsFeedback) -> Callable[[int, int], None
 
     def check(received: int, total: int) -> None:
         if received > length or total > length:
-            feedback.cancel()
+            cancel()
 
     return check
 
@@ -263,7 +279,7 @@ class _Job(QRunnable):
 
 
 class QtExecutor(Executor):
-    """Run functions on QThreads, where ``QgsBlockingNetworkRequest`` has Qt timers.
+    """Run functions on QThreads, where a blocking request has Qt timers.
 
     The executor has its own ``QThreadPool``, so a task that waits for it
     cannot take every thread of the global pool.

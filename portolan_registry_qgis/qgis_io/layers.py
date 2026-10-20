@@ -443,8 +443,10 @@ def csv_layer(url: str, title: str, header: Callable[[str], bytes] = csv_header)
     return layer
 
 
-def asset_layer(asset: Asset, name: str | None = None) -> QgsMapLayer:
-    """Open a data asset as a layer, read in place over HTTP.
+def asset_layer(
+    asset: Asset, name: str | None = None, header: Callable[[str], bytes] = csv_header
+) -> QgsMapLayer:
+    """Open a data asset as a layer, read in place over HTTP. ``header`` reads a CSV header.
 
     Raises:
         LayerError: The asset has no supported format, or QGIS cannot open it.
@@ -461,7 +463,7 @@ def asset_layer(asset: Asset, name: str | None = None) -> QgsMapLayer:
         if asset.format in {"geojson", "flatgeobuf"}:
             layer = QgsVectorLayer(path, title, "ogr")
         elif asset.format == "csv":
-            layer = csv_layer(asset.href, title)
+            layer = csv_layer(asset.href, title, header)
         elif asset.format == "cog":
             layer = QgsRasterLayer(path, title, "gdal")
         elif asset.format == "copc":

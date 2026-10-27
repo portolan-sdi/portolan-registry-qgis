@@ -41,7 +41,7 @@ BUILD = ROOT / "build" / "i18n"
 PROJECT = "portolan-registry-qgis"
 # A fixed date keeps messages.pot the same from run to run, so the check can
 # compare it byte for byte.
-STAMP = datetime.datetime(2026, 10, 12, tzinfo=datetime.timezone.utc)
+STAMP = datetime.datetime(2026, 10, 12, tzinfo=datetime.UTC)
 METADATA_CONTEXT = "metadata.txt"
 METADATA_KEYS = ("description", "about")
 DOCS_CONTEXT = "docs"

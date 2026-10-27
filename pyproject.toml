@@ -3,7 +3,7 @@ name = "portolan-registry-qgis"
 version = "0.3.1"
 description = "QGIS plugin to browse, load, and download data from the Portolan registry"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = "Apache-2.0"
 authors = [
     { name = "Nissim Lebovits", email = "nlebovits@pm.me" },
@@ -125,7 +125,7 @@ exclude_lines = [
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py311"
 # .claude/ holds tooling that portolan-ops syncs into every repo. This repo does
 # not own those files, and a sync run overwrites any fix made here. Raise a rule
 # change in portolan-ops instead.
@@ -243,7 +243,7 @@ docstring-code-format = true
 # ---------- type checking ----------
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.11"
 strict = true
 files = ["portolan_registry_qgis", "scripts"]
 exclude = ["^\\.claude/"]

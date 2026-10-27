@@ -41,6 +41,7 @@ jobs:
       # Flat layout. tests/in_qgis needs PyQGIS and runs in qgis.yml.
       coverage-target: portolan_registry_qgis
       bandit-target: portolan_registry_qgis
+      python-versions: '["3.11", "3.12", "3.13"]'
     # Adjust inputs per repo if defaults don't fit:
     # with:
     #   sync-args: "--extra data"

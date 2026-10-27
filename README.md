@@ -1,5 +1,7 @@
 # portolan-registry-qgis
 
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+
 A QGIS plugin for the [Portolan registry](https://github.com/portolan-sdi/portolan-registry). Browse its catalogs, then add their data to the map or download it. PMTiles draw with each collection's MapLibre style, and GeoParquet loads through DuckDB.
 
 ## Quick start

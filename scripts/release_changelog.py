@@ -55,7 +55,7 @@ def main() -> int:
         text = release(
             CHANGELOG.read_text(encoding="utf-8"),
             args.version,
-            datetime.datetime.now(datetime.timezone.utc).date(),
+            datetime.datetime.now(datetime.UTC).date(),
         )
     except ChangelogError as error:
         print(f"{error}\nThe bump stopped. Run `git checkout -- .` to undo it.", file=sys.stderr)

@@ -60,7 +60,7 @@ def format_args(ids: list[str]) -> str:
 
 def main() -> int:
     try:
-        today = datetime.datetime.now(tz=datetime.timezone.utc).date()
+        today = datetime.datetime.now(tz=datetime.UTC).date()
         ids = active_ignores(DEFAULT_PATH, today=today)
     except (OSError, IgnoreFileError) as exc:
         print(f"error: {exc}", file=sys.stderr)

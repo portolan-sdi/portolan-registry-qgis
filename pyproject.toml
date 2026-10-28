@@ -50,7 +50,7 @@ docs = [
     # Pinned exactly, as in portolan-cli: zensical is alpha with a compiled
     # core, so a floor constraint is not a constraint. Dependabot offers
     # reviewable bumps.
-    "zensical==0.0.67",
+    "zensical==0.0.71",
     "pymdown-extensions>=11.0",
     # scripts/i18n.py build-docs reads the translated navigation titles from
     # the gettext catalogs and writes a mkdocs.yml for each language.

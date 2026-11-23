@@ -160,7 +160,7 @@ def test_page_problems_reports_a_missing_page(docs):
 
 def test_page_problems_reports_a_stale_page(docs):
     translate(docs, f"{i18n.VALE_OFF}\n\n# Inicio\n")
-    (docs / "docs" / "index.md").write_text("# Home page\n", encoding="utf-8")
+    (docs / "docs" / "index.md").write_bytes(b"# Home page\n")
     problems = list(i18n.page_problems("es", Path("index.md")))
     assert len(problems) == 1
     assert "translates an old version of docs/index.md" in problems[0]

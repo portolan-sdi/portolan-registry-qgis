@@ -125,7 +125,10 @@ class QgisSweep(Sweep):
     def pmtiles(self, document: Document) -> str:
         """Build the PMTiles layers with their styles, and render one tile of each."""
         prepared = layers.prepare_pmtiles(document, archive_urls(document), fetch_bytes)
-        built, warnings = layers.build_pmtiles(self.server, prepared, QImage.fromData)
+        try:
+            built, warnings = layers.build_pmtiles(self.server, prepared, QImage.fromData)
+        except layers.LayerError as error:
+            raise ValueError(str(error)) from error
         notes = []
         for layer, part in zip(built, prepared.parts, strict=True):
             if not layer.isValid():
@@ -194,6 +197,7 @@ def spawn(entries: list[registry.CatalogEntry], out: Path, jobs: int, max_docume
                 str(out.parent),
                 "--max-documents",
                 str(max_documents),
+                "--catalog-warnings",
                 "--only",
                 *[entry.id for entry in group],
             ]
@@ -201,8 +205,9 @@ def spawn(entries: list[registry.CatalogEntry], out: Path, jobs: int, max_docume
         for group in groups
         if group
     ]
-    for proc in procs:
-        proc.wait()
+    for proc, status in zip(procs, [proc.wait() for proc in procs], strict=True):
+        if status:
+            raise subprocess.CalledProcessError(status, proc.args)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -212,6 +217,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--only", nargs="*", default=None, help="catalog ids to sweep")
     parser.add_argument("--max-documents", type=int, default=300)
     parser.add_argument("--jobs", type=int, default=1, help="QGIS processes to run at once")
+    parser.add_argument(
+        "--catalog-warnings", action="store_true", help="report downstream catalog findings"
+    )
     args = parser.parse_args(argv)
     entries = registry_entries(args.only)
     catalogs = args.out / "catalogs"
@@ -225,7 +233,7 @@ def main(argv: list[str] | None = None) -> int:
         for path in sorted(catalogs.glob("*.json"))
         for row in json.loads(path.read_text())
     ]
-    return write_report(args.out, results)
+    return write_report(args.out, results, catalog_warnings=args.catalog_warnings)
 
 
 if __name__ == "__main__":

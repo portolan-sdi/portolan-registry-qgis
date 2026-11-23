@@ -7,6 +7,7 @@ Each collection gets the checks the GUI makes, without QGIS. Writes Markdown and
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import re
 import sys
@@ -38,6 +39,7 @@ USER_AGENT = "portolan-registry-qgis-sweep"
 GLOB = re.compile(r"[*?\[]")
 IMAGE_MAGIC = (b"\x89PNG", b"\xff\xd8\xff", b"RIFF", b"GIF8")
 PMTILES_MAGIC = b"PMTiles"
+CATALOG_ERRORS = (OSError, ValueError, http.client.HTTPException)
 
 
 @dataclass(frozen=True)
@@ -110,7 +112,7 @@ class Sweep:
         """Run one check. An exception is a failure, and its text is the detail."""
         try:
             detail = run()
-        except Exception as error:  # noqa: BLE001 - the report shows every failure
+        except CATALOG_ERRORS as error:
             text = f"{type(error).__name__}: {error}".splitlines()[0][:300]
             self.results.append(Result(self.catalog, document, check, False, text))
             return
@@ -128,7 +130,7 @@ class Sweep:
             reads += 1
             try:
                 document, raw, final = fetch_document(url)
-            except Exception as error:  # noqa: BLE001
+            except CATALOG_ERRORS as error:
                 self.flag(url, "read", f"{type(error).__name__}: {error}"[:300])
                 continue
             if final != encoded(url):
@@ -210,8 +212,13 @@ class Sweep:
 
     def parquet(self, url: str) -> str:
         """Read the schema, the geo metadata, and the estimate, as "Load full data" does."""
-        plan = parquet_query.read_plan(self.con, url)
-        count = parquet_query.estimate(self.con, url, plan)
+        import duckdb
+
+        try:
+            plan = parquet_query.read_plan(self.con, url)
+            count = parquet_query.estimate(self.con, url, plan)
+        except (duckdb.IOException, duckdb.HTTPException, duckdb.InvalidInputException) as error:
+            raise ValueError(str(error)) from error
         return f"geometry={plan.geometry!r} estimate={count}"
 
     def styles(self, document: Document) -> None:
@@ -297,16 +304,21 @@ def markdown(results: list[Result]) -> str:
 def registry_entries(only: list[str] | None) -> list[registry.CatalogEntry]:
     """Return the registered catalogs, or those whose ids are in ``only``."""
     body, _final, _headers = fetch(registry.REGISTRY_URL)
-    entries = registry.parse_registry(json.loads(body))
-    return [entry for entry in entries if entry.id in only] if only else entries
+    entries = registry.parse_registry(json.loads(body), registry.REGISTRY_URL)
+    if not entries:
+        raise registry.RegistryError("The registry export has no readable catalog links")
+    selected = [entry for entry in entries if entry.id in only] if only else entries
+    if not selected:
+        raise registry.RegistryError("No requested catalog IDs are present in the registry")
+    return selected
 
 
-def write_report(out: Path, results: list[Result]) -> int:
-    """Write ``sweep.json`` and ``sweep.md`` to ``out``. Return 1 when a check failed."""
+def write_report(out: Path, results: list[Result], *, catalog_warnings: bool = False) -> int:
+    """Write both reports and return the status for the selected catalog policy."""
     out.mkdir(parents=True, exist_ok=True)
     (out / "sweep.json").write_text(json.dumps([asdict(r) for r in results], indent=1))
     (out / "sweep.md").write_text(markdown(results))
-    return 1 if any(not r.ok for r in results) else 0
+    return int(not catalog_warnings and any(not result.ok for result in results))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -316,6 +328,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--only", nargs="*", default=None, help="catalog ids to sweep")
     parser.add_argument("--max-documents", type=int, default=300)
     parser.add_argument("--workers", type=int, default=8)
+    parser.add_argument(
+        "--catalog-warnings", action="store_true", help="report downstream catalog findings"
+    )
     args = parser.parse_args(argv)
     entries = registry_entries(args.only)
     con = parquet_query.connection()
@@ -330,7 +345,7 @@ def main(argv: list[str] | None = None) -> int:
 
     with ThreadPoolExecutor(args.workers) as pool:
         list(pool.map(run, entries))
-    return write_report(args.out, results)
+    return write_report(args.out, results, catalog_warnings=args.catalog_warnings)
 
 
 if __name__ == "__main__":

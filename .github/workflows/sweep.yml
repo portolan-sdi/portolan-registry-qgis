@@ -26,10 +26,9 @@ jobs:
           persist-credentials: false
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
       - name: Sweep the registry
-        # The script exits 1 when any check fails. The report is the result.
-        run: uv run python scripts/sweep_registry.py --out sweep || true
+        run: uv run python scripts/sweep_registry.py --out sweep --catalog-warnings
       - name: Show the summary
-        run: head -n 30 sweep/sweep.md >> "$GITHUB_STEP_SUMMARY"
+        run: cat sweep/sweep.md >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: sweep-core
@@ -53,9 +52,9 @@ jobs:
           python3 -m venv --system-site-packages /tmp/venv
           /tmp/venv/bin/pip install duckdb==1.5.6 babel==2.18.0
       - name: Sweep the registry in QGIS
-        run: /tmp/venv/bin/python scripts/sweep_qgis.py --jobs 4 --out sweep-qgis || true
+        run: /tmp/venv/bin/python scripts/sweep_qgis.py --jobs 4 --out sweep-qgis --catalog-warnings
       - name: Show the summary
-        run: head -n 30 sweep-qgis/sweep.md >> "$GITHUB_STEP_SUMMARY"
+        run: cat sweep-qgis/sweep.md >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: sweep-qgis

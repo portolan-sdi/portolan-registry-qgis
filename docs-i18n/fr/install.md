@@ -1,5 +1,5 @@
 ---
-source_sha256: dc3272a7df0a277b0cebb474761df61ff2cad5c81c359b4f9a0e59a073ebece7
+source_sha256: 19e1ced4d94265adecb29b26cd6c16aa556fd3d463f8db177804567a9d4901fc
 ---
 
 <!-- vale off -->
@@ -50,6 +50,7 @@ Sous Windows et macOS, exécutez ceci dans la console Python de QGIS :
 
 ```python
 import subprocess, sys
+
 subprocess.check_call([sys.executable, "-m", "pip", "install", "duckdb>=1.5.0"])
 ```
 

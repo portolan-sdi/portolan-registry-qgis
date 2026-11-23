@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import datetime
+import datetime as dt
 import platform
 from pathlib import Path
 
@@ -45,6 +45,4 @@ def open_bug_report() -> None:
 
 def open_problem_report(catalog_id: str, href: str, link: str | None) -> None:
     """Open the registry's dataset problem form for the document at ``href`` of ``catalog_id``."""
-    open_url(
-        problem_url(catalog_id, href, link, datetime.datetime.now().astimezone().date(), versions())
-    )
+    open_url(problem_url(catalog_id, href, link, dt.datetime.now().astimezone().date(), versions()))

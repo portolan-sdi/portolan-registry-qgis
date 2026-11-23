@@ -8,7 +8,7 @@ The notes stay a flat list, because qgis-plugin-ci ends them at the next `##`.
 from __future__ import annotations
 
 import argparse
-import datetime
+import datetime as dt
 import os
 import re
 import sys
@@ -23,7 +23,7 @@ class ChangelogError(Exception):
     """CHANGELOG.md cannot take a release."""
 
 
-def release(text: str, version: str, date: datetime.date) -> str:
+def release(text: str, version: str, date: dt.date) -> str:
     """Return the changelog with the Unreleased notes under `version`."""
     match = _SECTION.search(text)
     if match is None:
@@ -55,7 +55,7 @@ def main() -> int:
         text = release(
             CHANGELOG.read_text(encoding="utf-8"),
             args.version,
-            datetime.datetime.now(datetime.UTC).date(),
+            dt.datetime.now(dt.UTC).date(),
         )
     except ChangelogError as error:
         print(f"{error}\nThe bump stopped. Run `git checkout -- .` to undo it.", file=sys.stderr)

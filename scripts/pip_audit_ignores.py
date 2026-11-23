@@ -18,7 +18,7 @@ must never silently disable auditing.
 
 from __future__ import annotations
 
-import datetime
+import datetime as dt
 import sys
 from pathlib import Path
 
@@ -29,7 +29,7 @@ class IgnoreFileError(ValueError):
     """Raised when .pip-audit-ignores contains a malformed line."""
 
 
-def active_ignores(path: Path, today: datetime.date) -> list[str]:
+def active_ignores(path: Path, today: dt.date) -> list[str]:
     """Return non-expired vulnerability IDs from the ignore file."""
     ids: list[str] = []
     for lineno, raw in enumerate(path.read_text().splitlines(), start=1):
@@ -43,7 +43,7 @@ def active_ignores(path: Path, today: datetime.date) -> list[str]:
             )
         vuln_id, expires_str = parts[0], parts[1]
         try:
-            expires = datetime.date.fromisoformat(expires_str)
+            expires = dt.date.fromisoformat(expires_str)
         except ValueError as exc:
             raise IgnoreFileError(
                 f"{path.name} line {lineno}: expiry must be YYYY-MM-DD, got: {expires_str!r}"
@@ -60,7 +60,7 @@ def format_args(ids: list[str]) -> str:
 
 def main() -> int:
     try:
-        today = datetime.datetime.now(tz=datetime.UTC).date()
+        today = dt.datetime.now(tz=dt.UTC).date()
         ids = active_ignores(DEFAULT_PATH, today=today)
     except (OSError, IgnoreFileError) as exc:
         print(f"error: {exc}", file=sys.stderr)

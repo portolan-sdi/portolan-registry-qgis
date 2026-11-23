@@ -39,6 +39,7 @@ from portolan_registry_qgis.core.loadable import pick_targets
 from portolan_registry_qgis.core.stac import Document, read_document
 from portolan_registry_qgis.core.style import archive_urls
 from portolan_registry_qgis.qgis_io import layers
+from portolan_registry_qgis.qgis_io.crs import wgs84
 from portolan_registry_qgis.qgis_io.network import fetch_bytes, fetch_json
 from portolan_registry_qgis.qgis_io.tileserver import TileServer
 
@@ -46,8 +47,7 @@ if TYPE_CHECKING:
     from portolan_registry_qgis.core import registry
 
 WORLD = 40_075_016.686
-MERCATOR = QgsCoordinateReferenceSystem("EPSG:3857")
-WGS84 = QgsCoordinateReferenceSystem("EPSG:4326")
+MERCATOR = "EPSG:3857"
 
 
 def collections(entry: registry.CatalogEntry, max_documents: int) -> list[str]:
@@ -60,7 +60,7 @@ def render(layer: Any, extent: QgsRectangle) -> int:
     """Render ``layer`` over ``extent`` in Web Mercator and count the sampled non-white pixels."""
     settings = QgsMapSettings()
     settings.setLayers([layer])
-    settings.setDestinationCrs(MERCATOR)
+    settings.setDestinationCrs(QgsCoordinateReferenceSystem(MERCATOR))
     settings.setOutputSize(QSize(256, 256))
     settings.setBackgroundColor(QColor(255, 255, 255))
     settings.setExtent(extent)
@@ -84,7 +84,9 @@ def fit_zoom(bounds: tuple[float, float, float, float]) -> int:
 
 def view_extent(bounds: tuple[float, float, float, float], zoom: int) -> QgsRectangle:
     """Return the Web Mercator extent of ``bounds``, or one tile around its centre at ``zoom``."""
-    transform = QgsCoordinateTransform(WGS84, MERCATOR, QgsProject.instance())
+    transform = QgsCoordinateTransform(
+        wgs84(), QgsCoordinateReferenceSystem(MERCATOR), QgsProject.instance()
+    )
     south, north = max(bounds[1], -85.0), min(bounds[3], 85.0)
     if zoom <= fit_zoom(bounds):
         low = transform.transform(QgsPointXY(bounds[0], south))
@@ -125,7 +127,10 @@ class QgisSweep(Sweep):
     def pmtiles(self, document: Document) -> str:
         """Build the PMTiles layers with their styles, and render one tile of each."""
         prepared = layers.prepare_pmtiles(document, archive_urls(document), fetch_bytes)
-        built, warnings = layers.build_pmtiles(self.server, prepared, QImage.fromData)
+        try:
+            built, warnings = layers.build_pmtiles(self.server, prepared, QImage.fromData)
+        except layers.LayerError as error:
+            raise ValueError(str(error)) from error
         notes = []
         for layer, part in zip(built, prepared.parts, strict=True):
             if not layer.isValid():
@@ -194,6 +199,7 @@ def spawn(entries: list[registry.CatalogEntry], out: Path, jobs: int, max_docume
                 str(out.parent),
                 "--max-documents",
                 str(max_documents),
+                "--catalog-warnings",
                 "--only",
                 *[entry.id for entry in group],
             ]
@@ -201,8 +207,9 @@ def spawn(entries: list[registry.CatalogEntry], out: Path, jobs: int, max_docume
         for group in groups
         if group
     ]
-    for proc in procs:
-        proc.wait()
+    for proc, status in zip(procs, [proc.wait() for proc in procs], strict=True):
+        if status:
+            raise subprocess.CalledProcessError(status, proc.args)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -212,6 +219,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--only", nargs="*", default=None, help="catalog ids to sweep")
     parser.add_argument("--max-documents", type=int, default=300)
     parser.add_argument("--jobs", type=int, default=1, help="QGIS processes to run at once")
+    parser.add_argument(
+        "--catalog-warnings", action="store_true", help="report downstream catalog findings"
+    )
     args = parser.parse_args(argv)
     entries = registry_entries(args.only)
     catalogs = args.out / "catalogs"
@@ -225,7 +235,7 @@ def main(argv: list[str] | None = None) -> int:
         for path in sorted(catalogs.glob("*.json"))
         for row in json.loads(path.read_text())
     ]
-    return write_report(args.out, results)
+    return write_report(args.out, results, catalog_warnings=args.catalog_warnings)
 
 
 if __name__ == "__main__":

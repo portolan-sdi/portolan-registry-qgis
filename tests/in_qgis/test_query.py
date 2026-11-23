@@ -249,10 +249,13 @@ def test_the_download_keeps_the_choice(iface, server, catalog, tmp_path, asked):
     window, tab = open_sql(iface, server, catalog)
     type_filter(tab, '"id" < 5')
     # The choice clips the GeoParquet even when the area is everything.
+    wait_for(lambda: window.details.download_all.isEnabled() and not window.is_busy())
     window.details.download_all.trigger()
     clipped = tmp_path / "points.gpkg"
-    wait_for(lambda: clipped.is_file() and not window.is_busy(), timeout=60)
-    wait_for(lambda: any("Wrote 5 features" in item.text() for item in iface.bar.items()))
+    wait_for(
+        lambda: any("Wrote 5 features" in item.text() for item in iface.bar.items()), timeout=60
+    )
+    assert clipped.is_file()
     copy = QgsVectorLayer(f"{clipped}|layername=features", "copy", "ogr")
     assert sorted(f["id"] for f in copy.getFeatures()) == list(range(5))
     window.disconnect_canvas()

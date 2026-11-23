@@ -44,7 +44,8 @@ CONFIRM_FILES = 500
 
 def zoomed(message: str, *, moved: bool) -> str:
     """Return ``message``, and the note that the map moved when ``moved`` is True."""
-    return f"{message} {_('The map moved to show it.')}" if moved else message
+    moved_message = _("The map moved to show it.")
+    return f"{message} {moved_message}" if moved else message
 
 
 def duckdb_ready(parent: QWidget) -> bool:
@@ -75,9 +76,8 @@ def _duckdb_help(parent: QWidget, version: str | None) -> None:
     box.setIcon(QMessageBox.Icon.Warning)
     box.setWindowTitle(_("Portolan Registry: DuckDB needed"))
     box.setTextFormat(Qt.TextFormat.RichText)
-    box.setText(
-        f"<p><b>{heading}</b></p><p>{where}</p><pre>{command}</pre><p>{_('Then restart QGIS.')}</p>"
-    )
+    restart = _("Then restart QGIS.")
+    box.setText(f"<p><b>{heading}</b></p><p>{where}</p><pre>{command}</pre><p>{restart}</p>")
     box.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
     box.exec()
 

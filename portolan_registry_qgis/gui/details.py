@@ -588,7 +588,8 @@ class DetailsPanel(QScrollArea):
         query = self.sql_tab.query()
         active = not query.is_default
         self.query_line.setVisible(active)
-        clear = f'<a href="clear">{html.escape(_("Clear"))}</a>'
+        clear_label = html.escape(_("Clear"))
+        clear = f'<a href="clear">{clear_label}</a>'
         self.query_line.setText(f"{html.escape(self._query_text(query))} {clear}" if active else "")
         load = self._targets.load
         if load is None:

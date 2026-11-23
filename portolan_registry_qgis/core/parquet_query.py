@@ -61,6 +61,7 @@ _STAGED = "portolan_staged"
 _CUSTOM = "portolan_custom"
 # The rows that a preview shows.
 PREVIEW_ROWS = 100
+_GDAL_AXIS_ORDER = "SET geometry_always_xy = true"
 # The statements that load the extensions in the DuckDB CLI.
 SCRIPT_START = ("INSTALL spatial;", "LOAD spatial;", "INSTALL httpfs;", "LOAD httpfs;")
 _lock = threading.Lock()
@@ -439,6 +440,7 @@ def write_gpkg(
         else:
             plan, layer_type = _stage_custom(cur, url, plan, target.query.sql)
         try:
+            cur.execute(_GDAL_AXIS_ORDER)
             written = cur.execute(
                 build_write(plan, f"SELECT * FROM {_STAGED}", target.path, layer_type, target.srs)  # noqa: S608  # nosec B608 - a fixed table name
             ).fetchone()
@@ -566,6 +568,7 @@ def copy_script(
     if not plan.has_geometry:
         layer_type = NO_GEOMETRY
     lines = [*SCRIPT_START, *(f"{secret};" for secret in bucket_secrets(url))]
+    lines.append(f"{_GDAL_AXIS_ORDER};")
     lines.append(build_write(plan, f"\n{select}\n", path, layer_type, srs) + ";")
     return "\n".join(lines) + "\n"
 

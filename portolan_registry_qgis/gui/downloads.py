@@ -174,7 +174,8 @@ class Downloads:
             self._download_clipped(asset, target, limits)
 
     def _confirm(self, plan: download.Plan, clipped: int = 0) -> bool:
-        text = f"{plan_summary(plan, clipped)}\n\n{_('Download now?')}"
+        question = _("Download now?")
+        text = f"{plan_summary(plan, clipped)}\n\n{question}"
         # Translators: the title of the dialog that confirms a download.
         answer = QMessageBox.question(self._parent, _("Download"), text)
         return answer == QMessageBox.StandardButton.Yes

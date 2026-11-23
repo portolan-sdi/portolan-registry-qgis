@@ -609,6 +609,13 @@ def test_copy_script_runs_in_a_fresh_duckdb(live, points, tmp_path):
     assert script.startswith("INSTALL spatial;\nLOAD spatial;\nINSTALL httpfs;\nLOAD httpfs;\n")
     with contextlib.closing(duckdb.connect()) as fresh:
         fresh.execute(script)
+        for path in (target, script_target):
+            point = fresh.execute(
+                "SELECT ST_X(geom), ST_Y(geom) FROM ST_Read(?) LIMIT 1", [str(path)]
+            ).fetchone()
+            assert point is not None
+            assert 11.095 <= point[0] <= 11.305
+            assert 44.0 <= point[1] <= 45.0
     with contextlib.closing(sqlite3.connect(script_target)) as gpkg:
         assert gpkg.execute("SELECT count(*) FROM features").fetchone() == (written.features,)
 

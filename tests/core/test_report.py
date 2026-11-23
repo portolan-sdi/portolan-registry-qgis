@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import datetime
+import datetime as dt
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
@@ -25,7 +25,7 @@ VERSIONS = Versions(
     duckdb="1.5.0",
     os="Linux-6.8.0-x86_64-with-glibc2.39",
 )
-TODAY = datetime.date(2026, 10, 19)
+TODAY = dt.date(2026, 10, 19)
 
 
 def fields(url: str) -> dict[str, str]:

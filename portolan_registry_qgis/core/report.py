@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 from urllib.parse import quote, urlencode
 
 if TYPE_CHECKING:
-    import datetime
+    import datetime as dt
     from pathlib import Path
 
 # The registry mails the submitter of a catalog when this form is filed.
@@ -69,7 +69,7 @@ def problem_url(
     catalog_id: str,
     href: str,
     link: str | None,
-    today: datetime.date,
+    today: dt.date,
     versions: Versions,
 ) -> str:
     """Return the registry's dataset problem form, filled for the document at ``href``.

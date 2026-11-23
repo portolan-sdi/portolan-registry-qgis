@@ -44,6 +44,7 @@ On Windows and macOS, run this in the QGIS Python console:
 
 ```python
 import subprocess, sys
+
 subprocess.check_call([sys.executable, "-m", "pip", "install", "duckdb>=1.5.0"])
 ```
 

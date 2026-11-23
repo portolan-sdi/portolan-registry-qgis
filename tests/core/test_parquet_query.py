@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import contextlib
-import datetime
+import datetime as dt
 import json
 import sqlite3
 import sys
@@ -152,7 +152,7 @@ def test_dates_and_times_survive_the_copy(con, tmp_path):
         "SELECT day, strftime(seen AT TIME ZONE 'UTC', '%Y-%m-%d %H:%M:%S') FROM ST_Read(?)",
         [str(target)],
     ).fetchone()
-    assert day == datetime.date(2020, 1, 2)
+    assert day == dt.date(2020, 1, 2)
     assert seen == "2020-01-01 03:04:05"
 
 

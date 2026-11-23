@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import datetime
+import datetime as dt
 
 import pytest
 
 from scripts.release_changelog import ChangelogError, release
 
-DATE = datetime.date(2026, 10, 9)
+DATE = dt.date(2026, 10, 9)
 CHANGELOG = """# Changelog
 
 ## Unreleased

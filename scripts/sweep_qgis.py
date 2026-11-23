@@ -39,6 +39,7 @@ from portolan_registry_qgis.core.loadable import pick_targets
 from portolan_registry_qgis.core.stac import Document, read_document
 from portolan_registry_qgis.core.style import archive_urls
 from portolan_registry_qgis.qgis_io import layers
+from portolan_registry_qgis.qgis_io.crs import wgs84
 from portolan_registry_qgis.qgis_io.network import fetch_bytes, fetch_json
 from portolan_registry_qgis.qgis_io.tileserver import TileServer
 
@@ -46,8 +47,7 @@ if TYPE_CHECKING:
     from portolan_registry_qgis.core import registry
 
 WORLD = 40_075_016.686
-MERCATOR = QgsCoordinateReferenceSystem("EPSG:3857")
-WGS84 = QgsCoordinateReferenceSystem("EPSG:4326")
+MERCATOR = "EPSG:3857"
 
 
 def collections(entry: registry.CatalogEntry, max_documents: int) -> list[str]:
@@ -60,7 +60,7 @@ def render(layer: Any, extent: QgsRectangle) -> int:
     """Render ``layer`` over ``extent`` in Web Mercator and count the sampled non-white pixels."""
     settings = QgsMapSettings()
     settings.setLayers([layer])
-    settings.setDestinationCrs(MERCATOR)
+    settings.setDestinationCrs(QgsCoordinateReferenceSystem(MERCATOR))
     settings.setOutputSize(QSize(256, 256))
     settings.setBackgroundColor(QColor(255, 255, 255))
     settings.setExtent(extent)
@@ -84,7 +84,9 @@ def fit_zoom(bounds: tuple[float, float, float, float]) -> int:
 
 def view_extent(bounds: tuple[float, float, float, float], zoom: int) -> QgsRectangle:
     """Return the Web Mercator extent of ``bounds``, or one tile around its centre at ``zoom``."""
-    transform = QgsCoordinateTransform(WGS84, MERCATOR, QgsProject.instance())
+    transform = QgsCoordinateTransform(
+        wgs84(), QgsCoordinateReferenceSystem(MERCATOR), QgsProject.instance()
+    )
     south, north = max(bounds[1], -85.0), min(bounds[3], 85.0)
     if zoom <= fit_zoom(bounds):
         low = transform.transform(QgsPointXY(bounds[0], south))

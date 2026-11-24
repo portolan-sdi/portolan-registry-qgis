@@ -19,7 +19,7 @@ jobs:
   core:
     name: Core read path
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -35,9 +35,13 @@ jobs:
           path: sweep/
 
   qgis:
-    name: QGIS layers
+    name: QGIS layers (shard ${{ matrix.shard }})
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     container:
       # qgis/qgis:3.44, digest as of 2026-09-27
       image: qgis/qgis@sha256:bacafbaf899bb2af5d99dd8a138e0438733aac252ddd5f29d089ad34641bb059
@@ -52,10 +56,15 @@ jobs:
           python3 -m venv --system-site-packages /tmp/venv
           /tmp/venv/bin/pip install duckdb==1.5.6 babel==2.18.0
       - name: Sweep the registry in QGIS
-        run: /tmp/venv/bin/python scripts/sweep_qgis.py --jobs 4 --out sweep-qgis --catalog-warnings
+        run: >-
+          /tmp/venv/bin/python scripts/sweep_qgis.py --jobs 1
+          --shard "$SHARD" "$SHARD_COUNT" --out sweep-qgis --catalog-warnings
+        env:
+          SHARD: ${{ matrix.shard }}
+          SHARD_COUNT: ${{ strategy.job-total }}
       - name: Show the summary
         run: cat sweep-qgis/sweep.md >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: sweep-qgis
+          name: sweep-qgis-${{ matrix.shard }}
           path: sweep-qgis/

@@ -6,6 +6,7 @@ import json
 import sqlite3
 import sys
 import threading
+from pathlib import PurePath
 
 import pytest
 
@@ -454,7 +455,7 @@ def test_a_glob_and_a_list_read_as_one_table(live, tmp_path):
         write_points(con, folder / "points.parquet", "'n' || i AS name")
     glob = str(tmp_path / "zone=*" / "*.parquet")
     files = parquet_query.list_files(con, glob)
-    assert [path.rsplit("/", 2)[-2] for path in files] == ["zone=a", "zone=b"]
+    assert [PurePath(path).parent.name for path in files] == ["zone=a", "zone=b"]
     plan = parquet_query.read_plan(con, glob)
     assert "zone" in [column.name for column in plan.columns]
     assert parquet_query.estimate(con, glob, plan) == 400

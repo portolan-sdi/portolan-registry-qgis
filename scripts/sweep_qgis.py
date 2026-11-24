@@ -220,10 +220,23 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-documents", type=int, default=300)
     parser.add_argument("--jobs", type=int, default=1, help="QGIS processes to run at once")
     parser.add_argument(
+        "--shard",
+        nargs=2,
+        type=int,
+        metavar=("INDEX", "COUNT"),
+        help="select a 1-based shard of the catalogs sorted by ID",
+    )
+    parser.add_argument(
         "--catalog-warnings", action="store_true", help="report downstream catalog findings"
     )
     args = parser.parse_args(argv)
+    if args.shard is not None:
+        index, count = args.shard
+        if not 1 <= index <= count:
+            parser.error("--shard requires 1 <= INDEX <= COUNT")
     entries = registry_entries(args.only)
+    if args.shard is not None:
+        entries = sorted(entries, key=lambda entry: entry.id)[index - 1 :: count]
     catalogs = args.out / "catalogs"
     catalogs.mkdir(parents=True, exist_ok=True)
     if args.jobs > 1:

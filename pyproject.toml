@@ -319,6 +319,8 @@ ignore_names = [
     "_layer",
     # pytest reads the marks of a module.
     "pytestmark",
+    # Babel parses the headers in the setter of this Catalog property.
+    "mime_headers",
 ]
 # pytest finds a fixture by name, and an autouse fixture has no reader.
 ignore_decorators = ["@pytest.fixture"]

@@ -5,6 +5,7 @@ import gettext
 import pytest
 from babel.messages.catalog import Catalog
 from babel.messages.mofile import write_mo
+from babel.messages.pofile import read_po
 
 from portolan_registry_qgis.core import i18n
 from portolan_registry_qgis.core.format import catalog_summary, human_size, license_name
@@ -17,8 +18,16 @@ def english():
     i18n.set_language(None)
 
 
+def _shipped_plural_forms(code):
+    """Return the Plural-Forms header of the language's shipped catalog."""
+    path = i18n.LOCALE_DIR / code / "LC_MESSAGES" / f"{i18n.DOMAIN}.po"
+    with path.open("rb") as handle:
+        return read_po(handle, locale=code, domain=i18n.DOMAIN).plural_forms
+
+
 def _compile(directory, code, messages):
     catalog = Catalog(locale=code, domain=i18n.DOMAIN)
+    catalog.mime_headers = [("Plural-Forms", _shipped_plural_forms(code))]
     for source, translation in messages.items():
         catalog.add(source, translation)
     folder = directory / code / "LC_MESSAGES"

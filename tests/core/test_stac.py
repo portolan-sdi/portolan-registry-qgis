@@ -97,9 +97,18 @@ def test_collection_links_however_written(href, kind):
     assert document.children[0].kind == kind
 
 
-@pytest.mark.parametrize("value", [None, [1, 2], "text", {"type": "FeatureCollection"}, {}])
-def test_non_stac_documents_are_refused(value):
-    with pytest.raises(StacError):
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [
+        (None, "did not return a STAC document"),
+        ([1, 2], "did not return a STAC document"),
+        ("text", "did not return a STAC document"),
+        ({"type": "FeatureCollection"}, "Not a STAC catalog, collection, or item"),
+        ({}, "Not a STAC catalog, collection, or item"),
+    ],
+)
+def test_non_stac_documents_are_refused(value, message):
+    with pytest.raises(StacError, match=message):
         read_document(value, "https://example.com/x.json")
 
 

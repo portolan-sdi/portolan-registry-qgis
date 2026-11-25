@@ -48,7 +48,8 @@ def test_local_path(url, path):
 def fake_fetch(documents):
     def fetch(url):
         if url not in documents:
-            raise OSError(f"404 {url}")
+            msg = f"404 {url}"
+            raise OSError(msg)
         return documents[url]
 
     return fetch
@@ -186,7 +187,8 @@ def test_walk_keeps_link_order_when_reads_finish_out_of_order():
         if url != root:
             time.sleep(0.002 * (12 - children.index(url)))
         if url not in documents:
-            raise OSError(f"404 {url}")
+            msg = f"404 {url}"
+            raise OSError(msg)
         return documents[url]
 
     with ThreadPoolExecutor(4) as executor:
@@ -276,7 +278,8 @@ def test_walk_reads_below_a_slow_sibling():
         if url == a:
             for _ in grandchildren:
                 if not below_b.acquire(timeout=10):
-                    raise OSError("the walk waited for a before it read below b")
+                    msg = "the walk waited for a before it read below b"
+                    raise OSError(msg)
         if url in grandchildren:
             below_b.release()
         return documents[url]
@@ -356,7 +359,8 @@ def test_plan_reports_a_glob_it_cannot_list():
     assert "DuckDB" in no_duckdb.unlisted[0][1]
 
     def broken(_url):
-        raise OSError("listing refused")
+        msg = "listing refused"
+        raise OSError(msg)
 
     failed = plan(
         fake_fetch(_partitioned_catalog("./*.parquet")),
@@ -366,7 +370,8 @@ def test_plan_reports_a_glob_it_cannot_list():
     assert failed.unlisted[0][1] == "listing refused"
 
     def no_bucket(_url):
-        raise OSError("NoSuchBucket: The specified bucket does not exist")
+        msg = "NoSuchBucket: The specified bucket does not exist"
+        raise OSError(msg)
 
     missing = plan(
         fake_fetch(_partitioned_catalog("./*.parquet")),

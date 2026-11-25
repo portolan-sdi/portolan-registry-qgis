@@ -48,7 +48,7 @@ def test_status_and_install_command(monkeypatch):
 def test_missing_duckdb_is_reported(monkeypatch):
     monkeypatch.setattr(parquet_query, "duckdb_status", lambda: (False, None))
     monkeypatch.setattr(parquet_query, "_connection", None)
-    with pytest.raises(parquet_query.DuckDBMissingError):
+    with pytest.raises(parquet_query.DuckDBMissingError, match="DuckDB is not installed"):
         parquet_query.connection()
 
 
@@ -70,7 +70,8 @@ def test_extensions_fall_back_to_the_given_folder(monkeypatch, tmp_path):
     def load(connection):
         loads.append(connection.execute("SELECT current_setting('extension_directory')").fetchone())
         if len(loads) == 1:
-            raise duckdb.IOException("the default folder is read-only")
+            msg = "the default folder is read-only"
+            raise duckdb.IOException(msg)
 
     monkeypatch.setattr(parquet_query, "_load_extensions", load)
     monkeypatch.setattr(parquet_query, "_connection", None)
@@ -661,7 +662,7 @@ def test_copy_script_cuts_custom_sql_at_its_semicolon():
 
 def test_check_select_needs_duckdb(monkeypatch):
     monkeypatch.setattr(parquet_query, "duckdb_status", lambda: (False, None))
-    with pytest.raises(parquet_query.DuckDBMissingError):
+    with pytest.raises(parquet_query.DuckDBMissingError, match="DuckDB is not installed"):
         parquet_query.check_select("SELECT 1")
 
 

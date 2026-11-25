@@ -186,7 +186,7 @@ def _wrap(metrics: QFontMetrics, text: str, width: int) -> list[str]:
 class CatalogDelegate(QStyledItemDelegate):
     """A registry row: the extent map, the title, one line of facts, and the logo."""
 
-    def __init__(self, view: Any, images: ImageCache, world: WorldMap):
+    def __init__(self, view: Any, images: ImageCache, world: WorldMap) -> None:
         super().__init__(view)
         self._view = view
         self._images = images
@@ -320,7 +320,7 @@ def _paint_note(
 class AssetDelegate(QStyledItemDelegate):
     """An asset row: a format badge, the title, the size, and a mark when it is on the map."""
 
-    def __init__(self, view: Any):
+    def __init__(self, view: Any) -> None:
         super().__init__(view)
         self._badge_width = 0
 
@@ -437,7 +437,7 @@ class RoomyDelegate(QStyledItemDelegate):
 class ExtentTile(QWidget):
     """A fixed-size extent map."""
 
-    def __init__(self, world: WorldMap, size: QSize, parent: QWidget | None = None):
+    def __init__(self, world: WorldMap, size: QSize, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._world = world
         self._bbox: Bbox | None = None
@@ -464,7 +464,7 @@ class HeroView(QWidget):
     whether the last paint drew the map.
     """
 
-    def __init__(self, world: WorldMap, parent: QWidget | None = None):
+    def __init__(self, world: WorldMap, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._world = world
         self._bbox: Bbox | None = None
@@ -536,7 +536,7 @@ class HeroView(QWidget):
 class LogoView(QWidget):
     """A logo at a fixed size, on a light chip in a dark theme."""
 
-    def __init__(self, size: QSize, parent: QWidget | None = None):
+    def __init__(self, size: QSize, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._picture: Picture | None = None
         self.setFixedSize(size)
@@ -563,7 +563,7 @@ class CatalogHeader(QWidget):
 
     clicked = pyqtSignal()
 
-    def __init__(self, world: WorldMap, parent: QWidget | None = None):
+    def __init__(self, world: WorldMap, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setToolTip(_("Show the publisher's details"))

@@ -46,7 +46,7 @@ PATH_PREPROCESSOR_VERSION = 33600
 class PortolanRegistryPlugin:
     """Adds the Portolan Registry window to QGIS."""
 
-    def __init__(self, iface: Any):
+    def __init__(self, iface: Any) -> None:
         self.iface = iface
         self.server = TileServer()
         self.action: QAction | None = None

@@ -77,13 +77,7 @@ def rows(view):
 
 
 def shown(window):
-    return " ".join(
-        (
-            window.details.title.text(),
-            window.details.description.text(),
-            window.details.facts.text(),
-        )
-    )
+    return f"{window.details.title.text()} {window.details.description.text()} {window.details.facts.text()}"
 
 
 def open_window(iface, server, catalog):
@@ -632,7 +626,7 @@ def test_lists_show_one_page_at_a_time(iface, server, catalog, monkeypatch):
     window.catalog_tree.tree.itemClicked.emit(window.catalog_tree.tree.topLevelItem(1), 0)
     assert rows(window.catalog_tree.tree) == ["Test points", "Missing"]
     # Five copies of the one registered catalog fill two pages and a half.
-    window.registry_list.entries = window.registry_list.entries * 5
+    window.registry_list.entries *= 5
     assert rows(window.registry_list.catalogs)[2] == "Show 2 more of 3 publishers"
     window.registry_list.catalogs.itemClicked.emit(window.registry_list.catalogs.item(2))
     assert rows(window.registry_list.catalogs)[2:] == [
@@ -1235,7 +1229,8 @@ def test_a_failed_mosaic_search_does_not_leave_the_window_busy(iface, server, ca
     window = open_item_files(iface, server, catalog)
 
     def broken(*_args):
-        raise RuntimeError("broken on purpose")
+        msg = "broken on purpose"
+        raise RuntimeError(msg)
 
     # The search ends, and its callback fails before the build starts.
     monkeypatch.setattr(loading_module, "clip_wkt", broken)
@@ -1299,7 +1294,8 @@ def test_cancel_stops_a_mosaic_build(iface, server, catalog, monkeypatch):
         deadline = time.monotonic() + 10
         while not cancelled() and time.monotonic() < deadline:
             time.sleep(0.01)
-        raise mosaic.MosaicCancelledError("cancelled")
+        msg = "cancelled"
+        raise mosaic.MosaicCancelledError(msg)
 
     monkeypatch.setattr(mosaic, "write_vrt", held)
     window.details.mosaic_button.click()
@@ -1336,7 +1332,8 @@ def test_a_failed_listing_does_not_leave_the_window_busy(
     wait_for(lambda: window.document is not None and window.document.kind == "catalog")
 
     def broken(*_args):
-        raise RuntimeError("broken on purpose")
+        msg = "broken on purpose"
+        raise RuntimeError(msg)
 
     # The question that confirms the download fails.
     monkeypatch.setattr(QMessageBox, "question", broken)

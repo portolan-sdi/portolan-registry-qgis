@@ -121,7 +121,8 @@ def test_run_task_logs_an_error_in_its_callback(catalog, monkeypatch):
     monkeypatch.setattr(network, "report_failure", logged.append)
 
     def broken(_result, _error):
-        raise ValueError("broken on purpose")
+        msg = "broken on purpose"
+        raise ValueError(msg)
 
     run_task("broken", lambda _task: 1, broken)
     wait_for(lambda: logged)
@@ -499,7 +500,7 @@ def test_parquet_layer_extent(catalog):
 def test_parquet_layer_needs_duckdb(catalog, monkeypatch):
     monkeypatch.setattr(parquet_query, "duckdb_status", lambda: (False, None))
     monkeypatch.setattr(parquet_query, "_connection", None)
-    with pytest.raises(parquet_query.DuckDBMissingError):
+    with pytest.raises(parquet_query.DuckDBMissingError, match="DuckDB is not installed"):
         parquet_layer.plan(_parquet_url(catalog), QgsProject.instance().transformContext())
 
 
@@ -1125,7 +1126,8 @@ def _tile(catalog, key):
 
 def test_item_hrefs_from_the_mirror(catalog, tiles, monkeypatch):
     def no_walk(*_args, **_kwargs):
-        raise AssertionError("The mirror must answer without a walk")
+        msg = "The mirror must answer without a walk"
+        raise AssertionError(msg)
 
     monkeypatch.setattr(mosaic, "walk", no_walk)
     assert mirror_href(tiles) == f"{catalog['base']}/tiles/items.parquet"
@@ -1252,7 +1254,9 @@ def test_a_clipped_mosaic_shows_only_the_area(catalog):
     assert mosaic.clip_of(layer) == TRIANGLE.wkt
     # The file holds the mosaic and the cutline. No other scratch file.
     path = Path(layer.source())
-    assert "<Cutline>" in path.read_text() or "Cutline" in path.read_text()
+    assert "<Cutline>" in path.read_text(encoding="utf-8") or "Cutline" in path.read_text(
+        encoding="utf-8"
+    )
     # The extent is the triangle's envelope, not the extent of the two files.
     # North of the files, the envelope holds transparent pixels.
     extent = layer.extent()

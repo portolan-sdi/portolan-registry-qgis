@@ -156,9 +156,8 @@ def _rotate(size: int, x: int, y: int, rx: int, ry: int) -> tuple[int, int]:
 def zxy_to_tile_id(z: int, x: int, y: int) -> int:
     """Return the Hilbert tile id of a tile, as the specification defines it."""
     if z > 31 or not (0 <= x < (1 << z) and 0 <= y < (1 << z)):
-        raise ValueError(
-            f"Tile {z}/{x}/{y} is outside the tile pyramid"  # i18n: skip
-        )
+        msg = f"Tile {z}/{x}/{y} is outside the tile pyramid"  # i18n: skip
+        raise ValueError(msg)
     tile_id = ((1 << (z * 2)) - 1) // 3
     for level in range(z - 1, -1, -1):
         size = 1 << level
@@ -194,7 +193,7 @@ class Reader:
     safe to call from several threads, which is how the tile server uses it.
     """
 
-    def __init__(self, fetch_range: Callable[[int, int], bytes]):
+    def __init__(self, fetch_range: Callable[[int, int], bytes]) -> None:
         self._fetch = fetch_range
         self._lock = threading.Lock()
         self._header: Header | None = None

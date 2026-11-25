@@ -27,14 +27,15 @@ def release(text: str, version: str, date: dt.date) -> str:
     """Return the changelog with the Unreleased notes under `version`."""
     match = _SECTION.search(text)
     if match is None:
-        raise ChangelogError(f"CHANGELOG.md has no '{UNRELEASED}' heading.")
+        msg = f"CHANGELOG.md has no '{UNRELEASED}' heading."
+        raise ChangelogError(msg)
     notes = match.group("notes").strip()
     if not notes:
-        raise ChangelogError(f"Add the changes in {version} under '{UNRELEASED}' in CHANGELOG.md.")
+        msg = f"Add the changes in {version} under '{UNRELEASED}' in CHANGELOG.md."
+        raise ChangelogError(msg)
     if re.search(r"^#", notes, re.MULTILINE):
-        raise ChangelogError(
-            f"Remove the subheadings under '{UNRELEASED}'. qgis-plugin-ci reads only a flat list."
-        )
+        msg = f"Remove the subheadings under '{UNRELEASED}'. qgis-plugin-ci reads only a flat list."
+        raise ChangelogError(msg)
     section = f"{UNRELEASED}\n\n## {version} - {date.isoformat()}\n\n{notes}\n\n"
     return text[: match.start()] + section + text[match.end() :].lstrip("\n")
 

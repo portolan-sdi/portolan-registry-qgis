@@ -92,7 +92,7 @@ class RegistryWindow(QDialog):
         server: TileServer,
         registry_url: str = registry.REGISTRY_URL,
         browser_base: str = BROWSER_URL,
-    ):
+    ) -> None:
         super().__init__(iface.mainWindow())
         self.setWindowTitle("Portolan Registry")
         self.setObjectName("PortolanRegistryWindow")

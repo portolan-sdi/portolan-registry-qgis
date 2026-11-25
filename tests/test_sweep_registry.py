@@ -41,12 +41,20 @@ def test_sweep_reports_downstream_catalog_findings(
         assert "HTTP Error 404" in (out / "sweep.md").read_text()
 
 
-@pytest.mark.parametrize("document", [{}, {"type": "Catalog", "links": []}])
-def test_unreadable_registry_export_fails_with_catalog_warnings(tmp_path, monkeypatch, document):
+@pytest.mark.parametrize(
+    ("document", "message"),
+    [
+        ({}, "invalid catalog list"),
+        ({"type": "Catalog", "links": []}, "no readable catalog links"),
+    ],
+)
+def test_unreadable_registry_export_fails_with_catalog_warnings(
+    tmp_path, monkeypatch, document, message
+):
     (tmp_path / "export.json").write_text(json.dumps(document))
     with serve(partial(SimpleHTTPRequestHandler, directory=tmp_path)) as server:
         monkeypatch.setattr(registry, "REGISTRY_URL", f"{base_url(server)}/export.json")
-        with pytest.raises(registry.RegistryError):
+        with pytest.raises(registry.RegistryError, match=message):
             sweep_registry.main(["--catalog-warnings", "--out", str(tmp_path / "report")])
 
 

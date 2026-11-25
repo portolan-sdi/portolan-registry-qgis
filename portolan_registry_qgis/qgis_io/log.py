@@ -18,7 +18,7 @@ def log(message: str, level: Qgis.MessageLevel = Qgis.MessageLevel.Warning) -> N
 class Messages:
     """Show the plugin's messages in the QGIS message bar."""
 
-    def __init__(self, iface: Any):
+    def __init__(self, iface: Any) -> None:
         self._iface = iface
 
     def info(self, text: str) -> None:

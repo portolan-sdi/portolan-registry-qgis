@@ -15,7 +15,6 @@ import tempfile
 import threading
 import time
 from pathlib import Path
-from typing import Any
 
 DEFAULT_URL = (
     "https://data.source.coop/nlebovits/phl-housing-demo/"
@@ -76,7 +75,7 @@ def _run(url: str, *, baseline: bool, steps: int) -> None:
             counts["bytes"] += len(body)
         return body, cache_control
 
-    def counted_setup(handler: Any) -> None:
+    def counted_setup(handler: tileserver.TileHandler) -> None:
         with lock:
             counts["connections"] += 1
         setup(handler)

@@ -207,7 +207,8 @@ def browser_url(stac_href: str, base: str = BROWSER_URL) -> str:
         ValueError: ``stac_href`` is not an http(s) URL.
     """
     if not is_http_url(stac_href):
-        raise ValueError(f"Not an http(s) URL: {stac_href}")  # i18n: skip - the window catches it
+        msg = f"Not an http(s) URL: {stac_href}"  # i18n: skip - the window catches it
+        raise ValueError(msg)
     target = urlsplit(stac_href)
     parts = ["/external"]
     if target.scheme != "https":

@@ -20,17 +20,26 @@ from tests.points import write_points
 pytest.importorskip("duckdb")
 
 
-@pytest.fixture(scope="module")
-def con():
-    connection = parquet_query.connection()
-    yield connection
+@pytest.fixture(scope="module", autouse=True)
+def _close_shared_connection():
+    yield
     parquet_query.close()
 
 
+@pytest.fixture
+def con():
+    """The shared connection, opened again if a test closed it."""
+    return parquet_query.connection()
+
+
 @pytest.fixture(scope="module")
-def points(tmp_path_factory, con):
+def points(tmp_path_factory):
     path = tmp_path_factory.mktemp("parquet") / "points.parquet"
-    write_points(con, path, "'n' || i AS name, i * 1.5 AS val, DATE '2026-01-01' + i::INT AS day")
+    write_points(
+        parquet_query.connection(),
+        path,
+        "'n' || i AS name, i * 1.5 AS val, DATE '2026-01-01' + i::INT AS day",
+    )
     return str(path)
 
 
@@ -440,14 +449,7 @@ def test_close_is_idempotent():
     parquet_query.close()
 
 
-@pytest.fixture
-def live():
-    """The shared connection, opened again after ``test_close_is_idempotent`` closed it."""
-    return parquet_query.connection()
-
-
-def test_a_glob_and_a_list_read_as_one_table(live, tmp_path):
-    con = live
+def test_a_glob_and_a_list_read_as_one_table(con, tmp_path):
     for part in ("a", "b"):
         folder = tmp_path / f"zone={part}"
         folder.mkdir()
@@ -462,8 +464,7 @@ def test_a_glob_and_a_list_read_as_one_table(live, tmp_path):
     assert parquet_query.estimate(con, files, listed) == 400
 
 
-def test_a_dotted_bucket_gets_a_path_style_secret(live):
-    con = live
+def test_a_dotted_bucket_gets_a_path_style_secret(con):
     parquet_query.use_bucket(con, ["s3://us-west-2.data.test/a/*.parquet", "s3://plain/a.parquet"])
     parquet_query.use_bucket(con, "https://x.test/a.parquet")
     rows = con.execute(
@@ -504,8 +505,7 @@ def test_read_error_keeps_other_errors(source, error):
     assert parquet_query.read_error(source, error) == error
 
 
-def test_a_filter_and_two_columns_shape_the_copy(live, points, tmp_path):
-    con = live
+def test_a_filter_and_two_columns_shape_the_copy(con, points, tmp_path):
     plan = parquet_query.read_plan(con, points)
     rows = And(Compare("val", ">=", 30.0), InList("name", ("n20", "n21", "n90")))
     query = Query("filter", rows, ("name", "val"))
@@ -517,8 +517,7 @@ def test_a_filter_and_two_columns_shape_the_copy(live, points, tmp_path):
     assert [row[0] for row in described] == ["fid", "name", "val", "geom"]
 
 
-def test_custom_sql_replaces_the_generated_query(live, points, tmp_path):
-    con = live
+def test_custom_sql_replaces_the_generated_query(con, points, tmp_path):
     plan = parquet_query.read_plan(con, points)
     sql = (
         f"SELECT id, ST_Buffer(geometry, 0.001) AS geometry FROM read_parquet('{points}') "
@@ -531,8 +530,7 @@ def test_custom_sql_replaces_the_generated_query(live, points, tmp_path):
     assert written == parquet_query.Written(features=7, geometry_type="MultiPolygon", refused=0)
 
 
-def test_custom_sql_must_return_the_geometry(live, points, tmp_path):
-    con = live
+def test_custom_sql_must_return_the_geometry(con, points, tmp_path):
     plan = parquet_query.read_plan(con, points)
     query = Query(sql=f"SELECT id FROM read_parquet('{points}')")
     with pytest.raises(QueryError, match="geometry"):
@@ -549,8 +547,7 @@ def test_custom_sql_must_return_the_geometry(live, points, tmp_path):
         ("  ", "0 statements"),
     ],
 )
-def test_check_select_runs_nothing_it_refuses(live, points, tmp_path, sql, message):
-    con = live
+def test_check_select_runs_nothing_it_refuses(con, points, tmp_path, sql, message):
     plan = parquet_query.read_plan(con, points)
     with pytest.raises(QueryError, match=message):
         parquet_query.check_select(sql)
@@ -568,8 +565,7 @@ def test_check_select_drops_the_final_semicolon():
     )
 
 
-def test_preview_shows_the_first_rows_with_geometry_types(live, points):
-    con = live
+def test_preview_shows_the_first_rows_with_geometry_types(con, points):
     plan = parquet_query.read_plan(con, points)
     shown = parquet_query.preview(con, points, plan, Rows(query=Query(columns=("name",))))
     assert shown.columns == ("geometry", "name")
@@ -581,8 +577,7 @@ def test_preview_shows_the_first_rows_with_geometry_types(live, points):
     assert custom == parquet_query.Preview(("id",), [(0,), (1,), (2,)])
 
 
-def test_preview_stops_on_cancel(live, points):
-    con = live
+def test_preview_stops_on_cancel(con, points):
     import duckdb
 
     plan = parquet_query.read_plan(con, points)
@@ -593,8 +588,7 @@ def test_preview_stops_on_cancel(live, points):
         )
 
 
-def test_copy_script_runs_in_a_fresh_duckdb(live, points, tmp_path):
-    con = live
+def test_copy_script_runs_in_a_fresh_duckdb(con, points, tmp_path):
     import duckdb
 
     plan = parquet_query.read_plan(con, points)
@@ -664,8 +658,7 @@ def test_check_select_needs_duckdb(monkeypatch):
         parquet_query.check_select("SELECT 1")
 
 
-def test_custom_sql_on_a_table_writes_a_table(live, tmp_path):
-    con = live
+def test_custom_sql_on_a_table_writes_a_table(con, tmp_path):
     source = tmp_path / "table.parquet"
     con.execute(f"COPY (SELECT i AS id FROM range(6) t(i)) TO '{source}' (FORMAT parquet)")
     plan = parquet_query.read_plan(con, str(source))
@@ -677,8 +670,7 @@ def test_custom_sql_on_a_table_writes_a_table(live, tmp_path):
     assert values == [(0,), (10,), (20,), (30,)]
 
 
-def test_preview_shows_a_wkb_geometry_as_its_type(live, tmp_path):
-    con = live
+def test_preview_shows_a_wkb_geometry_as_its_type(con, tmp_path):
     source = tmp_path / "wkb.parquet"
     con.execute(
         f"COPY (SELECT 1 AS id, ST_AsWKB(ST_Point(1, 2)) AS geometry) TO '{source}' (FORMAT parquet)"

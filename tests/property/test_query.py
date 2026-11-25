@@ -140,5 +140,5 @@ def test_selection_refuses_only_unknown_columns(present: list[str], wanted: str)
     if wanted in known:
         assert query.selection(picked, plan).columns == (wanted,)
     else:
-        with pytest.raises(query.QueryError):
+        with pytest.raises(query.QueryError, match="The file has no column named"):
             query.selection(picked, plan)

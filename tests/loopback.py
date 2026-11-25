@@ -12,14 +12,20 @@ if TYPE_CHECKING:
     from socketserver import BaseRequestHandler
 
 
+class LoopbackServer(ThreadingHTTPServer):
+    """Serve test files and expose the optional request log."""
+
+    requests: list[tuple[str, str]]
+
+
 @contextmanager
-def serve(handler: Callable[..., BaseRequestHandler]) -> Iterator[ThreadingHTTPServer]:
+def serve(handler: Callable[..., BaseRequestHandler]) -> Iterator[LoopbackServer]:
     """Serve ``handler`` on a free loopback port until the block ends.
 
     The server stops, closes its socket, and its thread ends before the
     block returns. A failed test therefore leaves no server behind.
     """
-    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    server = LoopbackServer(("127.0.0.1", 0), handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:

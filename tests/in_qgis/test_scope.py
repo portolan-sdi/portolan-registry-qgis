@@ -12,7 +12,7 @@ from qgis.core import (
     QgsRectangle,
     QgsVectorLayer,
 )
-from qgis.gui import QgsMapCanvas, QgsMapMouseEvent, QgsMapToolPan, QgsMessageBar
+from qgis.gui import QgsMapCanvas, QgsMapMouseEvent, QgsMapToolPan, QgsMessageBar, QgsRubberBand
 from qgis.PyQt.QtCore import QEvent, QPoint, Qt
 from qgis.PyQt.QtGui import QKeyEvent
 
@@ -105,7 +105,7 @@ def _key(tool, key):
 
 
 def _bands(canvas):
-    return [item for item in canvas.scene().items() if isinstance(item, scope_module.QgsRubberBand)]
+    return [item for item in canvas.scene().items() if isinstance(item, QgsRubberBand)]
 
 
 def test_everything_is_the_default(picker):
@@ -345,8 +345,8 @@ def test_an_area_across_the_antimeridian_splits_in_two():
     geometry.transform(QgsCoordinateTransform(wgs84(), pacific, QgsProject.instance()))
     area = area_of(geometry, pacific)
     west, south, east, north = area.bbox
-    assert (west, east) == (pytest.approx(177, abs=1e-6), pytest.approx(-178, abs=1e-6))
-    assert (south, north) == (pytest.approx(-19, abs=1e-6), pytest.approx(-16, abs=1e-6))
+    assert (west, east) == pytest.approx((177, -178), abs=1e-6)
+    assert (south, north) == pytest.approx((-19, -16), abs=1e-6)
     shape = QgsGeometry.fromWkt(area.wkt)
     assert shape.isMultipart()
     # The area holds Fiji on both sides of 180°, and not the rest of the world.

@@ -51,7 +51,7 @@ def english_phrases() -> set[str]:
         template = read_po(handle)
     phrases = set()
     for message in template:
-        ids = message.id if isinstance(message.id, tuple) else (message.id,)
+        ids = message.id if isinstance(message.id, (tuple, list)) else (message.id,)
         for text in ids:
             for piece in _FIELD.split(text):
                 phrase = piece.strip(" .,:;…")
@@ -112,7 +112,7 @@ def _items(tree: QTreeWidget):
 
 def untranslated(root: QWidget, phrases: set[str]) -> list[str]:
     """Return each shown text that holds English from the catalog outside brackets."""
-    raw = []
+    raw: list[str] = []
     for text in texts(root):
         rest = _BRACKETED.sub("", _TAG.sub(" ", text))
         raw.extend(f"{phrase!r} in {text!r}" for phrase in phrases if phrase in rest)

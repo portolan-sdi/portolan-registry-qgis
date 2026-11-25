@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import math
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -186,6 +187,7 @@ def test_real_portolan_collection():
     assert tiles.href == f"{ANNCSU}/anncsu-indirizzi.pmtiles"
     assert tiles.layers == ("addresses",)
     style = document.default_style
+    assert style is not None
     assert (style.key, style.href) == (
         "style-indirizzi",
         f"{ANNCSU}/indirizzi/styles/indirizzi.json",
@@ -194,6 +196,7 @@ def test_real_portolan_collection():
     data = document.data_assets[0]
     assert data.format == "parquet"
     assert data.size == 1059267903
+    assert data.checksum is not None
     assert data.checksum.startswith("1220")
     assert document.children == ()
 
@@ -340,6 +343,7 @@ def test_icon_and_thumbnail():
     )
     assert document.icon == "https://example.com/icons/leaf.svg"
     thumbnail = document.thumbnail
+    assert thumbnail is not None
     assert (thumbnail.key, thumbnail.href) == ("t", "https://example.com/c/t.png")
 
 
@@ -354,6 +358,7 @@ def test_overview_stands_in_for_a_missing_thumbnail():
     )
     assert document.icon is None
     thumbnail = document.thumbnail
+    assert thumbnail is not None
     assert (thumbnail.key, thumbnail.href) == ("o", "https://example.com/o.webp?v=2")
 
 
@@ -515,11 +520,12 @@ def test_an_asset_partition_glob_names_its_bucket():
 
 
 def test_a_collection_glob_replaces_an_asset_glob_that_https_cannot_list():
+    fields: dict[str, Any] = {"partition:glob": "gs://bucket/col/*.parquet"}
     document = read_document(
         make_collection(
             "col",
             assets={"data": {"href": "./*.parquet", "type": PARQUET, "roles": ["data"]}},
-            **{"partition:glob": "gs://bucket/col/*.parquet"},
+            **fields,
         ),
         "https://cdn.test/col/collection.json",
     )
@@ -546,8 +552,9 @@ def test_a_collection_glob_beside_a_whole_file_adds_nothing():
 
 
 def test_a_glob_only_https_serves_has_no_read_url():
+    fields: dict[str, Any] = {"partition:glob": "./h3=*/*.parquet"}
     document = read_document(
-        make_collection("col", **{"partition:glob": "./h3=*/*.parquet"}),
+        make_collection("col", **fields),
         "https://pub-1.r2.dev/col/collection.json",
     )
     assert document.assets[0].read_url is None

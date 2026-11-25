@@ -5,8 +5,8 @@ import sys
 
 import pytest
 
+from portolan_registry_qgis.core import registry
 from scripts import sweep_qgis
-from scripts.sweep_registry import registry
 
 
 def test_parallel_sweep_propagates_worker_exit(tmp_path, monkeypatch):

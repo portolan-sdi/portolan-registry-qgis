@@ -6,6 +6,7 @@ from http.server import SimpleHTTPRequestHandler
 
 import pytest
 
+from portolan_registry_qgis.core import parquet_query, registry
 from scripts import sweep_registry
 from tests.loopback import base_url, serve
 
@@ -24,12 +25,10 @@ def test_sweep_reports_downstream_catalog_findings(
     (tmp_path / "export.json").write_text(json.dumps(export))
     if catalog_exists:
         (tmp_path / "catalog.json").write_text(json.dumps({"type": "Catalog", "links": []}))
-    monkeypatch.setattr(sweep_registry.parquet_query, "connection", lambda: None)
+    monkeypatch.setattr(parquet_query, "connection", lambda: None)
     out = tmp_path / "report"
     with serve(partial(SimpleHTTPRequestHandler, directory=tmp_path)) as server:
-        monkeypatch.setattr(
-            sweep_registry.registry, "REGISTRY_URL", f"{base_url(server)}/export.json"
-        )
+        monkeypatch.setattr(registry, "REGISTRY_URL", f"{base_url(server)}/export.json")
         args = ["--out", str(out), "--only", "sample"]
         if catalog_warnings:
             args.insert(0, "--catalog-warnings")
@@ -46,10 +45,8 @@ def test_sweep_reports_downstream_catalog_findings(
 def test_unreadable_registry_export_fails_with_catalog_warnings(tmp_path, monkeypatch, document):
     (tmp_path / "export.json").write_text(json.dumps(document))
     with serve(partial(SimpleHTTPRequestHandler, directory=tmp_path)) as server:
-        monkeypatch.setattr(
-            sweep_registry.registry, "REGISTRY_URL", f"{base_url(server)}/export.json"
-        )
-        with pytest.raises(sweep_registry.registry.RegistryError):
+        monkeypatch.setattr(registry, "REGISTRY_URL", f"{base_url(server)}/export.json")
+        with pytest.raises(registry.RegistryError):
             sweep_registry.main(["--catalog-warnings", "--out", str(tmp_path / "report")])
 
 

@@ -163,6 +163,7 @@ def test_a_kept_connection_does_not_stall(catalog, server):
     host, path = server.register(archive).removeprefix("http://").split("/", 1)
     connection = http.client.HTTPConnection(host, timeout=10)
     times = []
+    response = None
     for _ in range(50):
         start = time.perf_counter()
         connection.request("GET", "/" + path.replace("{z}/{x}/{y}", "0/0/0"))
@@ -170,6 +171,7 @@ def test_a_kept_connection_does_not_stall(catalog, server):
         response.read()
         times.append(time.perf_counter() - start)
     connection.close()
+    assert response is not None
     assert response.status == 200
     assert statistics.median(times) < 0.01
 
@@ -212,7 +214,9 @@ def test_fetch_range_keeps_the_range_through_a_redirect(catalog, prefix):
             if self.path.startswith("/moved/"):
                 target = self.path.removeprefix("/moved")
                 if prefix == "absolute":
-                    target = f"http://127.0.0.1:{self.server.server_address[1]}{target}"
+                    address = self.server.server_address
+                    assert isinstance(address, tuple)
+                    target = f"http://127.0.0.1:{address[1]}{target}"
                 self.send_response(302)
                 self.send_header("Location", target)
                 self.send_header("Content-Length", "0")

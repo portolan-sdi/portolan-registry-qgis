@@ -2,8 +2,8 @@
 # CI logic lives in ops' reusable-python-ci.yml; change it there.
 #
 # The family expects these dev dependencies in pyproject.toml:
-# pytest, pytest-cov, pytest-xdist, diff-cover, mypy, vulture, xenon,
-# bandit, pip-audit. It also expects the synced .pre-commit-config.yaml,
+# pytest, pytest-cov, pytest-xdist, diff-cover, mypy, vulture, bandit,
+# pip-audit. It also expects the synced .pre-commit-config.yaml,
 # scripts/pip_audit_ignores.py, and .pip-audit-ignores.
 name: CI
 

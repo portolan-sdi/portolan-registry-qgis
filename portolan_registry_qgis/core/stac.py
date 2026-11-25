@@ -311,14 +311,21 @@ def children_of(document: dict[str, Any], base: str) -> tuple[Node, ...]:
     return tuple(nodes)
 
 
+def _finite(value: object) -> bool:
+    """Return whether ``value`` is a number that converts to a finite float."""
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
+
+
 def horizontal_bbox(values: object) -> Bbox | None:
     """Return the horizontal corners of a 2D or 3D STAC bbox."""
     if not isinstance(values, (list, tuple)) or len(values) < 4 or len(values) % 2:
         return None
-    if not all(
-        isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
-        for value in values
-    ):
+    if not all(_finite(value) for value in values):
         return None
     half = len(values) // 2
     return (

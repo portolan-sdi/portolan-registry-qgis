@@ -29,22 +29,21 @@ dev = [
     "deptry>=0.25",
     "diff-cover>=10.4",
     "duckdb>=1.5.0",
+    "hypothesis>=6.170",
     "import-linter>=2.13",
     "mypy>=1.19.1",
     "pip>=26.1",
     "pip-audit>=2.10",
     "pmtiles>=3.4",
-    "pre-commit>=4.6",
+    "prek>=0.5.11",
     "pytest>=9.0.3",
     "pytest-cov>=7",
     "pytest-timeout>=2.3",
     "pytest-xdist>=3.8",
     "pyyaml>=6",
-    "radon>=6.0.1",
     "ruff>=0.16",
     "types-pyyaml>=6",
     "vulture>=2.16",
-    "xenon>=0.9.3",
 ]
 docs = [
     # Pinned exactly, as in portolan-cli: zensical is alpha with a compiled
@@ -132,76 +131,45 @@ target-version = "py311"
 extend-exclude = [".claude"]
 
 [tool.ruff.lint]
-# Rule set follows portolan-cli, the family reference for tool config.
-select = [
-    "E", # pycodestyle errors
-    "W", # pycodestyle warnings
-    "F", # pyflakes
-    "I", # isort
-    "B", # flake8-bugbear
-    "C4", # flake8-comprehensions
-    "UP", # pyupgrade
-    "A", # flake8-builtins
-    "ARG", # flake8-unused-arguments
-    "C901", # mccabe complexity
-    "D", # pydocstyle
-    "DTZ", # flake8-datetimez
-    "ERA", # eradicate - commented-out code
-    "EXE", # flake8-executable
-    "FURB", # refurb
-    "G", # flake8-logging-format
-    "ICN", # flake8-import-conventions
-    "INT", # flake8-gettext
-    "ISC", # flake8-implicit-str-concat
-    "LOG", # flake8-logging
-    "N", # pep8-naming
-    "PERF", # perflint
-    "PIE", # flake8-pie
-    "PTH", # flake8-use-pathlib
-    "PYI", # flake8-pyi
-    "Q", # flake8-quotes
-    "RET", # flake8-return
-    "RSE", # flake8-raise
-    "S", # flake8-bandit
-    "SIM", # flake8-simplify
-    "SLF001", # private member access - tests use the public names
-    "SLOT", # flake8-slots
-    "T20", # flake8-print - QGIS output goes through the message bar and log
-    "TC", # flake8-type-checking
-    "YTT", # flake8-2020
-    "PL", # pylint
-    "RUF", # ruff-specific rules
-    "PT", # flake8-pytest-style
-    "BLE", # flake8-blind-except
-    "TRY", # tryceratops
-    "FBT001", # boolean positional parameter
-    "FBT002", # boolean positional parameter with a default
-]
+select = ["ALL"]
+preview = true
+explicit-preview-rules = true
+extend-select = ["PLR0914", "PLR0916", "PLR0917", "PLR1702", "PLR6104", "PLW1514", "RUF052"]
 ignore = [
+    "COM812", # The formatter controls trailing commas.
+    "ISC001", # The formatter controls implicit string concatenation.
+    "CPY001", # This repo does not use copyright headers.
     "E501", # line too long (handled by formatter)
-    "ISC001", # conflicts with the formatter
     "D107", # Google style documents constructor arguments in the class docstring
-    "PERF203", # a loop that isolates one item's failure needs try-except inside it
     "PLR2004", # geometry, tile maths, and tests use literal numbers by design
     "PLC0415", # DuckDB and QGIS imports stay inside functions by design (AGENTS.md)
-    "TRY003", # messages go through _() for translation, so they stay at the raise
     "FBT003", # Qt setters such as setEnabled(True) take a positional boolean
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"__init__.py" = ["F401"]
+# QGIS and Qt objects have no stubs in the uv environment.
+"portolan_registry_qgis/__init__.py" = ["ANN401"]
 # Qt names its overridable methods in camelCase (closeEvent, initGui), and QGIS
 # calls initGui and unload on the plugin object by those names.
-"portolan_registry_qgis/plugin.py" = ["N802"]
+# QGIS objects have no stubs in the uv environment.
+"portolan_registry_qgis/plugin.py" = ["N802", "ANN401"]
 "portolan_registry_qgis/gui/*.py" = ["N802"]
-"portolan_registry_qgis/qgis_io/*.py" = ["N802"]
+"portolan_registry_qgis/gui/details.py" = ["ANN401"]
+"portolan_registry_qgis/gui/downloads.py" = ["ANN401"]
+"portolan_registry_qgis/gui/loading.py" = ["ANN401"]
+"portolan_registry_qgis/gui/registry_list.py" = ["ANN401"]
+"portolan_registry_qgis/gui/scope.py" = ["ANN401"]
+"portolan_registry_qgis/gui/widgets.py" = ["ANN401"]
+"portolan_registry_qgis/gui/window.py" = ["ANN401"]
+"portolan_registry_qgis/qgis_io/canvas.py" = ["ANN401"]
+"portolan_registry_qgis/qgis_io/log.py" = ["ANN401"]
 "tests/**/*.py" = [
+    "ANN", # Mypy checks test types in the typing track.
     "S101", # assert is the point of a test
     "S108", # /tmp paths in fixtures
     "D", # test names carry the description; docstrings are optional
     "ARG", # pytest fixtures are injected and often unused by name
     "T20", # a test may print for diagnostics
-    "PTH123", # open() is fine in a fixture
     "S310", # a test opens a URL it writes itself
     "S311", # random builds test data, not a secret
     "S608", # a test builds a DuckDB query from a literal path
@@ -210,7 +178,7 @@ ignore = [
 # methods, so both keep their camelCase names.
 "tests/in_qgis/*.py" = ["N802"]
 # Synced from portolan-ops (templates/repo/scripts/). Fix it there.
-"scripts/pip_audit_ignores.py" = ["D103", "T20"]
+"scripts/pip_audit_ignores.py" = ["D103", "EM102", "PLW1514", "TRY003"]
 # The benchmark counts the reads of the tile server, so it wraps the private
 # range reader of qgis_io.network.
 "scripts/bench_tiles.py" = ["SLF001"]
@@ -232,6 +200,30 @@ required-imports = ["from __future__ import annotations"]
 [tool.ruff.lint.pydocstyle]
 convention = "google"
 
+[tool.ruff.lint.pylint]
+max-branches = 12
+max-statements = 50
+max-nested-blocks = 4
+max-args = 5
+max-positional-args = 5
+max-bool-expr = 5
+max-locals = 15
+max-returns = 6
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"pytest.xfail" = { msg = "use @pytest.mark.xfail(strict=True)" }
+
+[tool.ruff.lint.flake8-pytest-style]
+raises-extend-require-match-for = [
+    "portolan_registry_qgis.core.parquet_query.DuckDBMissingError",
+    "portolan_registry_qgis.core.multihash.ChecksumError",
+    "portolan_registry_qgis.core.stac.StacError",
+    "portolan_registry_qgis.core.pmtiles.PmtilesError",
+    "portolan_registry_qgis.core.geoparquet.GeoParquetError",
+    "portolan_registry_qgis.core.registry.RegistryError",
+    "portolan_registry_qgis.core.query.QueryError",
+]
+
 [tool.ruff.lint.mccabe]
 max-complexity = 10
 
@@ -245,8 +237,26 @@ docstring-code-format = true
 [tool.mypy]
 python_version = "3.11"
 strict = true
-files = ["portolan_registry_qgis", "scripts"]
+files = ["portolan_registry_qgis", "scripts", "tests"]
+explicit_package_bases = true
 exclude = ["^\\.claude/"]
+enable_error_code = [
+    "ignore-without-code",
+    "redundant-expr",
+    "truthy-bool",
+    "possibly-undefined",
+    "redundant-self",
+    "unused-awaitable",
+    "deprecated",
+    "exhaustive-match",
+]
+
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disallow_untyped_calls = false
+disallow_any_generics = false
 
 # PyQGIS, PyQt, and the GDAL bindings come with QGIS and are absent from the
 # uv environment, so mypy cannot read them.

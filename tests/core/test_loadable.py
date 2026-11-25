@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from portolan_registry_qgis.core import loadable
@@ -37,7 +39,13 @@ AREA = Area("POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))", (0, 0, 1, 1))
 
 
 def _asset(href, fmt, **extra):
-    fields = {"title": None, "type": None, "roles": ("data",), "size": None, "checksum": None}
+    fields: dict[str, Any] = {
+        "title": None,
+        "type": None,
+        "roles": ("data",),
+        "size": None,
+        "checksum": None,
+    }
     fields.update(extra)
     return Asset("key", href, format=fmt, **fields)
 
@@ -50,7 +58,12 @@ def _file(fmt, title="file", **extra):
 
 
 def _collection(*, links=(), assets=None, columns=None, **extra):
-    raw = {"type": "Collection", "id": "points", "title": "Points", "links": list(links)}
+    raw: dict[str, Any] = {
+        "type": "Collection",
+        "id": "points",
+        "title": "Points",
+        "links": list(links),
+    }
     raw["assets"] = assets or {}
     if columns is not None:
         raw["table:columns"] = columns
@@ -329,6 +342,7 @@ def test_a_bucket_glob_loads_and_names_its_folder():
     asset = targets.load.asset
     assert asset is not None
     assert parquet_name(asset) == "points"
+    assert asset.read_url is not None
     assert is_on_map(targets.load, {asset.read_url}, [])
     assert parquet_to_clip(document, MapView((0, 0, 1, 1))) == [asset]
 
@@ -351,7 +365,9 @@ def test_item_file_takes_any_data_format():
         ),
         f"{BASE}/a/a.json",
     )
-    assert item_file(tif).format == "cog"
+    tif_file = item_file(tif)
+    assert tif_file is not None
+    assert tif_file.format == "cog"
     assert item_file(read_document(make_item_doc({}), f"{BASE}/a/a.json")) is None
 
 

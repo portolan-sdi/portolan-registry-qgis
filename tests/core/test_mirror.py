@@ -124,7 +124,8 @@ def test_self_href(links, expected):
 
 def test_self_href_that_cannot_resolve(monkeypatch):
     def refuse(_href, _base):
-        raise ValueError("bad")
+        msg = "bad"
+        raise ValueError(msg)
 
     monkeypatch.setattr(mirror, "asset_href", refuse)
     assert mirror.self_href([{"rel": "self", "href": "a.json"}], BASE) is None

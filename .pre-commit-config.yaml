@@ -5,11 +5,15 @@
 # `uvx prek run --all-files`.
 #
 # The pre-push hooks assume these dev dependencies in pyproject.toml:
-# mypy, vulture, xenon, deptry, and import-linter where the repo
+# mypy, vulture, deptry, and import-linter where the repo
 # declares contracts. CI runs the commit and pre-push stages, so an
 # unhooked clone cannot merge past them. commit-msg runs locally only,
 # and squash-merge means the pull request title is the commit message
 # that lands.
+
+# A bare `uv run prek install` installs these three hook types.
+default_install_hook_types: [pre-commit, commit-msg, pre-push]
+
 repos:
   - repo: https://github.com/commitizen-tools/commitizen
     rev: v4.19.3
@@ -33,7 +37,11 @@ repos:
     rev: v0.17.5
     hooks:
       - id: ruff-check
-        args: [--fix]
+        # This helper supports Python 3.10. datetime.UTC is 3.11+.
+        args:
+          - --fix
+          - --config
+          - 'per-file-target-version = {"scripts/pip_audit_ignores.py" = "py310"}'
       - id: ruff-format
 
   - repo: https://github.com/codespell-project/codespell
@@ -72,8 +80,6 @@ repos:
         pass_filenames: false
         files: \.py$|^\.jscpd\.json$
 
-  # Pre-push stage: the slower quality gates. CI runs these too
-  # (reusable-python-ci.yml, "pre-push stage" step).
   # Relative links and anchors, with the org rules. No network access.
   # CI checks external links weekly. See portolan-ops norms/ci.md.
   - repo: https://github.com/portolan-sdi/portolan-ops
@@ -81,6 +87,7 @@ repos:
     hooks:
       - id: lychee
 
+  # Repo checks on the commit stage.
   - repo: local
     hooks:
       # English is the source language. The check fails when a string a
@@ -104,6 +111,10 @@ repos:
         files: \.py$
         stages: [pre-commit]
 
+  # Pre-push stage: the slower quality gates. CI runs these too
+  # (reusable-python-ci.yml, "pre-push stage" step).
+  - repo: local
+    hooks:
       - id: mypy
         name: mypy
         description: Static type check (same gate as CI)
@@ -117,24 +128,6 @@ repos:
         name: vulture
         description: Find unused code (paths/confidence from [tool.vulture])
         entry: uv run vulture
-        language: system
-        pass_filenames: false
-        stages: [pre-push]
-
-      - id: xenon
-        name: xenon
-        description: Complexity gate for the package
-        # No block above B, and every module at A.
-        entry: uv run xenon --max-absolute=B --max-modules=A --max-average=A portolan_registry_qgis
-        language: system
-        pass_filenames: false
-        stages: [pre-push]
-
-      - id: xenon-tests
-        name: xenon (tests and scripts)
-        description: Complexity gate for the tests and scripts
-        # A test that builds a catalog may reach C. Modules stay at B.
-        entry: uv run xenon --max-absolute=C --max-modules=B --max-average=A tests scripts
         language: system
         pass_filenames: false
         stages: [pre-push]
@@ -154,7 +147,7 @@ repos:
         # guard keeps the hook quiet until a repo writes its first
         # [tool.importlinter] block. Adding contracts turns the gate on
         # with no edit here.
-        entry: bash -c 'grep -q "^\[tool\.importlinter\]" pyproject.toml && uv run lint-imports || true'
+        entry: bash -c 'if grep -q "^\[tool\.importlinter\]" pyproject.toml; then uv run lint-imports; fi'
         language: system
         pass_filenames: false
         stages: [pre-push]

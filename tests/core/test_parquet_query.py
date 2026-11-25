@@ -7,6 +7,7 @@ import sqlite3
 import sys
 import threading
 from pathlib import PurePath
+from unittest.mock import create_autospec
 
 import pytest
 
@@ -14,22 +15,32 @@ from portolan_registry_qgis.core import parquet_query
 from portolan_registry_qgis.core.geoparquet import Clip, Covering, plan_read
 from portolan_registry_qgis.core.parquet_query import Target
 from portolan_registry_qgis.core.query import And, Compare, InList, Query, QueryError, Rows
+from tests import duck
 from tests.points import write_points
 
 pytest.importorskip("duckdb")
 
 
-@pytest.fixture(scope="module")
-def con():
-    connection = parquet_query.connection()
-    yield connection
+@pytest.fixture(scope="module", autouse=True)
+def _close_shared_connection():
+    yield
     parquet_query.close()
 
 
+@pytest.fixture
+def con():
+    """The shared connection, opened again if a test closed it."""
+    return parquet_query.connection()
+
+
 @pytest.fixture(scope="module")
-def points(tmp_path_factory, con):
+def points(tmp_path_factory):
     path = tmp_path_factory.mktemp("parquet") / "points.parquet"
-    write_points(con, path, "'n' || i AS name, i * 1.5 AS val, DATE '2026-01-01' + i::INT AS day")
+    write_points(
+        parquet_query.connection(),
+        path,
+        "'n' || i AS name, i * 1.5 AS val, DATE '2026-01-01' + i::INT AS day",
+    )
     return str(path)
 
 
@@ -41,14 +52,14 @@ def test_status_and_install_command(monkeypatch):
     assert parquet_query.install_command(upgrade=False).startswith("flatpak run")
     assert "--upgrade" in parquet_query.install_command(upgrade=True)
     monkeypatch.delenv("FLATPAK_ID")
-    monkeypatch.setattr(parquet_query.sys, "prefix", "/usr")
+    monkeypatch.setattr(sys, "prefix", "/usr")
     assert "pip install --user 'duckdb>=1.5.0'" in parquet_query.install_command(upgrade=False)
 
 
 def test_missing_duckdb_is_reported(monkeypatch):
     monkeypatch.setattr(parquet_query, "duckdb_status", lambda: (False, None))
     monkeypatch.setattr(parquet_query, "_connection", None)
-    with pytest.raises(parquet_query.DuckDBMissingError):
+    with pytest.raises(parquet_query.DuckDBMissingError, match="DuckDB is not installed"):
         parquet_query.connection()
 
 
@@ -70,7 +81,8 @@ def test_extensions_fall_back_to_the_given_folder(monkeypatch, tmp_path):
     def load(connection):
         loads.append(connection.execute("SELECT current_setting('extension_directory')").fetchone())
         if len(loads) == 1:
-            raise duckdb.IOException("the default folder is read-only")
+            msg = "the default folder is read-only"
+            raise duckdb.IOException(msg)
 
     monkeypatch.setattr(parquet_query, "_load_extensions", load)
     monkeypatch.setattr(parquet_query, "_connection", None)
@@ -80,7 +92,9 @@ def test_extensions_fall_back_to_the_given_folder(monkeypatch, tmp_path):
     fallback = parquet_query.connection(str(tmp_path))
     try:
         assert loads[1] == (str(tmp_path),)
-        assert fallback.execute("SELECT current_setting('memory_limit')").fetchone()[0]
+        memory_limit = fallback.execute("SELECT current_setting('memory_limit')").fetchone()
+        assert memory_limit is not None
+        assert memory_limit[0]
     finally:
         parquet_query.close()
 
@@ -364,15 +378,14 @@ def test_cancel_stops_a_read(con):
         cursor.execute("SELECT sum(a.range * b.range) FROM range(100000) a, range(100000) b")
 
 
-class _Cursor:
-    def __init__(self):
-        self.interrupted = False
+@pytest.fixture
+def watched():
+    import duckdb
 
-    def interrupt(self):
-        self.interrupted = True
+    return create_autospec(duckdb.DuckDBPyConnection, instance=True)
 
 
-def test_watcher_polls_until_the_query_ends():
+def test_watcher_polls_until_the_query_ends(watched):
     stop = threading.Event()
     polls = []
 
@@ -382,39 +395,35 @@ def test_watcher_polls_until_the_query_ends():
         stop.set()
         return False
 
-    watched = _Cursor()
     parquet_query.interrupt_when(cancelled, watched, stop)
     assert polls == [True]
-    assert not watched.interrupted
+    watched.interrupt.assert_not_called()
 
 
-def test_watcher_interrupts_once_cancelled():
-    watched = _Cursor()
+def test_watcher_interrupts_once_cancelled(watched):
     parquet_query.interrupt_when(lambda: True, watched, threading.Event())
-    assert watched.interrupted
+    watched.interrupt.assert_called_once_with()
 
 
-def test_watcher_reports_the_progress_duckdb_knows():
+def test_watcher_reports_the_progress_duckdb_knows(watched):
     stop = threading.Event()
-    reported = []
+    reported: list[float] = []
 
-    class Running(_Cursor):
-        def __init__(self):
-            super().__init__()
-            self.values = iter([-1.0, 40.0, 100.0])
+    values = iter([-1.0, 40.0, 100.0])
 
-        def query_progress(self):
-            value = next(self.values)
-            if value == 100.0:
-                stop.set()
-            return value
+    def query_progress():
+        value = next(values)
+        if value == 100.0:
+            stop.set()
+        return value
 
-    parquet_query.interrupt_when(None, Running(), stop, reported.append)
+    watched.query_progress.configure_mock(side_effect=query_progress)
+    parquet_query.interrupt_when(None, watched, stop, reported.append)
     assert reported == [0.4, 1.0]
 
 
 def test_a_cursor_with_progress_turns_the_progress_bar_on(con):
-    reported = []
+    reported: list[float] = []
     with parquet_query.cursor(con, progress=reported.append) as cur:
         setting = "SELECT current_setting('enable_progress_bar')"
         assert cur.execute(setting).fetchone() == (True,)
@@ -441,14 +450,7 @@ def test_close_is_idempotent():
     parquet_query.close()
 
 
-@pytest.fixture
-def live():
-    """The shared connection, opened again after ``test_close_is_idempotent`` closed it."""
-    return parquet_query.connection()
-
-
-def test_a_glob_and_a_list_read_as_one_table(live, tmp_path):
-    con = live
+def test_a_glob_and_a_list_read_as_one_table(con, tmp_path):
     for part in ("a", "b"):
         folder = tmp_path / f"zone={part}"
         folder.mkdir()
@@ -463,8 +465,7 @@ def test_a_glob_and_a_list_read_as_one_table(live, tmp_path):
     assert parquet_query.estimate(con, files, listed) == 400
 
 
-def test_a_dotted_bucket_gets_a_path_style_secret(live):
-    con = live
+def test_a_dotted_bucket_gets_a_path_style_secret(con):
     parquet_query.use_bucket(con, ["s3://us-west-2.data.test/a/*.parquet", "s3://plain/a.parquet"])
     parquet_query.use_bucket(con, "https://x.test/a.parquet")
     rows = con.execute(
@@ -505,8 +506,7 @@ def test_read_error_keeps_other_errors(source, error):
     assert parquet_query.read_error(source, error) == error
 
 
-def test_a_filter_and_two_columns_shape_the_copy(live, points, tmp_path):
-    con = live
+def test_a_filter_and_two_columns_shape_the_copy(con, points, tmp_path):
     plan = parquet_query.read_plan(con, points)
     rows = And(Compare("val", ">=", 30.0), InList("name", ("n20", "n21", "n90")))
     query = Query("filter", rows, ("name", "val"))
@@ -518,8 +518,7 @@ def test_a_filter_and_two_columns_shape_the_copy(live, points, tmp_path):
     assert [row[0] for row in described] == ["fid", "name", "val", "geom"]
 
 
-def test_custom_sql_replaces_the_generated_query(live, points, tmp_path):
-    con = live
+def test_custom_sql_replaces_the_generated_query(con, points, tmp_path):
     plan = parquet_query.read_plan(con, points)
     sql = (
         f"SELECT id, ST_Buffer(geometry, 0.001) AS geometry FROM read_parquet('{points}') "
@@ -532,8 +531,7 @@ def test_custom_sql_replaces_the_generated_query(live, points, tmp_path):
     assert written == parquet_query.Written(features=7, geometry_type="MultiPolygon", refused=0)
 
 
-def test_custom_sql_must_return_the_geometry(live, points, tmp_path):
-    con = live
+def test_custom_sql_must_return_the_geometry(con, points, tmp_path):
     plan = parquet_query.read_plan(con, points)
     query = Query(sql=f"SELECT id FROM read_parquet('{points}')")
     with pytest.raises(QueryError, match="geometry"):
@@ -550,8 +548,7 @@ def test_custom_sql_must_return_the_geometry(live, points, tmp_path):
         ("  ", "0 statements"),
     ],
 )
-def test_check_select_runs_nothing_it_refuses(live, points, tmp_path, sql, message):
-    con = live
+def test_check_select_runs_nothing_it_refuses(con, points, tmp_path, sql, message):
     plan = parquet_query.read_plan(con, points)
     with pytest.raises(QueryError, match=message):
         parquet_query.check_select(sql)
@@ -569,8 +566,7 @@ def test_check_select_drops_the_final_semicolon():
     )
 
 
-def test_preview_shows_the_first_rows_with_geometry_types(live, points):
-    con = live
+def test_preview_shows_the_first_rows_with_geometry_types(con, points):
     plan = parquet_query.read_plan(con, points)
     shown = parquet_query.preview(con, points, plan, Rows(query=Query(columns=("name",))))
     assert shown.columns == ("geometry", "name")
@@ -582,8 +578,7 @@ def test_preview_shows_the_first_rows_with_geometry_types(live, points):
     assert custom == parquet_query.Preview(("id",), [(0,), (1,), (2,)])
 
 
-def test_preview_stops_on_cancel(live, points):
-    con = live
+def test_preview_stops_on_cancel(con, points):
     import duckdb
 
     plan = parquet_query.read_plan(con, points)
@@ -594,9 +589,7 @@ def test_preview_stops_on_cancel(live, points):
         )
 
 
-def test_copy_script_runs_in_a_fresh_duckdb(live, points, tmp_path):
-    con = live
-    import duckdb
+def test_copy_script_runs_in_a_fresh_duckdb(con, points, tmp_path):
 
     plan = parquet_query.read_plan(con, points)
     clip = Clip((11.095, 44.0, 11.305, 45.0))
@@ -608,7 +601,7 @@ def test_copy_script_runs_in_a_fresh_duckdb(live, points, tmp_path):
         points, plan, str(script_target), Rows(clip, query), "EPSG:4326"
     )
     assert script.startswith("INSTALL spatial;\nLOAD spatial;\nINSTALL httpfs;\nLOAD httpfs;\n")
-    with contextlib.closing(duckdb.connect()) as fresh:
+    with contextlib.closing(duck.connect()) as fresh:
         fresh.execute(script)
         for path in (target, script_target):
             point = fresh.execute(
@@ -661,12 +654,11 @@ def test_copy_script_cuts_custom_sql_at_its_semicolon():
 
 def test_check_select_needs_duckdb(monkeypatch):
     monkeypatch.setattr(parquet_query, "duckdb_status", lambda: (False, None))
-    with pytest.raises(parquet_query.DuckDBMissingError):
+    with pytest.raises(parquet_query.DuckDBMissingError, match="DuckDB is not installed"):
         parquet_query.check_select("SELECT 1")
 
 
-def test_custom_sql_on_a_table_writes_a_table(live, tmp_path):
-    con = live
+def test_custom_sql_on_a_table_writes_a_table(con, tmp_path):
     source = tmp_path / "table.parquet"
     con.execute(f"COPY (SELECT i AS id FROM range(6) t(i)) TO '{source}' (FORMAT parquet)")
     plan = parquet_query.read_plan(con, str(source))
@@ -678,8 +670,7 @@ def test_custom_sql_on_a_table_writes_a_table(live, tmp_path):
     assert values == [(0,), (10,), (20,), (30,)]
 
 
-def test_preview_shows_a_wkb_geometry_as_its_type(live, tmp_path):
-    con = live
+def test_preview_shows_a_wkb_geometry_as_its_type(con, tmp_path):
     source = tmp_path / "wkb.parquet"
     con.execute(
         f"COPY (SELECT 1 AS id, ST_AsWKB(ST_Point(1, 2)) AS geometry) TO '{source}' (FORMAT parquet)"

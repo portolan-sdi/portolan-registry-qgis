@@ -27,6 +27,8 @@ from portolan_registry_qgis.qgis_io import parquet_layer
 from portolan_registry_qgis.qgis_io.network import fetch_document, run_task
 
 if TYPE_CHECKING:
+    from concurrent.futures import Executor
+
     from qgis.PyQt.QtWidgets import QWidget
 
     from portolan_registry_qgis.core.scope import Scope
@@ -65,7 +67,7 @@ class _Listed:
 class Downloads:
     """Ask where to download, list the files, and start the download job."""
 
-    def __init__(self, parent: QWidget, messages: Messages, tasks: TaskController):
+    def __init__(self, parent: QWidget, messages: Messages, tasks: TaskController) -> None:
         self._parent = parent
         self._messages = messages
         self._tasks = tasks
@@ -96,7 +98,7 @@ class Downloads:
             return
         list_glob = _list_glob(set())
 
-        def listing(_task: Any) -> tuple[list[download.PlannedFile], list[str]]:
+        def listing(_task: object) -> tuple[list[download.PlannedFile], list[str]]:
             found: list[download.PlannedFile] = []
             reasons: list[str] = []
             for asset in globs:
@@ -135,7 +137,7 @@ class Downloads:
 
         clipped = {asset.read_url for asset in clip if asset.read_url is not None}
 
-        def build(task: Any, executor: Any) -> download.Plan:
+        def build(task: Any, executor: Executor) -> download.Plan:
             walk = download.Walk(
                 cancelled=task.isCanceled, executor=executor, list_glob=_list_glob(clipped)
             )

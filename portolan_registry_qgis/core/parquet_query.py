@@ -12,7 +12,7 @@ import sqlite3
 import sys
 import threading
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol, cast
 from urllib.parse import urlsplit
 
 from portolan_registry_qgis.core.geoparquet import (
@@ -47,6 +47,37 @@ from portolan_registry_qgis.core.query import (
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
+    class Connection(Protocol):
+        """The DuckDB connection methods used by the core."""
+
+        def execute(self, query: str, _parameters: object = None, /) -> Connection:
+            """Execute SQL with optional bound parameters."""
+            ...
+
+        def cursor(self) -> Connection:
+            """Return a cursor on this connection."""
+            ...
+
+        def fetchone(self) -> tuple[Any, ...] | None:
+            """Return the next row, or None when no row remains."""
+            ...
+
+        def fetchall(self) -> list[tuple[Any, ...]]:
+            """Return all remaining rows."""
+            ...
+
+        def close(self) -> None:
+            """Close the connection."""
+            ...
+
+        def interrupt(self) -> None:
+            """Interrupt the running query."""
+            ...
+
+        def query_progress(self) -> float:
+            """Return the percentage of the query that has completed."""
+            ...
+
     # Receives the share of a query that DuckDB has done, from 0 to 1.
     Progress = Callable[[float], None]
 
@@ -65,7 +96,7 @@ _GDAL_AXIS_ORDER = "SET geometry_always_xy = true"
 # The statements that load the extensions in the DuckDB CLI.
 SCRIPT_START = ("INSTALL spatial;", "LOAD spatial;", "INSTALL httpfs;", "LOAD httpfs;")
 _lock = threading.Lock()
-_connection: Any = None
+_connection: Connection | None = None
 
 
 class DuckDBMissingError(ImportError):
@@ -107,7 +138,7 @@ def install_command(*, upgrade: bool) -> str:
     return f"{sys.executable} -m pip install --user {flag}'duckdb>={minimum}'"  # i18n: skip - a command
 
 
-def connection(extension_dir: str | None = None) -> Any:
+def connection(extension_dir: str | None = None) -> Connection:
     """Return the shared DuckDB connection with httpfs and spatial loaded.
 
     Raises:
@@ -137,7 +168,7 @@ def connection(extension_dir: str | None = None) -> Any:
         return _connection
 
 
-def _load_extensions(con: Any) -> None:
+def _load_extensions(con: Connection) -> None:
     for name in _EXTENSIONS:
         con.execute(f"INSTALL {name}")
         con.execute(f"LOAD {name}")
@@ -154,7 +185,7 @@ def close() -> None:
 
 def interrupt_when(
     cancelled: Callable[[], bool] | None,
-    cursor: Any,
+    cursor: Connection,
     stop: threading.Event,
     progress: Progress | None = None,
 ) -> None:
@@ -174,8 +205,8 @@ def interrupt_when(
 
 @contextlib.contextmanager
 def cursor(
-    con: Any, cancelled: Callable[[], bool] | None = None, progress: Progress | None = None
-) -> Iterator[Any]:
+    con: Connection, cancelled: Callable[[], bool] | None = None, progress: Progress | None = None
+) -> Iterator[Connection]:
     """Yield a cursor that a watcher thread interrupts when ``cancelled`` returns True.
 
     The running query then raises ``duckdb.InterruptException``. The watcher
@@ -227,7 +258,7 @@ def bucket_secrets(source: Source) -> list[str]:
     return secrets
 
 
-def use_bucket(con: Any, source: Source) -> None:
+def use_bucket(con: Connection, source: Source) -> None:
     """Give DuckDB the path style and region of each S3 bucket whose name holds a dot."""
     for secret in bucket_secrets(source):
         con.execute(secret)
@@ -307,7 +338,7 @@ def read_error(source: Source, error: BaseException | str | None) -> str:
     return text
 
 
-def list_files(con: Any, url: str, cancelled: Callable[[], bool] | None = None) -> list[str]:
+def list_files(con: Connection, url: str, cancelled: Callable[[], bool] | None = None) -> list[str]:
     """Return the files that a bucket glob matches, in order."""
     use_bucket(con, url)
     with cursor(con, cancelled) as cur:
@@ -317,7 +348,9 @@ def list_files(con: Any, url: str, cancelled: Callable[[], bool] | None = None) 
         ]
 
 
-def read_plan(con: Any, url: Source, cancelled: Callable[[], bool] | None = None) -> ReadPlan:
+def read_plan(
+    con: Connection, url: Source, cancelled: Callable[[], bool] | None = None
+) -> ReadPlan:
     """Read a file's schema and GeoParquet metadata and plan the query.
 
     ``url`` may be a bucket glob or a list of URLs, which DuckDB reads as one table.
@@ -343,7 +376,7 @@ class Watch:
 
 
 def estimate(
-    con: Any,
+    con: Connection,
     url: Source,
     plan: ReadPlan,
     rows: Rows = ALL_ROWS,
@@ -369,7 +402,7 @@ def estimate(
     sql, params = counted
     watch = watch or Watch()
     with cursor(con, watch.cancelled, watch.progress) as cur:
-        return int(cur.execute(sql, params).fetchone()[0])
+        return int(cast("tuple[Any, ...]", cur.execute(sql, params).fetchone())[0])
 
 
 @dataclass(frozen=True)
@@ -421,7 +454,7 @@ def null_geometries(path: str) -> int:
 
 
 def write_gpkg(
-    con: Any,
+    con: Connection,
     url: Source,
     plan: ReadPlan,
     target: Target,
@@ -453,7 +486,7 @@ def write_gpkg(
     return Written(features, layer_type, null_geometries(target.path) if features else 0)
 
 
-def _stage(cur: Any, url: Source, plan: ReadPlan, target: Target) -> str:
+def _stage(cur: Connection, url: Source, plan: ReadPlan, target: Target) -> str:
     """Put the rows of ``target`` in the staging table, and return the layer type."""
     chosen = selection(target.query, plan)
     layer_type = plan.geometry_type
@@ -465,13 +498,13 @@ def _stage(cur: Any, url: Source, plan: ReadPlan, target: Target) -> str:
     return layer_type
 
 
-def _describe(cur: Any, sql: str, params: list[object]) -> list[tuple[str, str]]:
+def _describe(cur: Connection, sql: str, params: list[object]) -> list[tuple[str, str]]:
     """Return the names and DuckDB types of the columns of the rows of ``sql``."""
     rows = cur.execute(f"DESCRIBE SELECT * FROM (\n{sql}\n) AS portolan_described", params)  # noqa: S608  # nosec B608 - SQL the plugin built or checked
     return [(str(row[0]), str(row[1])) for row in rows.fetchall()]
 
 
-def _stage_custom(cur: Any, url: Source, plan: ReadPlan, sql: str) -> tuple[ReadPlan, str]:
+def _stage_custom(cur: Connection, url: Source, plan: ReadPlan, sql: str) -> tuple[ReadPlan, str]:
     """Put the rows of the custom SELECT ``sql`` in the staging table.
 
     Returns:
@@ -518,7 +551,7 @@ class Preview:
 
 
 def preview(
-    con: Any,
+    con: Connection,
     url: Source,
     plan: ReadPlan,
     rows: Rows = ALL_ROWS,

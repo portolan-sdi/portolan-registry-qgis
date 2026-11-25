@@ -24,6 +24,7 @@ from portolan_registry_qgis.qgis_io.network import fetch_bytes, fetch_document, 
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from concurrent.futures import Executor
     from pathlib import Path
 
     from qgis.PyQt.QtWidgets import QWidget
@@ -122,7 +123,7 @@ class Loader:
         server: TileServer,
         messages: Messages,
         tasks: TaskController,
-    ):
+    ) -> None:
         self._parent = parent
         self._iface = iface
         self._server = server
@@ -395,7 +396,7 @@ class Loader:
     def _walk_items(self, document: Document, title: str, scope: Scope, found: Walked) -> None:
         """Find the files of the items of ``document`` in ``scope``, then call ``found``."""
 
-        def find(task: Any, executor: Any) -> list[str]:
+        def find(task: Any, executor: Executor) -> list[str]:
             return mosaic.item_hrefs_in(
                 document, scope, fetch_document, executor, cancelled=task.isCanceled
             )

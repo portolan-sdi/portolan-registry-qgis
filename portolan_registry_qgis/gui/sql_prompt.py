@@ -14,7 +14,7 @@ PROMPT_SIZE = QSize(560, 360)
 class SqlPrompt(QDialog):
     """Show the full custom SQL of a saved layer, and ask whether to run it."""
 
-    def __init__(self, layer_name: str, sql: str, parent: QWidget | None = None):
+    def __init__(self, layer_name: str, sql: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle(_("Run SQL from this project?"))
         self.resize(PROMPT_SIZE)

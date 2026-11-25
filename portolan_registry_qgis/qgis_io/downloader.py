@@ -65,7 +65,7 @@ class DownloadJob(QObject):
         files: list[PlannedFile],
         parent: QObject | None = None,
         concurrency: int = CONCURRENT_FILES,
-    ):
+    ) -> None:
         super().__init__(parent)
         self._folder = folder
         self._total = len(files)

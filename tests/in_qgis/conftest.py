@@ -15,6 +15,7 @@ import shutil
 import time
 from http.server import SimpleHTTPRequestHandler
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -37,6 +38,8 @@ _RANGE = re.compile(r"bytes=(\d+)-(\d*)")
 
 class RangeHandler(SimpleHTTPRequestHandler):
     """Static files with single-range support, which GDAL's /vsicurl/ needs."""
+
+    _remaining: int | None
 
     def send_head(self):
         header = self.headers.get("Range")
@@ -105,7 +108,8 @@ def wait_for(predicate, timeout=30.0):
     deadline = time.monotonic() + timeout
     while not predicate():
         if time.monotonic() > deadline:
-            raise TimeoutError("Condition not met in time")
+            msg = "Condition not met in time"
+            raise TimeoutError(msg)
         QgsApplication.processEvents()
         time.sleep(0.01)
 
@@ -384,7 +388,7 @@ def _build(root: Path) -> dict:
     _parquet_items(root)
     _tables(root)
     _images(root, collection)
-    style = {
+    style: dict[str, Any] = {
         "version": 8,
         "name": "Points in red",
         "sources": {"data": {"type": "vector", "url": "pmtiles://../../points.pmtiles"}},
@@ -440,7 +444,7 @@ def _build(root: Path) -> dict:
     assets["data"] = _asset(
         root / "points.parquet", "../points.parquet", "application/vnd.apache.parquet", ["data"]
     )
-    links = [
+    links: list[dict[str, Any]] = [
         {"rel": "root", "href": "../catalog.json"},
         {"rel": "icon", "href": "../leaf.svg", "type": "image/svg+xml"},
         {

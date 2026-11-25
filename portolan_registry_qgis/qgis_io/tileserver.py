@@ -10,7 +10,7 @@ import secrets
 import threading
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 from urllib.parse import unquote
 
 from portolan_registry_qgis.core.i18n import _
@@ -129,7 +129,7 @@ class TileHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(tile)
 
-    def log_message(self, format: str, *args: Any) -> None:
+    def log_message(self, format: str, *args: object) -> None:
         """Silence per-request logging; QGIS has its own network log."""
 
 

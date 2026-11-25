@@ -2,7 +2,7 @@
 
 The plugin has two test suites.
 
-- `tests/core` covers the STAC, registry, PMTiles, GeoParquet, and download logic in `portolan_registry_qgis/core`. That package imports neither QGIS nor GDAL, so the suite runs in the uv environment.
+- `tests/core` covers the STAC, registry, PMTiles, GeoParquet, and download logic in `portolan_registry_qgis/core`. That package imports neither QGIS nor GDAL. The suite runs in the uv environment.
 - `tests/in_qgis` needs PyQGIS. It builds a small catalog with GDAL and DuckDB and serves it on loopback. The tests then exercise the network code, the layers, the downloads, and the window.
 
 ```bash
@@ -48,16 +48,21 @@ Each script writes `sweep.md` and `sweep.json` to its output folder. Use `--only
 
 ## Quality gates
 
-Pre-commit runs these checks, and CI runs them again on each pull request. A change must pass each one.
+The prek hooks run these checks, and CI runs them again on each pull request. A change must pass each one.
+
+Install the Git hooks once after you clone the repo. The command installs the pre-commit, commit-msg, and pre-push hooks:
+
+```bash
+uv run prek install
+```
 
 | Gate | Threshold |
 | --- | --- |
-| Ruff | The rule set in `pyproject.toml`, with the pylint, pytest, and tryceratops rules. McCabe complexity 10 or lower. |
-| mypy | Strict mode on the package and `scripts`. |
+| Ruff | Every Ruff rule. Preview rules apply by name only. Each ignore in `pyproject.toml` states its reason. McCabe complexity 10 or lower. |
+| mypy | Strict mode on the package, `scripts`, and `tests`. In `tests`, a function can omit its type annotations. |
 | vulture | No unused name at 60% confidence or more. |
-| xenon on the package | Each block at rank B or better. Each module and the average at rank A. |
-| xenon on the tests and scripts | Each block at rank C or better. Each module at rank B or better, and the average at rank A. |
 | jscpd | No copy of 50 tokens and 5 lines or more. |
+| Hypothesis | Each property test in `tests/property` passes. |
 | Docstrings | 5 lines or fewer. No change history in a docstring or a comment. |
 | import-linter | The core imports no QGIS, Qt, or GDAL code, and none of the QGIS layers. `qgis_io` imports nothing from `gui`. |
 | Coverage, uv suite | 99% of the core. |
@@ -70,11 +75,7 @@ Run the gates one at a time:
 uv run ruff check .
 uv run mypy
 uv run vulture
-uv run xenon --max-absolute=B --max-modules=A \
-  --max-average=A portolan_registry_qgis
-uv run xenon --max-absolute=C --max-modules=B \
-  --max-average=A tests scripts
-uvx prek run jscpd --all-files
+uv run prek run jscpd --all-files
 uv run python scripts/docstring_check.py
 uv run lint-imports
 uv run pytest -n 4 --cov=portolan_registry_qgis
@@ -93,13 +94,32 @@ QT_QPA_PLATFORM=offscreen .venv-qgis/bin/python \
 To run every hook of both stages:
 
 ```bash
-uvx prek run --all-files
-uvx prek run --all-files --hook-stage pre-push
+uv run prek run --all-files
+uv run prek run --all-files --stage pre-push
+```
+
+### Property tests
+
+The tests in `tests/property` use Hypothesis. Each test states a property, and Hypothesis checks it against up to 20 generated inputs. The uv suite runs them. To run them alone:
+
+```bash
+uv run pytest tests/property
+```
+
+`tests/property/conftest.py` defines two profiles:
+
+- `default` generates new inputs on each run.
+- `ci` generates the same inputs on each run. A failure in CI repeats on your machine.
+
+The `HYPOTHESIS_PROFILE` environment variable selects a profile. Without it, the tests use `ci` when the environment defines `CI`, and `default` otherwise. To repeat the CI inputs on your machine:
+
+```bash
+HYPOTHESIS_PROFILE=ci uv run pytest tests/property
 ```
 
 ## Translations
 
-The plugin and this site are in English, Spanish, and French. English is the source language, and a change to English text needs the Spanish and French translations in the same pull request. Pre-commit and CI run `scripts/i18n.py check`, which fails until both languages have caught up.
+The plugin and this site are in English, Spanish, and French. English is the source language, and a change to English text needs the Spanish and French translations in the same pull request. prek and CI run `scripts/i18n.py check`, which fails until both languages have caught up.
 
 The plugin translates its text with gettext. Wrap each string a person reads in `_()` from `portolan_registry_qgis.core.i18n`, and use `count()` for text with a number:
 
@@ -111,7 +131,7 @@ status.setText(_("Could not open {url}").format(url=url))
 row.setText(count("{n} file", "{n} files", total))
 ```
 
-Because the plugin chooses the language after Python imports its modules, a module constant stores its English text inside `N_()`, and the code that shows it calls `_()`. Placeholders take names, which lets a translation reorder them. Babel copies a comment that starts with `# Translators:`, on the line above a call, into the catalog next to the message.
+Because the plugin chooses the language after Python imports its modules, a module constant stores its English text inside `N_()`, and the code that shows it calls `_()`. Placeholders take names, which lets a translation reorder them. Babel copies a comment that starts with `# Translators:`, on the line before a call, into the catalog next to the message.
 
 When English text changes, regenerate the catalogs and translate the new entries:
 

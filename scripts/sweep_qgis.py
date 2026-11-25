@@ -14,13 +14,9 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, cast
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-
-from sweep_registry import ROOT, Result, Sweep, registry_entries, write_report
-
-sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from qgis.core import (
     QgsApplication,
@@ -42,9 +38,13 @@ from portolan_registry_qgis.qgis_io import layers
 from portolan_registry_qgis.qgis_io.crs import wgs84
 from portolan_registry_qgis.qgis_io.network import fetch_bytes, fetch_json
 from portolan_registry_qgis.qgis_io.tileserver import TileServer
+from scripts.sweep_registry import Result, Sweep, registry_entries, write_report
 
 if TYPE_CHECKING:
+    from qgis.core import QgsMapLayer
+
     from portolan_registry_qgis.core import registry
+    from portolan_registry_qgis.core.stac import Asset
 
 WORLD = 40_075_016.686
 MERCATOR = "EPSG:3857"
@@ -56,7 +56,7 @@ def collections(entry: registry.CatalogEntry, max_documents: int) -> list[str]:
     return [doc.href for doc, _raw in sweep.walk(entry.url) if doc.kind == "collection"]
 
 
-def render(layer: Any, extent: QgsRectangle) -> int:
+def render(layer: QgsMapLayer, extent: QgsRectangle) -> int:
     """Render ``layer`` over ``extent`` in Web Mercator and count the sampled non-white pixels."""
     settings = QgsMapSettings()
     settings.setLayers([layer])
@@ -120,9 +120,17 @@ class QgisSweep(Sweep):
         if view is not None and view.format == "pmtiles":
             self.record(url, "qgis pmtiles", lambda: self.pmtiles(document))
         elif view is not None and view.asset is not None:
-            self.record(url, f"qgis view {view.format}", lambda: self.asset(view.asset, document))
+            self.record(
+                url,
+                f"qgis view {view.format}",
+                lambda: self.asset(cast("Asset", view.asset), document),
+            )
         if load is not None and load.asset is not None and load.format != "parquet":
-            self.record(url, f"qgis load {load.format}", lambda: self.asset(load.asset, document))
+            self.record(
+                url,
+                f"qgis load {load.format}",
+                lambda: self.asset(cast("Asset", load.asset), document),
+            )
 
     def pmtiles(self, document: Document) -> str:
         """Build the PMTiles layers with their styles, and render one tile of each."""
@@ -134,7 +142,8 @@ class QgisSweep(Sweep):
         notes = []
         for layer, part in zip(built, prepared.parts, strict=True):
             if not layer.isValid():
-                raise ValueError(f"invalid layer {part.title}")
+                msg = f"invalid layer {part.title}"
+                raise ValueError(msg)
             styles = len(layer.styleManager().styles()) - 1
             if document.styles and styles == 0:
                 self.flag(
@@ -149,7 +158,7 @@ class QgisSweep(Sweep):
             self.flag(document.href, "qgis warning", warning[:300])
         return "; ".join(notes)
 
-    def asset(self, asset: Any, document: Document) -> str:
+    def asset(self, asset: Asset, document: Document) -> str:
         """Open one data asset in place and render its centre."""
         layer = layers.asset_layer(asset)
         if not layer.isValid():
@@ -236,6 +245,7 @@ def main(argv: list[str] | None = None) -> int:
             parser.error("--shard requires 1 <= INDEX <= COUNT")
     entries = registry_entries(args.only)
     if args.shard is not None:
+        index, count = args.shard
         entries = sorted(entries, key=lambda entry: entry.id)[index - 1 :: count]
     catalogs = args.out / "catalogs"
     catalogs.mkdir(parents=True, exist_ok=True)

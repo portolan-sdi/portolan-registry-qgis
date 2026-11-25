@@ -29,6 +29,7 @@ from portolan_registry_qgis.core.query import (
     selection,
     sql_value,
 )
+from tests import duck
 from tests.core.test_geoparquet import LAND_USE_GEO, LAND_USE_SCHEMA
 
 PLAN = plan_read(LAND_USE_SCHEMA, LAND_USE_GEO)
@@ -77,7 +78,7 @@ def test_selection_keeps_the_columns_and_the_filter():
     query = Query('"year" = 2020', Compare("year", "=", 2020), ("objectid",))
     assert selection(query, PLAN) == Selection(("objectid",), '"year" = ?', (2020,))
     assert selection(DEFAULT_QUERY, PLAN) is EVERYTHING
-    with pytest.raises(QueryError):
+    with pytest.raises(QueryError, match="no column named gone"):
         selection(Query(columns=("gone",)), PLAN)
 
 
@@ -92,7 +93,9 @@ def test_copy_keeps_only_the_chosen_columns_and_rows():
 
 def test_estimate_applies_the_filter():
     chosen = Selection(None, '"year" = ?', (2020,))
-    sql, params = build_estimate(PLAN, Clip((0, 0, 1, 1)), chosen)
+    estimate = build_estimate(PLAN, Clip((0, 0, 1, 1)), chosen)
+    assert estimate is not None
+    sql, params = estimate
     assert sql.endswith('AND ("year" = ?)')
     assert params == [2020]
     table = plan_read([("id", "BIGINT")], None)
@@ -124,12 +127,22 @@ def test_load_text_says_what_the_load_keeps():
         (True, "TRUE"),
         (3, "3"),
         (-2.5, "-2.5"),
+        (float("inf"), "'inf'::DOUBLE"),
+        (float("-inf"), "'-inf'::DOUBLE"),
+        (float("nan"), "'nan'::DOUBLE"),
         ("it's", "'it''s'"),
         (["a", "b"], "['a', 'b']"),
     ],
 )
 def test_sql_value(value, text):
     assert sql_value(value) == text
+
+
+@pytest.mark.parametrize("value", [float("inf"), float("-inf")])
+def test_sql_value_of_an_infinity_reads_back_in_duckdb(value):
+    pytest.importorskip("duckdb")
+    with duck.connect() as con:
+        assert con.execute(f"SELECT {sql_value(value)}").fetchone() == (value,)
 
 
 def test_inline_skips_marks_in_literals_and_names():
@@ -166,13 +179,13 @@ def test_result_plan_needs_the_geometry_column():
 
 def test_a_filter_value_must_be_text_or_a_number():
     with pytest.raises(QueryError, match="text or a number"):
-        filter_sql(Compare("year", "=", [1, 2]), PLAN)
+        filter_sql(Compare("year", "=", [1, 2]), PLAN)  # type: ignore[arg-type]  # Test an invalid filter value.
 
 
 def test_selection_of_a_filter_alone_keeps_every_column():
     query = Query('"year" = 1', Compare("year", "=", 1))
     assert selection(query, PLAN) == Selection(None, '"year" = ?', (1,))
-    with pytest.raises(QueryError):
+    with pytest.raises(QueryError, match="Custom SQL has no selection"):
         selection(Query(sql="SELECT 1"), PLAN)
 
 

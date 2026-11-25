@@ -57,7 +57,7 @@ class RegistryList(QWidget):
         world: WorldMap,
         messages: Messages,
         browser_link: Callable[[str | None], str | None],
-    ):
+    ) -> None:
         super().__init__()
         self._iface = iface
         self._messages = messages

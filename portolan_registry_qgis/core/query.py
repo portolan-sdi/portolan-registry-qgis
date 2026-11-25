@@ -6,6 +6,7 @@ binds every value as a parameter.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 from portolan_registry_qgis.core.geoparquet import (
@@ -194,7 +195,8 @@ def selection(query: Query, plan: ReadPlan) -> Selection:
         QueryError: The query names a column the file does not hold.
     """
     if query.sql is not None:
-        raise QueryError("Custom SQL has no selection")  # i18n: skip - a caller bug
+        msg = "Custom SQL has no selection"  # i18n: skip - a caller bug
+        raise QueryError(msg)
     if query.columns is None and query.filter is None:
         return EVERYTHING
     names = _names(plan)
@@ -264,6 +266,8 @@ def sql_value(value: object) -> str:
         return "NULL"
     if isinstance(value, bool):
         return "TRUE" if value else "FALSE"
+    if isinstance(value, float) and not math.isfinite(value):
+        return f"'{value}'::DOUBLE"
     if isinstance(value, (int, float)):
         return repr(value)
     if isinstance(value, (list, tuple)):
@@ -347,5 +351,6 @@ def inline(sql: str, params: list[object]) -> str:
         else:
             out.append(char)
     if next(values, _END) is not _END:
-        raise ValueError("More parameters than ? marks")  # i18n: skip - a caller bug
+        msg = "More parameters than ? marks"  # i18n: skip - a caller bug
+        raise ValueError(msg)
     return "".join(out)

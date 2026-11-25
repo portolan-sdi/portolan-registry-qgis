@@ -21,7 +21,10 @@ def links(rel: str, hrefs: Iterable[str]) -> list[dict[str, Any]]:
 
 
 def make_catalog(
-    ident: str, children: Iterable[str] = (), other_links: Iterable[dict] = (), **fields: Any
+    ident: str,
+    children: Iterable[str] = (),
+    other_links: Iterable[dict[str, Any]] = (),
+    **fields: Any,
 ) -> dict[str, Any]:
     """Return a catalog with a child link to each href in ``children``."""
     return {
@@ -34,7 +37,7 @@ def make_catalog(
 
 
 def make_collection(
-    ident: str, items: Iterable[str] = (), other_links: Iterable[dict] = (), **fields: Any
+    ident: str, items: Iterable[str] = (), other_links: Iterable[dict[str, Any]] = (), **fields: Any
 ) -> dict[str, Any]:
     """Return a collection with an item link to each href in ``items``."""
     return {
@@ -47,7 +50,10 @@ def make_collection(
 
 
 def make_item(
-    ident: str, bbox: Sequence[float] | None = None, other_links: Iterable[dict] = (), **fields: Any
+    ident: str,
+    bbox: Sequence[float] | None = None,
+    other_links: Iterable[dict[str, Any]] = (),
+    **fields: Any,
 ) -> dict[str, Any]:
     """Return an item. It has a ``bbox`` only when the test gives one."""
     item: dict[str, Any] = {

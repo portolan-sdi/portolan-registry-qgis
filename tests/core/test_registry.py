@@ -99,6 +99,7 @@ def test_registry_fields_are_kept():
     assert anncsu.total_size_bytes == 1393694428
     assert anncsu.updated == "2026-09-19T15:07:48Z"
     assert anncsu.logo_url is None
+    assert bologna.logo_url is not None
     assert bologna.logo_url.endswith("bologna-open-data.png")
     assert bologna.licenses == ("CC-BY-4.0", "ODbL-1.0")
     assert bologna.failure_reason == "HTTP 503"
@@ -112,6 +113,12 @@ def test_missing_fields_fall_back():
     assert entry.status == "unknown"
     assert entry.bbox is None
     assert entry.licenses == ()
+
+
+def test_a_bbox_too_large_for_a_float_is_dropped():
+    link = {"rel": "child", "href": "https://x.test/catalog.json", "bbox": [0, 0, 10**400, 1]}
+    (entry,) = parse_registry(registry(link))
+    assert entry.bbox is None
 
 
 def test_wrongly_typed_counts_are_dropped():

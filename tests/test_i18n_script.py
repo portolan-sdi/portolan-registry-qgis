@@ -83,7 +83,7 @@ def test_fields(text, names):
     assert i18n.fields(text) == names
 
 
-def catalog(*messages: tuple[object, object, dict]) -> Catalog:
+def catalog(*messages: tuple[str | tuple[str, ...], str | tuple[str, ...] | None, dict]) -> Catalog:
     result = Catalog(locale="es")
     for ident, string, options in messages:
         result.add(ident, string, **options)

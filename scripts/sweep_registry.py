@@ -20,10 +20,11 @@ from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
+    from http.client import HTTPResponse
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -58,15 +59,15 @@ def encoded(url: str) -> str:
     return urllib.parse.quote(url, safe=":/?#[]@!$&'()*+,;=%~")
 
 
-def open_url(request: urllib.request.Request) -> Any:
+def open_url(request: urllib.request.Request) -> HTTPResponse:
     """Open a request, and retry once after a timeout."""
     try:
-        return urllib.request.urlopen(request, timeout=TIMEOUT)
+        return cast("HTTPResponse", urllib.request.urlopen(request, timeout=TIMEOUT))
     except (TimeoutError, urllib.error.URLError) as error:
         if isinstance(error, urllib.error.HTTPError):
             raise
         time.sleep(2)
-        return urllib.request.urlopen(request, timeout=TIMEOUT)
+        return cast("HTTPResponse", urllib.request.urlopen(request, timeout=TIMEOUT))
 
 
 def fetch(url: str, byte_range: str | None = None) -> tuple[bytes, str, dict[str, str]]:
@@ -75,7 +76,7 @@ def fetch(url: str, byte_range: str | None = None) -> tuple[bytes, str, dict[str
     if byte_range:
         request.add_header("Range", f"bytes={byte_range}")
     with open_url(request) as response:
-        return response.read(), response.geturl(), dict(response.headers)
+        return response.read(), response.url, dict(response.headers)
 
 
 def head(url: str) -> dict[str, str]:
@@ -102,7 +103,9 @@ def fetch_document(url: str) -> tuple[Document, dict[str, Any], str]:
 class Sweep:
     """Collect results for one catalog."""
 
-    def __init__(self, catalog: str, max_documents: int, con: Any) -> None:
+    def __init__(
+        self, catalog: str, max_documents: int, con: parquet_query.Connection | None
+    ) -> None:
         self.catalog = catalog
         self.max_documents = max_documents
         self.con = con
@@ -191,23 +194,28 @@ class Sweep:
         """Check range support, Content-Length, and the PMTiles magic of one file."""
         headers = head(url)
         if "Content-Length" not in headers:
-            raise ValueError("HEAD returned no Content-Length")
+            msg = "HEAD returned no Content-Length"
+            raise ValueError(msg)
         body, _final, got = fetch(url, "0-126")
         if len(body) > 127:
-            raise ValueError("server ignored the Range header")
+            msg = "server ignored the Range header"
+            raise ValueError(msg)
         if kind == "pmtiles" and not body.startswith(PMTILES_MAGIC):
-            raise ValueError(f"not a PMTiles archive (starts {body[:8]!r})")
+            msg = f"not a PMTiles archive (starts {body[:8]!r})"
+            raise ValueError(msg)
         return f"{headers['Content-Length']} bytes, {got.get('Content-Type', '?')}"
 
     def first_item(self, document: Document) -> str:
         """Read the GeoParquet file of the first item below ``document``, as the item walk does."""
         node = next((child for child in document.children if child.kind == "item"), None)
         if node is None:
-            raise ValueError("no item directly below the collection")
+            msg = "no item directly below the collection"
+            raise ValueError(msg)
         item = read_document(json.loads(fetch(node.href)[0]), node.href)
         href = item_href(item.assets)
         if href is None:
-            raise ValueError(f"{node.href} has no data file")
+            msg = f"{node.href} has no data file"
+            raise ValueError(msg)
         return f"items: {self.parquet(href)}"
 
     def parquet(self, url: str) -> str:
@@ -215,8 +223,8 @@ class Sweep:
         import duckdb
 
         try:
-            plan = parquet_query.read_plan(self.con, url)
-            count = parquet_query.estimate(self.con, url, plan)
+            plan = parquet_query.read_plan(cast("parquet_query.Connection", self.con), url)
+            count = parquet_query.estimate(cast("parquet_query.Connection", self.con), url, plan)
         except (duckdb.IOException, duckdb.HTTPException, duckdb.InvalidInputException) as error:
             raise ValueError(str(error)) from error
         return f"geometry={plan.geometry!r} estimate={count}"
@@ -239,7 +247,8 @@ class Sweep:
         parsed = style.parse_style(body)
         sources = style.pmtiles_sources(parsed, url, fallback)
         if not sources:
-            raise ValueError("no PMTiles source in the style")
+            msg = "no PMTiles source in the style"
+            raise ValueError(msg)
         stray = sorted(set(sources.values()) - set(archives))
         for archive in stray:
             self.probe(archive, "pmtiles")
@@ -259,7 +268,8 @@ class Sweep:
         def run() -> str:
             body, _final, _headers = fetch(thumb.href)
             if not body.startswith(IMAGE_MAGIC):
-                raise ValueError(f"not an image (starts {body[:8]!r})")
+                msg = f"not an image (starts {body[:8]!r})"
+                raise ValueError(msg)
             return f"{len(body)} bytes"
 
         self.record(document.href, "thumbnail", run)
@@ -272,7 +282,9 @@ class Sweep:
                 self.flag(document.href, "download path", f"{planned.url} -> {planned.path}")
 
 
-def sweep_catalog(entry: registry.CatalogEntry, max_documents: int, con: Any) -> list[Result]:
+def sweep_catalog(
+    entry: registry.CatalogEntry, max_documents: int, con: parquet_query.Connection | None
+) -> list[Result]:
     """Walk one catalog and return its results."""
     sweep = Sweep(entry.id, max_documents, con)
     for document, raw in sweep.walk(entry.url):
@@ -306,10 +318,12 @@ def registry_entries(only: list[str] | None) -> list[registry.CatalogEntry]:
     body, _final, _headers = fetch(registry.REGISTRY_URL)
     entries = registry.parse_registry(json.loads(body), registry.REGISTRY_URL)
     if not entries:
-        raise registry.RegistryError("The registry export has no readable catalog links")
+        msg = "The registry export has no readable catalog links"
+        raise registry.RegistryError(msg)
     selected = [entry for entry in entries if entry.id in only] if only else entries
     if not selected:
-        raise registry.RegistryError("No requested catalog IDs are present in the registry")
+        msg = "No requested catalog IDs are present in the registry"
+        raise registry.RegistryError(msg)
     return selected
 
 

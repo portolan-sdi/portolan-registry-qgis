@@ -33,7 +33,7 @@ def test_other_functions(tmp_path):
 def test_progress_and_cancel(tmp_path):
     path = tmp_path / "f.bin"
     path.write_bytes(DATA)
-    seen = []
+    seen: list[int] = []
     assert file_matches(path, sha256_multihash(DATA), progress=seen.append)
     assert seen[-1] == len(DATA)
     assert not file_matches(path, sha256_multihash(DATA), cancelled=lambda: True)

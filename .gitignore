@@ -25,3 +25,6 @@ mutants/
 # Translated documentation sources, assembled by scripts/i18n.py build-docs
 /build/
 /mkdocs.*.yml
+
+# Hypothesis example database
+.hypothesis/

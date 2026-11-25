@@ -549,7 +549,8 @@ def new_path(suffix: str) -> Path:
     global _session  # noqa: PLW0603 - one scratch folder per QGIS session
     if suffix not in _SUFFIXES:
         # A programming error. The callers pass a suffix from _SUFFIXES.
-        raise ValueError(f"The scratch folder holds no {suffix} files")  # i18n: skip
+        msg = f"The scratch folder holds no {suffix} files"  # i18n: skip
+        raise ValueError(msg)
     with _lock:
         if _session is None or not _session.is_dir():
             _session = Path(tempfile.mkdtemp(prefix=_own_prefix(), dir=scratch_folder()))

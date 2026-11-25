@@ -159,7 +159,7 @@ class ImageCache(QObject):
 
     loaded = pyqtSignal(str)
 
-    def __init__(self, parent: QObject | None = None):
+    def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._pictures: dict[str, Picture | None] = {}
         self._waiting: dict[str, list[Callable[[Picture | None], None]]] = {}
@@ -212,7 +212,7 @@ class WorldMap(QObject):
 
     ready = pyqtSignal()
 
-    def __init__(self, parent: QObject | None = None):
+    def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._mask: QImage | None = None
         self._tints: dict[int, QImage] = {}

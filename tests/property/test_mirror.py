@@ -11,6 +11,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from portolan_registry_qgis.core import mirror, parquet_query, scope
+from tests import duck
 from tests.property import strategies
 
 # Whole degrees, so DuckDB and Python compare the same values.
@@ -21,11 +22,11 @@ boxes = strategies.boxes(st.integers(-180, 180).map(float), st.integers(-90, 90)
 def test_the_mirror_query_keeps_every_item_in_the_view(
     items: list[strategies.Box], view: strategies.Box
 ) -> None:
-    duckdb = pytest.importorskip("duckdb")
+    pytest.importorskip("duckdb")
 
     chosen = scope.MapView(view)
     rows = [{"xmin": w, "ymin": s, "xmax": e, "ymax": n} for w, s, e, n in items]
-    with tempfile.TemporaryDirectory() as folder, contextlib.closing(duckdb.connect()) as con:
+    with tempfile.TemporaryDirectory() as folder, contextlib.closing(duck.connect()) as con:
         path = str(Path(folder) / "items.parquet")
         con.execute(
             "CREATE TABLE m (id VARCHAR, "

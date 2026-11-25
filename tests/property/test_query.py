@@ -12,6 +12,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from portolan_registry_qgis.core import geoparquet, query
+from tests import duck
 from tests.property import strategies
 
 if TYPE_CHECKING:
@@ -42,10 +43,10 @@ def _same(value: object, got: object) -> bool:
 @pytest.mark.parametrize("kind", SQL_VALUES)
 @given(data=st.data())
 def test_a_sql_value_reads_back_as_the_same_value(kind: str, data: st.DataObject) -> None:
-    duckdb = pytest.importorskip("duckdb")
+    pytest.importorskip("duckdb")
 
     value = data.draw(SQL_VALUES[kind])
-    with contextlib.closing(duckdb.connect()) as con:
+    with contextlib.closing(duck.connect()) as con:
         row = con.execute(f"SELECT {query.sql_value(value)}").fetchone()
     assert row is not None
     assert _same(value, row[0])
@@ -101,13 +102,13 @@ def _rows(con: duckdb.DuckDBPyConnection, sql: str, params: list[object]) -> Row
 def test_a_filter_selects_the_same_rows_bound_inlined_and_pretty(
     name: str, values: list[str | None], data: st.DataObject
 ) -> None:
-    duckdb = pytest.importorskip("duckdb")
+    pytest.importorskip("duckdb")
 
     condition = data.draw(_conditions(name))
     plan = geoparquet.plan_read([(name, "VARCHAR")], None)
     where, params = query.filter_sql(condition, plan)
     select = f"SELECT {geoparquet.quote(name)} FROM h WHERE {where} ORDER BY ALL"
-    with contextlib.closing(duckdb.connect()) as con:
+    with contextlib.closing(duck.connect()) as con:
         _table(con, name, values)
         bound = _rows(con, select, params)
         inlined = query.inline(select, params)
@@ -117,12 +118,12 @@ def test_a_filter_selects_the_same_rows_bound_inlined_and_pretty(
 
 @given(strategies.names, strategies.hostile_text)
 def test_a_hostile_name_and_value_stay_inside_their_quotes(name: str, value: str) -> None:
-    duckdb = pytest.importorskip("duckdb")
+    pytest.importorskip("duckdb")
 
     plan = geoparquet.plan_read([(name, "VARCHAR")], None)
     where, params = query.filter_sql(query.Compare(name, "=", value), plan)
     select = f"SELECT * FROM h WHERE {where}"
-    with contextlib.closing(duckdb.connect()) as con:
+    with contextlib.closing(duck.connect()) as con:
         _table(con, name, [value])
         assert con.execute(select, params).fetchall() == [(value,)]
         assert con.execute(query.inline(select, params)).fetchall() == [(value,)]

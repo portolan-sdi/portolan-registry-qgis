@@ -29,6 +29,7 @@ from portolan_registry_qgis.core.query import (
     selection,
     sql_value,
 )
+from tests import duck
 from tests.core.test_geoparquet import LAND_USE_GEO, LAND_USE_SCHEMA
 
 PLAN = plan_read(LAND_USE_SCHEMA, LAND_USE_GEO)
@@ -139,8 +140,8 @@ def test_sql_value(value, text):
 
 @pytest.mark.parametrize("value", [float("inf"), float("-inf")])
 def test_sql_value_of_an_infinity_reads_back_in_duckdb(value):
-    duckdb = pytest.importorskip("duckdb")
-    with duckdb.connect() as con:
+    pytest.importorskip("duckdb")
+    with duck.connect() as con:
         assert con.execute(f"SELECT {sql_value(value)}").fetchone() == (value,)
 
 

@@ -12,6 +12,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from portolan_registry_qgis.core import geoparquet, parquet_query, query
+from tests import duck
 from tests.property import strategies
 
 if TYPE_CHECKING:
@@ -29,7 +30,7 @@ def test_a_hostile_column_previews_and_displays_unchanged(name: str, value: str 
     duckdb = pytest.importorskip("duckdb")
 
     rows = query.Rows(query=query.Query(filter=query.Compare(name, "=", value), columns=(name,)))
-    with tempfile.TemporaryDirectory() as folder, contextlib.closing(duckdb.connect()) as con:
+    with tempfile.TemporaryDirectory() as folder, contextlib.closing(duck.connect()) as con:
         path = str(Path(folder) / "hostile.parquet")
         # The relation API names the column, so the file needs no SQL quoting.
         con.sql("SELECT ? AS x", params=[value]).select(
@@ -47,13 +48,13 @@ def test_a_hostile_column_previews_and_displays_unchanged(name: str, value: str 
 def test_a_select_keeps_its_literals_and_loses_only_its_terminator(
     name: str, value: str, tail: str
 ) -> None:
-    duckdb = pytest.importorskip("duckdb")
+    pytest.importorskip("duckdb")
 
     select = f"SELECT {geoparquet.literal(value)} AS {geoparquet.quote(name)}"
     assert parquet_query.without_terminator(select) == select
     assert parquet_query.without_terminator(f"{select};{tail}") == select
     checked = parquet_query.check_select(f"{select};")
-    with contextlib.closing(duckdb.connect()) as con:
+    with contextlib.closing(duck.connect()) as con:
         result = con.execute(checked)
         assert result.fetchall() == [(value,)]
         assert [column[0] for column in result.description] == [name]
@@ -78,11 +79,11 @@ buckets = st.builds(
 
 @given(st.lists(buckets, min_size=1, max_size=5), st.randoms())
 def test_bucket_secrets_do_not_depend_on_the_url_order(urls: list[str], rnd: random.Random) -> None:
-    duckdb = pytest.importorskip("duckdb")
+    pytest.importorskip("duckdb")
 
     secrets = parquet_query.bucket_secrets(urls)
     assert parquet_query.bucket_secrets(rnd.sample(urls, len(urls))) == secrets
     assert len(set(secrets)) == len(secrets)
-    with contextlib.closing(duckdb.connect()) as con:
+    with contextlib.closing(duck.connect()) as con:
         for secret in secrets:
             assert len(con.extract_statements(secret)) == 1

@@ -15,6 +15,7 @@ from portolan_registry_qgis.core import parquet_query
 from portolan_registry_qgis.core.geoparquet import Clip, Covering, plan_read
 from portolan_registry_qgis.core.parquet_query import Target
 from portolan_registry_qgis.core.query import And, Compare, InList, Query, QueryError, Rows
+from tests import duck
 from tests.points import write_points
 
 pytest.importorskip("duckdb")
@@ -589,7 +590,6 @@ def test_preview_stops_on_cancel(con, points):
 
 
 def test_copy_script_runs_in_a_fresh_duckdb(con, points, tmp_path):
-    import duckdb
 
     plan = parquet_query.read_plan(con, points)
     clip = Clip((11.095, 44.0, 11.305, 45.0))
@@ -601,7 +601,7 @@ def test_copy_script_runs_in_a_fresh_duckdb(con, points, tmp_path):
         points, plan, str(script_target), Rows(clip, query), "EPSG:4326"
     )
     assert script.startswith("INSTALL spatial;\nLOAD spatial;\nINSTALL httpfs;\nLOAD httpfs;\n")
-    with contextlib.closing(duckdb.connect()) as fresh:
+    with contextlib.closing(duck.connect()) as fresh:
         fresh.execute(script)
         for path in (target, script_target):
             point = fresh.execute(

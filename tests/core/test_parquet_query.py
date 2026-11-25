@@ -7,6 +7,7 @@ import sqlite3
 import sys
 import threading
 from pathlib import PurePath
+from unittest.mock import create_autospec
 
 import pytest
 
@@ -81,7 +82,9 @@ def test_extensions_fall_back_to_the_given_folder(monkeypatch, tmp_path):
     fallback = parquet_query.connection(str(tmp_path))
     try:
         assert loads[1] == (str(tmp_path),)
-        assert fallback.execute("SELECT current_setting('memory_limit')").fetchone()[0]
+        memory_limit = fallback.execute("SELECT current_setting('memory_limit')").fetchone()
+        assert memory_limit is not None
+        assert memory_limit[0]
     finally:
         parquet_query.close()
 
@@ -365,15 +368,14 @@ def test_cancel_stops_a_read(con):
         cursor.execute("SELECT sum(a.range * b.range) FROM range(100000) a, range(100000) b")
 
 
-class _Cursor:
-    def __init__(self):
-        self.interrupted = False
+@pytest.fixture
+def watched():
+    import duckdb
 
-    def interrupt(self):
-        self.interrupted = True
+    return create_autospec(duckdb.DuckDBPyConnection, instance=True)
 
 
-def test_watcher_polls_until_the_query_ends():
+def test_watcher_polls_until_the_query_ends(watched):
     stop = threading.Event()
     polls = []
 
@@ -383,34 +385,30 @@ def test_watcher_polls_until_the_query_ends():
         stop.set()
         return False
 
-    watched = _Cursor()
     parquet_query.interrupt_when(cancelled, watched, stop)
     assert polls == [True]
-    assert not watched.interrupted
+    watched.interrupt.assert_not_called()
 
 
-def test_watcher_interrupts_once_cancelled():
-    watched = _Cursor()
+def test_watcher_interrupts_once_cancelled(watched):
     parquet_query.interrupt_when(lambda: True, watched, threading.Event())
-    assert watched.interrupted
+    watched.interrupt.assert_called_once_with()
 
 
-def test_watcher_reports_the_progress_duckdb_knows():
+def test_watcher_reports_the_progress_duckdb_knows(watched):
     stop = threading.Event()
     reported: list[float] = []
 
-    class Running(_Cursor):
-        def __init__(self):
-            super().__init__()
-            self.values = iter([-1.0, 40.0, 100.0])
+    values = iter([-1.0, 40.0, 100.0])
 
-        def query_progress(self):
-            value = next(self.values)
-            if value == 100.0:
-                stop.set()
-            return value
+    def query_progress():
+        value = next(values)
+        if value == 100.0:
+            stop.set()
+        return value
 
-    parquet_query.interrupt_when(None, Running(), stop, reported.append)
+    watched.query_progress.configure_mock(side_effect=query_progress)
+    parquet_query.interrupt_when(None, watched, stop, reported.append)
     assert reported == [0.4, 1.0]
 
 

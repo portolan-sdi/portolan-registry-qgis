@@ -149,6 +149,7 @@ def test_the_plugin_action_goes_through_the_translation(iface):
     i18n.use(Pseudo(), "en")
     plugin.initGui()
     try:
+        assert plugin.action is not None
         assert plugin.action.toolTip().startswith(OPEN)
     finally:
         plugin.unload()

@@ -544,6 +544,7 @@ def test_plugin_lifecycle(iface, catalog):
     plugin.initGui()
     assert [action.text() for action in iface.menu] == ["Portolan Registry", "Report a bug"]
     assert Path(portolan_registry_qgis.__file__).with_name("icon.svg").is_file()
+    assert plugin.action is not None
     plugin.action.setChecked(True)
     window = plugin.window
     assert window.isVisible()
@@ -840,6 +841,7 @@ def test_the_browser_url_setting(iface, catalog):
     settings.setValue(BROWSER_URL_SETTING, "https://mirror.test/")
     plugin = portolan_registry_qgis.classFactory(iface)
     plugin.initGui()
+    assert plugin.action is not None
     plugin.action.setChecked(True)
     try:
         link = plugin.window.browser_link(f"{catalog['base']}/catalog.json")

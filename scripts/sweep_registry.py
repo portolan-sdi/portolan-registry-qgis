@@ -76,7 +76,7 @@ def fetch(url: str, byte_range: str | None = None) -> tuple[bytes, str, dict[str
     if byte_range:
         request.add_header("Range", f"bytes={byte_range}")
     with open_url(request) as response:
-        return response.read(), response.geturl(), dict(response.headers)
+        return response.read(), response.url, dict(response.headers)
 
 
 def head(url: str) -> dict[str, str]:

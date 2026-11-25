@@ -125,9 +125,11 @@ def test_truncated_and_wrong_version_headers_raise_declared_error(
     # Contract: core.pmtiles.parse_header raises PmtilesError for invalid headers.
     serialize = cast("Callable[[HeaderDict], bytes]", serialize_header)
     raw = serialize(header)
-    with pytest.raises(PmtilesError):
+    with pytest.raises(PmtilesError, match=r"^Not a PMTiles archive$"):
         parse_header(raw[:cut])
-    with pytest.raises(PmtilesError):
+    with pytest.raises(
+        PmtilesError, match=rf"^PMTiles version {version} is not supported; version 3 is$"
+    ):
         parse_header(raw[:7] + bytes([version]) + raw[8:])
 
 
@@ -161,7 +163,7 @@ def test_every_incomplete_directory_prefix_raises(
     # Contract: core.pmtiles._varint reports a truncated directory as PmtilesError.
     raw = gzip.decompress(serialize_directory(entries))
     cut = data.draw(st.integers(0, len(raw) - 1))
-    with pytest.raises(PmtilesError):
+    with pytest.raises(PmtilesError, match=r"^Truncated directory$"):
         parse_directory(raw[:cut])
 
 

@@ -6,6 +6,7 @@ binds every value as a parameter.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 from portolan_registry_qgis.core.geoparquet import (
@@ -265,6 +266,8 @@ def sql_value(value: object) -> str:
         return "NULL"
     if isinstance(value, bool):
         return "TRUE" if value else "FALSE"
+    if isinstance(value, float) and not math.isfinite(value):
+        return f"'{value}'::DOUBLE"
     if isinstance(value, (int, float)):
         return repr(value)
     if isinstance(value, (list, tuple)):

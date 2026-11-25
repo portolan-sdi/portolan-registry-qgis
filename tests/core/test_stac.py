@@ -122,6 +122,8 @@ def test_non_stac_documents_are_refused(value, message):
         ({"spatial": {"bbox": [[-114, 37]]}}, None),
         ({"spatial": {"bbox": [[-114, 37, 0, -109, 42]]}}, None),
         ({"spatial": {"bbox": [[-114, 37, math.inf, 42]]}}, None),
+        # JSON reads an integer of any size, and a float cannot hold this one.
+        ({"spatial": {"bbox": [[-114, 37, 10**400, 42]]}}, None),
         ({"spatial": {"bbox": [[True, 37, 0, 42]]}}, None),
         ({"temporal": {"interval": [["2024-01-01T00:00:00Z", None]]}}, None),
         ("everywhere", None),

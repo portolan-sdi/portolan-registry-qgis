@@ -115,6 +115,12 @@ def test_missing_fields_fall_back():
     assert entry.licenses == ()
 
 
+def test_a_bbox_too_large_for_a_float_is_dropped():
+    link = {"rel": "child", "href": "https://x.test/catalog.json", "bbox": [0, 0, 10**400, 1]}
+    (entry,) = parse_registry(registry(link))
+    assert entry.bbox is None
+
+
 def test_wrongly_typed_counts_are_dropped():
     link = {
         **ANNCSU,

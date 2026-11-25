@@ -126,12 +126,22 @@ def test_load_text_says_what_the_load_keeps():
         (True, "TRUE"),
         (3, "3"),
         (-2.5, "-2.5"),
+        (float("inf"), "'inf'::DOUBLE"),
+        (float("-inf"), "'-inf'::DOUBLE"),
+        (float("nan"), "'nan'::DOUBLE"),
         ("it's", "'it''s'"),
         (["a", "b"], "['a', 'b']"),
     ],
 )
 def test_sql_value(value, text):
     assert sql_value(value) == text
+
+
+@pytest.mark.parametrize("value", [float("inf"), float("-inf")])
+def test_sql_value_of_an_infinity_reads_back_in_duckdb(value):
+    duckdb = pytest.importorskip("duckdb")
+    with duckdb.connect() as con:
+        assert con.execute(f"SELECT {sql_value(value)}").fetchone() == (value,)
 
 
 def test_inline_skips_marks_in_literals_and_names():

@@ -1,5 +1,5 @@
 ---
-source_sha256: c2fe4741641d76cda598415a7e7cb22bc3f4138244a3b7082762da4258456484
+source_sha256: a97b782ddd5db8d20315dc4689f0bd66162b712cfe932e33378d7eb206f446e2
 ---
 
 <!-- vale off -->
@@ -8,7 +8,7 @@ source_sha256: c2fe4741641d76cda598415a7e7cb22bc3f4138244a3b7082762da4258456484
 
 L'extension a deux suites de tests.
 
-- `tests/core` couvre la logique STAC, registre, PMTiles, GeoParquet et téléchargement de `portolan_registry_qgis/core`. Ce paquet n'importe ni QGIS ni GDAL, donc la suite s'exécute dans l'environnement uv.
+- `tests/core` couvre la logique STAC, registre, PMTiles, GeoParquet et téléchargement de `portolan_registry_qgis/core`. Ce paquet n'importe ni QGIS ni GDAL. La suite s'exécute dans l'environnement uv.
 - `tests/in_qgis` nécessite PyQGIS. Elle construit un petit catalogue avec GDAL et DuckDB et le sert en boucle locale. Les tests exercent ensuite le code réseau, les couches, les téléchargements et la fenêtre.
 
 ```bash
@@ -54,16 +54,21 @@ Chaque script écrit `sweep.md` et `sweep.json` dans son dossier de sortie. Util
 
 ## Contrôles de qualité
 
-Pre-commit exécute ces vérifications, et la CI les exécute de nouveau sur chaque pull request. Une modification doit réussir chacune d'elles.
+Les hooks de prek exécutent ces vérifications, et la CI les exécute de nouveau sur chaque pull request. Une modification doit réussir chacune d'elles.
+
+Installez les hooks Git une fois après avoir cloné le dépôt. La commande installe les hooks pre-commit, commit-msg et pre-push :
+
+```bash
+uv run prek install
+```
 
 | Contrôle | Seuil |
 | --- | --- |
-| Ruff | L'ensemble de règles de `pyproject.toml`, avec les règles de pylint, de pytest et de tryceratops. Complexité de McCabe de 10 ou moins. |
-| mypy | Mode strict sur le paquet et sur `scripts`. |
+| Ruff | Toutes les règles de Ruff. Les règles en préversion s'appliquent seulement par leur nom. Chaque exception de `pyproject.toml` indique sa raison. Complexité de McCabe de 10 ou moins. |
+| mypy | Mode strict sur le paquet, sur `scripts` et sur `tests`. Dans `tests`, une fonction peut omettre ses annotations de type. |
 | vulture | Aucun nom inutilisé avec une confiance de 60 % ou plus. |
-| xenon sur le paquet | Chaque bloc au rang B ou mieux. Chaque module et la moyenne au rang A. |
-| xenon sur les tests et les scripts | Chaque bloc au rang C ou mieux. Chaque module au rang B ou mieux, et la moyenne au rang A. |
 | jscpd | Aucune copie de 50 jetons et 5 lignes ou plus. |
+| Hypothesis | Chaque test de propriétés de `tests/property` réussit. |
 | Docstrings | 5 lignes ou moins. Aucun historique des changements dans une docstring ou un commentaire. |
 | import-linter | Le cœur n'importe aucun code de QGIS, de Qt ni de GDAL, ni aucune des couches QGIS. `qgis_io` n'importe rien de `gui`. |
 | Couverture, suite uv | 99 % du cœur. |
@@ -76,11 +81,7 @@ Exécutez les contrôles un par un :
 uv run ruff check .
 uv run mypy
 uv run vulture
-uv run xenon --max-absolute=B --max-modules=A \
-  --max-average=A portolan_registry_qgis
-uv run xenon --max-absolute=C --max-modules=B \
-  --max-average=A tests scripts
-uvx prek run jscpd --all-files
+uv run prek run jscpd --all-files
 uv run python scripts/docstring_check.py
 uv run lint-imports
 uv run pytest -n 4 --cov=portolan_registry_qgis
@@ -99,13 +100,32 @@ QT_QPA_PLATFORM=offscreen .venv-qgis/bin/python \
 Pour exécuter tous les hooks des deux étapes :
 
 ```bash
-uvx prek run --all-files
-uvx prek run --all-files --hook-stage pre-push
+uv run prek run --all-files
+uv run prek run --all-files --stage pre-push
+```
+
+### Tests de propriétés
+
+Les tests de `tests/property` utilisent Hypothesis. Chaque test énonce une propriété, et Hypothesis la vérifie sur 20 entrées générées au plus. La suite uv les exécute. Pour les exécuter seuls :
+
+```bash
+uv run pytest tests/property
+```
+
+`tests/property/conftest.py` définit deux profils :
+
+- `default` génère de nouvelles entrées à chaque exécution.
+- `ci` génère les mêmes entrées à chaque exécution. Un échec dans la CI se reproduit sur votre machine.
+
+La variable d'environnement `HYPOTHESIS_PROFILE` choisit un profil. Sans elle, les tests utilisent `ci` quand l'environnement définit `CI`, et `default` sinon. Pour reproduire les entrées de la CI sur votre machine :
+
+```bash
+HYPOTHESIS_PROFILE=ci uv run pytest tests/property
 ```
 
 ## Traductions
 
-L'extension et ce site sont en anglais, en espagnol et en français. L'anglais est la langue source, et une modification d'un texte anglais nécessite les traductions espagnole et française dans la même pull request. Pre-commit et la CI exécutent `scripts/i18n.py check`, qui échoue tant que les deux langues ne sont pas à jour.
+L'extension et ce site sont en anglais, en espagnol et en français. L'anglais est la langue source, et une modification d'un texte anglais nécessite les traductions espagnole et française dans la même pull request. prek et la CI exécutent `scripts/i18n.py check`, qui échoue tant que les deux langues ne sont pas à jour.
 
 L'extension traduit son texte avec gettext. Entourez chaque chaîne qu'une personne lit avec `_()` de `portolan_registry_qgis.core.i18n`, et utilisez `count()` pour un texte avec un nombre :
 
@@ -117,7 +137,7 @@ status.setText(_("Could not open {url}").format(url=url))
 row.setText(count("{n} file", "{n} files", total))
 ```
 
-Comme l'extension choisit la langue après que Python a importé ses modules, une constante de module stocke son texte anglais dans `N_()`, et le code qui l'affiche appelle `_()`. Les champs de substitution portent des noms, ce qui permet à une traduction de les réordonner. Babel copie un commentaire qui commence par `# Translators:`, sur la ligne au-dessus d'un appel, dans le catalogue à côté du message.
+Comme l'extension choisit la langue après que Python a importé ses modules, une constante de module stocke son texte anglais dans `N_()`, et le code qui l'affiche appelle `_()`. Les champs de substitution portent des noms, ce qui permet à une traduction de les réordonner. Babel copie un commentaire qui commence par `# Translators:`, sur la ligne qui précède un appel, dans le catalogue à côté du message.
 
 Quand un texte anglais change, régénérez les catalogues et traduisez les nouvelles entrées :
 

@@ -1,5 +1,5 @@
 ---
-source_sha256: c2fe4741641d76cda598415a7e7cb22bc3f4138244a3b7082762da4258456484
+source_sha256: a97b782ddd5db8d20315dc4689f0bd66162b712cfe932e33378d7eb206f446e2
 ---
 
 <!-- vale off -->
@@ -8,7 +8,7 @@ source_sha256: c2fe4741641d76cda598415a7e7cb22bc3f4138244a3b7082762da4258456484
 
 El complemento tiene dos conjuntos de pruebas.
 
-- `tests/core` cubre la lógica de STAC, del registro, de PMTiles, de GeoParquet y de descarga en `portolan_registry_qgis/core`. Ese paquete no importa ni QGIS ni GDAL, así que el conjunto se ejecuta en el entorno de uv.
+- `tests/core` cubre la lógica de STAC, del registro, de PMTiles, de GeoParquet y de descarga en `portolan_registry_qgis/core`. Ese paquete no importa ni QGIS ni GDAL. El conjunto se ejecuta en el entorno de uv.
 - `tests/in_qgis` necesita PyQGIS. Crea un catálogo pequeño con GDAL y DuckDB y lo sirve en la interfaz de bucle local. Después, las pruebas ejercitan el código de red, las capas, las descargas y la ventana.
 
 ```bash
@@ -54,16 +54,21 @@ Cada script escribe `sweep.md` y `sweep.json` en su carpeta de salida. Use `--on
 
 ## Controles de calidad
 
-Pre-commit ejecuta estas comprobaciones, y la CI las vuelve a ejecutar en cada pull request. Un cambio debe superar cada una.
+Los hooks de prek ejecutan estas comprobaciones, y la CI las vuelve a ejecutar en cada pull request. Un cambio debe superar cada una.
+
+Instale los hooks de Git una vez después de clonar el repositorio. El comando instala los hooks pre-commit, commit-msg y pre-push:
+
+```bash
+uv run prek install
+```
 
 | Control | Umbral |
 | --- | --- |
-| Ruff | El conjunto de reglas de `pyproject.toml`, con las reglas de pylint, pytest y tryceratops. Complejidad de McCabe de 10 o menos. |
-| mypy | Modo estricto en el paquete y en `scripts`. |
+| Ruff | Todas las reglas de Ruff. Las reglas en vista previa se aplican solo por su nombre. Cada excepción de `pyproject.toml` indica su motivo. Complejidad de McCabe de 10 o menos. |
+| mypy | Modo estricto en el paquete, en `scripts` y en `tests`. En `tests`, una función puede omitir sus anotaciones de tipo. |
 | vulture | Ningún nombre sin usar con una confianza del 60 % o más. |
-| xenon en el paquete | Cada bloque en el rango B o mejor. Cada módulo y la media en el rango A. |
-| xenon en las pruebas y los scripts | Cada bloque en el rango C o mejor. Cada módulo en el rango B o mejor, y la media en el rango A. |
 | jscpd | Ninguna copia de 50 tokens y 5 líneas o más. |
+| Hypothesis | Cada prueba de propiedades de `tests/property` pasa. |
 | Docstrings | 5 líneas o menos. Ningún historial de cambios en un docstring o un comentario. |
 | import-linter | El núcleo no importa código de QGIS, Qt ni GDAL, ni ninguna de las capas de QGIS. `qgis_io` no importa nada de `gui`. |
 | Cobertura, conjunto de uv | El 99 % del núcleo. |
@@ -76,11 +81,7 @@ Ejecute los controles uno a uno:
 uv run ruff check .
 uv run mypy
 uv run vulture
-uv run xenon --max-absolute=B --max-modules=A \
-  --max-average=A portolan_registry_qgis
-uv run xenon --max-absolute=C --max-modules=B \
-  --max-average=A tests scripts
-uvx prek run jscpd --all-files
+uv run prek run jscpd --all-files
 uv run python scripts/docstring_check.py
 uv run lint-imports
 uv run pytest -n 4 --cov=portolan_registry_qgis
@@ -99,13 +100,32 @@ QT_QPA_PLATFORM=offscreen .venv-qgis/bin/python \
 Para ejecutar todos los hooks de las dos etapas:
 
 ```bash
-uvx prek run --all-files
-uvx prek run --all-files --hook-stage pre-push
+uv run prek run --all-files
+uv run prek run --all-files --stage pre-push
+```
+
+### Pruebas de propiedades
+
+Las pruebas de `tests/property` usan Hypothesis. Cada prueba enuncia una propiedad, y Hypothesis la comprueba con hasta 20 entradas generadas. El conjunto de uv las ejecuta. Para ejecutarlas solas:
+
+```bash
+uv run pytest tests/property
+```
+
+`tests/property/conftest.py` define dos perfiles:
+
+- `default` genera entradas nuevas en cada ejecución.
+- `ci` genera las mismas entradas en cada ejecución. Un fallo en la CI se repite en su equipo.
+
+La variable de entorno `HYPOTHESIS_PROFILE` elige un perfil. Sin ella, las pruebas usan `ci` cuando el entorno define `CI`, y `default` en los demás casos. Para repetir las entradas de la CI en su equipo:
+
+```bash
+HYPOTHESIS_PROFILE=ci uv run pytest tests/property
 ```
 
 ## Traducciones
 
-El complemento y este sitio están en inglés, español y francés. El inglés es el idioma de origen, y un cambio en un texto en inglés necesita las traducciones al español y al francés en la misma pull request. Pre-commit y la CI ejecutan `scripts/i18n.py check`, que falla hasta que los dos idiomas estén al día.
+El complemento y este sitio están en inglés, español y francés. El inglés es el idioma de origen, y un cambio en un texto en inglés necesita las traducciones al español y al francés en la misma pull request. prek y la CI ejecutan `scripts/i18n.py check`, que falla hasta que los dos idiomas estén al día.
 
 El complemento traduce su texto con gettext. Envuelva cada cadena que lee una persona en `_()` de `portolan_registry_qgis.core.i18n`, y use `count()` para un texto con un número:
 

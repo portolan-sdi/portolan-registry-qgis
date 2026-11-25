@@ -111,7 +111,8 @@ class Clip:
     def __post_init__(self) -> None:
         """Check that an area comes with its envelope."""
         if self.area is not None and self.bbox is None:
-            raise ValueError("An area needs its envelope as the bbox")  # i18n: skip - a caller bug
+            msg = "An area needs its envelope as the bbox"  # i18n: skip - a caller bug
+            raise ValueError(msg)
 
     def to_text(self) -> tuple[str, str]:
         """Return the box and the area as the text that a QGIS project saves.

@@ -19,10 +19,12 @@ import string
 import subprocess
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+
+    from babel.messages.catalog import Catalog, Message
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -65,7 +67,8 @@ def _metadata_value(key: str) -> str:
     for line in _metadata_lines():
         if line.startswith(prefix):
             return line[len(prefix) :]
-    raise SystemExit(f"metadata.txt has no {key}= line")
+    msg = f"metadata.txt has no {key}= line"
+    raise SystemExit(msg)
 
 
 def _mkdocs() -> dict[str, Any]:
@@ -73,7 +76,8 @@ def _mkdocs() -> dict[str, Any]:
 
     loaded = yaml.safe_load(MKDOCS.read_text(encoding="utf-8"))
     if not isinstance(loaded, dict):
-        raise SystemExit("mkdocs.yml is not a mapping")
+        msg = "mkdocs.yml is not a mapping"
+        raise SystemExit(msg)
     return loaded
 
 
@@ -86,7 +90,7 @@ def _nav_titles(nav: list[Any]) -> Iterator[str]:
                     yield from _nav_titles(target)
 
 
-def template() -> Any:
+def template() -> Catalog:
     """Return the catalog of every English message."""
     from babel.messages.catalog import Catalog
     from babel.messages.extract import extract_from_dir
@@ -123,7 +127,7 @@ def template() -> Any:
     return catalog
 
 
-def _po_bytes(catalog: Any) -> bytes:
+def _po_bytes(catalog: Catalog) -> bytes:
     from babel.messages.pofile import write_po
 
     buffer = io.BytesIO()
@@ -142,7 +146,7 @@ def _po_bytes(catalog: Any) -> bytes:
     return buffer.getvalue().rstrip(b"\n") + b"\n"
 
 
-def _mo_bytes(catalog: Any) -> bytes:
+def _mo_bytes(catalog: Catalog) -> bytes:
     from babel.messages.mofile import write_mo
 
     buffer = io.BytesIO()
@@ -154,7 +158,7 @@ def _po_path(code: str) -> Path:
     return LOCALE / code / "LC_MESSAGES" / f"{DOMAIN}.po"
 
 
-def merged(code: str, source: Any) -> Any:
+def merged(code: str, source: Catalog) -> Catalog:
     """Return the language's catalog, merged with the current English messages."""
     from babel.messages.catalog import Catalog
     from babel.messages.pofile import read_po
@@ -181,14 +185,14 @@ def merged(code: str, source: Any) -> Any:
 # ---------- metadata.txt ----------
 
 
-def _translated(catalog: Any, text: str, context: str) -> str:
+def _translated(catalog: Catalog, text: str, context: str) -> str:
     message = catalog.get(text, context=context)
     if message is None or message.fuzzy or not message.string:
         return ""
     return str(message.string)
 
 
-def metadata_text(catalogs: dict[str, Any]) -> str:
+def metadata_text(catalogs: dict[str, Catalog]) -> str:
     """Return metadata.txt with a translated description and about per language."""
     keep = [
         line
@@ -242,13 +246,13 @@ def fields(text: str) -> set[str]:
         return {"<unbalanced braces>"}
 
 
-def _label(message: Any) -> str:
+def _label(message: Message) -> str:
     ident = message.id[0] if isinstance(message.id, tuple) else message.id
     where = f" [{message.context}]" if message.context else ""
     return f"{ident!r}{where}"
 
 
-def message_problems(code: str, catalog: Any) -> Iterator[str]:
+def message_problems(code: str, catalog: Catalog) -> Iterator[str]:
     """Yield each message the language leaves untranslated or translates wrongly."""
     for message in catalog:
         if not message.id:
@@ -261,7 +265,10 @@ def message_problems(code: str, catalog: Any) -> Iterator[str]:
         if not all(forms):
             yield f"{code}: {label} has no translation."
             continue
-        ids = message.id if isinstance(message.id, tuple) else (message.id,)
+        forms = cast("tuple[str, ...]", forms)
+        ids = cast(
+            "tuple[str, ...]", message.id if isinstance(message.id, tuple) else (message.id,)
+        )
         expected = set().union(*(fields(text) for text in ids))
         for form in forms:
             if fields(form) != expected:
@@ -482,7 +489,7 @@ def check() -> int:
 # ---------- documentation build ----------
 
 
-def language_config(code: str, catalog: Any) -> dict[str, Any]:
+def language_config(code: str, catalog: Catalog) -> dict[str, Any]:
     """Return mkdocs.yml as the site in language ``code`` needs it."""
     config = _mkdocs()
 

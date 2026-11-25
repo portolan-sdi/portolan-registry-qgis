@@ -156,7 +156,7 @@ def mirror_query(plan: ReadPlan, scope: Scope) -> tuple[str, list[Any]]:
 
 
 def mirror_hrefs(
-    con: Any,
+    con: parquet_query.Connection,
     url: str,
     scope: Scope,
     cancelled: Callable[[], bool] | None = None,

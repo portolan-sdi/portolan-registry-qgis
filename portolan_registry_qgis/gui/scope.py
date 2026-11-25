@@ -240,7 +240,7 @@ class PolygonTool(QgsMapTool):
     finished = pyqtSignal(object)
     cancelled = pyqtSignal()
 
-    def __init__(self, canvas: Any):
+    def __init__(self, canvas: Any) -> None:
         super().__init__(canvas)
         self._canvas = canvas
         self._band = _band(canvas)
@@ -340,7 +340,7 @@ class ScopePicker(QWidget):
 
     changed = pyqtSignal()
 
-    def __init__(self, iface: Any, parent: QWidget | None = None):
+    def __init__(self, iface: Any, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._iface = iface
         self._canvas = iface.mapCanvas()
@@ -398,7 +398,8 @@ class ScopePicker(QWidget):
         """Select a choice as if the user picked it. ``DRAW`` starts the map tool."""
         index = self._choice.findData(key)
         if index < 0:
-            raise ValueError(f"No scope choice {key!r}")  # i18n: skip
+            msg = f"No scope choice {key!r}"  # i18n: skip
+            raise ValueError(msg)
         self._choice.setCurrentIndex(index)
         self._activated(index)
 

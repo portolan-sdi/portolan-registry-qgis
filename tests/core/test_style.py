@@ -128,7 +128,8 @@ def test_style_urls_upgrade_s3_website_endpoints():
 
     def fetch(target: str) -> bytes:
         fetched.append(target)
-        raise OSError("offline")
+        msg = "offline"
+        raise OSError(msg)
 
     warnings: list[str] = []
     assert read_sprite(style, url, fetch, warnings, {}) is None

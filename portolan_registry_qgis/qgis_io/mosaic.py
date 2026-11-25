@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import uuid
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from osgeo import gdal, ogr
 from qgis.core import QgsProviderRegistry, QgsRasterLayer
@@ -268,7 +268,7 @@ def clip_geojson(clip: str) -> str:
     return json.dumps({"type": "FeatureCollection", "features": [feature]})
 
 
-def _warp(mosaic: Any, path: Path, clip: str) -> None:
+def _warp(mosaic: gdal.Dataset, path: Path, clip: str) -> None:
     """Write a warped VRT of ``mosaic`` at ``path`` that ``clip`` cuts and crops.
 
     GDAL reads the cutline from a GeoJSON file in memory, and keeps the

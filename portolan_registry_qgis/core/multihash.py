@@ -65,9 +65,8 @@ def _varint(data: bytes, offset: int) -> tuple[int, int]:
         shift += 7
         if shift > 63:
             break
-    raise ChecksumError(
-        "Truncated or oversized varint in multihash"  # i18n: skip
-    )
+    msg = "Truncated or oversized varint in multihash"  # i18n: skip
+    raise ChecksumError(msg)
 
 
 def decode(value: str) -> Multihash:
@@ -80,21 +79,18 @@ def decode(value: str) -> Multihash:
     try:
         data = bytes.fromhex(value.strip())
     except ValueError as error:
-        raise ChecksumError(
-            f"Not a hex string: {value!r}"  # i18n: skip
-        ) from error
+        msg = f"Not a hex string: {value!r}"  # i18n: skip
+        raise ChecksumError(msg) from error
     code, offset = _varint(data, 0)
     length, offset = _varint(data, offset)
     digest = data[offset:]
     if len(digest) != length:
-        raise ChecksumError(
-            f"Digest is {len(digest)} bytes, but the multihash says {length}"  # i18n: skip
-        )
+        msg = f"Digest is {len(digest)} bytes, but the multihash says {length}"  # i18n: skip
+        raise ChecksumError(msg)
     algorithm = _ALGORITHMS.get(code)
     if algorithm is None:
-        raise ChecksumError(
-            f"Unsupported multihash function 0x{code:x}"  # i18n: skip
-        )
+        msg = f"Unsupported multihash function 0x{code:x}"  # i18n: skip
+        raise ChecksumError(msg)
     return Multihash(algorithm, digest)
 
 

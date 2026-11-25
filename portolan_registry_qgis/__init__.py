@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from portolan_registry_qgis.plugin import PortolanRegistryPlugin
 
 
-def classFactory(iface: Any) -> Any:  # noqa: N802 - QGIS calls this name
+def classFactory(iface: Any) -> PortolanRegistryPlugin:  # noqa: N802 - QGIS calls this name
     """Return the plugin instance. QGIS calls this when it loads the plugin."""
     from qgis.core import QgsApplication
 

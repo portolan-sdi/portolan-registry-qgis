@@ -105,7 +105,8 @@ def wait_for(predicate, timeout=30.0):
     deadline = time.monotonic() + timeout
     while not predicate():
         if time.monotonic() > deadline:
-            raise TimeoutError("Condition not met in time")
+            msg = "Condition not met in time"
+            raise TimeoutError(msg)
         QgsApplication.processEvents()
         time.sleep(0.01)
 

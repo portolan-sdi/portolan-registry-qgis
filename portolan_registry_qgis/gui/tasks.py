@@ -52,7 +52,7 @@ class TaskController(QFrame):
     # Emits when a task starts or ends.
     busy_changed = pyqtSignal()
 
-    def __init__(self, messages: Messages, parent: QFrame | None = None):
+    def __init__(self, messages: Messages, parent: QFrame | None = None) -> None:
         super().__init__(parent)
         self._messages = messages
         self._job: DownloadJob | None = None

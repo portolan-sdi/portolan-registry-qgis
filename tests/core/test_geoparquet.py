@@ -218,7 +218,7 @@ def test_table_estimate_is_exact():
 
 
 def test_a_table_has_no_first_type():
-    with pytest.raises(GeoParquetError):
+    with pytest.raises(GeoParquetError, match="no geometry column"):
         build_first_type(plan_read([("id", "BIGINT")], None))
 
 

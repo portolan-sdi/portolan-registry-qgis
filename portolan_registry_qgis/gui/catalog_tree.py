@@ -64,7 +64,7 @@ class CatalogTree(QWidget):
     # "N files" row.
     node_chosen = pyqtSignal(str, str, object)
 
-    def __init__(self, world: WorldMap, images: ImageCache, documents: DocumentCache):
+    def __init__(self, world: WorldMap, images: ImageCache, documents: DocumentCache) -> None:
         super().__init__()
         self._images = images
         self._documents = documents

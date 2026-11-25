@@ -6,6 +6,7 @@ from http.server import SimpleHTTPRequestHandler
 
 import pytest
 
+from portolan_registry_qgis.core.registry import RegistryError
 from scripts import sweep_registry
 from tests.loopback import base_url, serve
 
@@ -42,14 +43,22 @@ def test_sweep_reports_downstream_catalog_findings(
         assert "HTTP Error 404" in (out / "sweep.md").read_text()
 
 
-@pytest.mark.parametrize("document", [{}, {"type": "Catalog", "links": []}])
-def test_unreadable_registry_export_fails_with_catalog_warnings(tmp_path, monkeypatch, document):
+@pytest.mark.parametrize(
+    ("document", "message"),
+    [
+        ({}, "invalid catalog list"),
+        ({"type": "Catalog", "links": []}, "no readable catalog links"),
+    ],
+)
+def test_unreadable_registry_export_fails_with_catalog_warnings(
+    tmp_path, monkeypatch, document, message
+):
     (tmp_path / "export.json").write_text(json.dumps(document))
     with serve(partial(SimpleHTTPRequestHandler, directory=tmp_path)) as server:
         monkeypatch.setattr(
             sweep_registry.registry, "REGISTRY_URL", f"{base_url(server)}/export.json"
         )
-        with pytest.raises(sweep_registry.registry.RegistryError):
+        with pytest.raises(RegistryError, match=message):
             sweep_registry.main(["--catalog-warnings", "--out", str(tmp_path / "report")])
 
 

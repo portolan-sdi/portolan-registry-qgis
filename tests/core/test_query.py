@@ -77,7 +77,7 @@ def test_selection_keeps_the_columns_and_the_filter():
     query = Query('"year" = 2020', Compare("year", "=", 2020), ("objectid",))
     assert selection(query, PLAN) == Selection(("objectid",), '"year" = ?', (2020,))
     assert selection(DEFAULT_QUERY, PLAN) is EVERYTHING
-    with pytest.raises(QueryError):
+    with pytest.raises(QueryError, match="no column named gone"):
         selection(Query(columns=("gone",)), PLAN)
 
 
@@ -172,7 +172,7 @@ def test_a_filter_value_must_be_text_or_a_number():
 def test_selection_of_a_filter_alone_keeps_every_column():
     query = Query('"year" = 1', Compare("year", "=", 1))
     assert selection(query, PLAN) == Selection(None, '"year" = ?', (1,))
-    with pytest.raises(QueryError):
+    with pytest.raises(QueryError, match="Custom SQL has no selection"):
         selection(Query(sql="SELECT 1"), PLAN)
 
 

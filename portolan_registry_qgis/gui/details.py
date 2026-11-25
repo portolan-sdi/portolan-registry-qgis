@@ -162,7 +162,7 @@ class DetailsPanel(QScrollArea):
         world: WorldMap,
         documents: DocumentCache,
         current: Callable[[], Document | None],
-    ):
+    ) -> None:
         super().__init__()
         self._images = images
         self._world = world

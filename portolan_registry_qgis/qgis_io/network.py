@@ -11,7 +11,7 @@ import json
 import traceback
 from concurrent.futures import Executor, Future
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar
 
 from qgis.core import (
     Qgis,
@@ -261,7 +261,7 @@ def run_task(
 
 
 class _Job(QRunnable):
-    def __init__(self, future: Future[Any], function: Callable[[], Any]):
+    def __init__(self, future: Future[Any], function: Callable[[], Any]) -> None:
         super().__init__()
         self._future = future
         self._function = function
@@ -278,6 +278,10 @@ class _Job(QRunnable):
             self._future.set_result(result)
 
 
+_P = ParamSpec("_P")
+_T = TypeVar("_T")
+
+
 class QtExecutor(Executor):
     """Run functions on QThreads, where a blocking request has Qt timers.
 
@@ -285,14 +289,14 @@ class QtExecutor(Executor):
     cannot take every thread of the global pool.
     """
 
-    def __init__(self, workers: int):
+    def __init__(self, workers: int) -> None:
         self._pool = QThreadPool()
         self._pool.setMaxThreadCount(max(1, workers))
         self._futures: set[Future[Any]] = set()
 
-    def submit(self, fn: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Future[Any]:
+    def submit(self, fn: Callable[_P, _T], /, *args: _P.args, **kwargs: _P.kwargs) -> Future[_T]:
         """Queue ``fn(*args, **kwargs)`` and return its future."""
-        future: Future[Any] = Future()
+        future: Future[_T] = Future()
         self._futures.add(future)
         future.add_done_callback(self._futures.discard)
         self._pool.start(_Job(future, lambda: fn(*args, **kwargs)))

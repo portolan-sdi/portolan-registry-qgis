@@ -39,17 +39,20 @@ from portolan_registry_qgis.gui import registry_list as registry_list_module
 from portolan_registry_qgis.gui import tasks as tasks_module
 from portolan_registry_qgis.gui import widgets as widgets_module
 from portolan_registry_qgis.gui import window as window_module
+from portolan_registry_qgis.gui.details import SETTINGS_GROUP
 from portolan_registry_qgis.gui.scope import EVERYTHING, FROM_LAYER, MAP_VIEW
 from portolan_registry_qgis.gui.widgets import BADGE_ROLE, ON_MAP_ROLE, ROLE
 from portolan_registry_qgis.gui.window import RegistryWindow
 from portolan_registry_qgis.plugin import BROWSER_URL_SETTING, REGISTRY_URL_SETTING
+from portolan_registry_qgis.qgis_io import layers as layer_io
 from portolan_registry_qgis.qgis_io import mosaic, network, parquet_layer
 from portolan_registry_qgis.qgis_io.downloader import DownloadJob
 from portolan_registry_qgis.qgis_io.layers import PMTILES_PROPERTY
+from portolan_registry_qgis.qgis_io.log import Messages
 
 from .conftest import wait_for
 
-_SECTIONS_GROUP = f"QgsCollapsibleGroupBox/{window_module.SETTINGS_GROUP}"
+_SECTIONS_GROUP = f"QgsCollapsibleGroupBox/{SETTINGS_GROUP}"
 
 
 def _forget_layout():
@@ -330,22 +333,20 @@ def test_add_styled_tiles_and_assets(iface, server, catalog):
 
 def test_add_csv_reads_its_header_off_the_main_thread(iface, server, catalog, monkeypatch):
     on_main = []
-    real = loading_module.layer_io.csv_header
+    real = layer_io.csv_header
 
     def header(url):
         on_main.append(threading.current_thread() is threading.main_thread())
         return real(url)
 
-    monkeypatch.setattr(loading_module.layer_io, "csv_header", header)
-    said = []
+    monkeypatch.setattr(layer_io, "csv_header", header)
+    said: list[str] = []
 
-    class Messages:
-        def info(self, text):
-            said.append(text)
-
-        warn = info
-
-    loader = loading_module.Loader(None, iface, server, Messages(), None)
+    messages = Messages(iface)
+    monkeypatch.setattr(messages, "info", said.append)
+    monkeypatch.setattr(messages, "warn", said.append)
+    tasks = tasks_module.TaskController(messages)
+    loader = loading_module.Loader(None, iface, server, messages, tasks)
     href = f"{catalog['base']}/table/points.csv"
     loader.add_asset(Asset("points", href, None, "text/csv", ("data",), None, None, "csv"))
     wait_for(lambda: said, timeout=60)
@@ -475,6 +476,7 @@ def test_buttons_fall_back_to_other_formats(iface, server, catalog, monkeypatch)
     base = catalog["base"]
     href = f"{base}/points/collection.json"
     raw = network.fetch_json(href)
+    assert isinstance(raw, dict)
     raw["links"] = [link for link in raw["links"] if link["rel"] != "pmtiles"]
     raw["assets"].pop("visual")
     window.show_document(read_document(raw, href))
@@ -693,7 +695,7 @@ def test_sections_collapse_and_remember(iface, server, catalog):
     for title, box in boxes.items():
         assert isinstance(box, QgsCollapsibleGroupBox)
         assert box.title() == title
-        assert box.settingGroup() == window_module.SETTINGS_GROUP
+        assert box.settingGroup() == SETTINGS_GROUP
         # The list of every file starts closed. The buttons cover most needs.
         assert box.isCollapsed() is (box is window.details.files_box)
     open_collection(window)
@@ -811,6 +813,7 @@ def test_details_are_one_list_of_facts(iface, server, catalog):
     open_collection(window)
     href = f"{catalog['base']}/points/collection.json"
     raw = network.fetch_json(href)
+    assert isinstance(raw, dict)
     raw["license"] = "other"
     terms = "https://metadata.phila.gov/#help/help-faqs/what-are-the-terms-of-use/"
     portal = "https://opendataphilly.org/datasets/city-council-districts/"
@@ -1055,6 +1058,7 @@ def test_an_https_glob_with_items_loads_the_items(iface, server, catalog):
     open_catalog(window)
     href = f"{catalog['base']}/parts/collection.json"
     raw = network.fetch_json(href)
+    assert isinstance(raw, dict)
     raw["assets"] = {"data": {"href": "./*/*.parquet", "roles": ["data"]}}
     window.show_document(read_document(raw, href))
     wait_for(window.details.load_button.isEnabled)
@@ -1148,11 +1152,11 @@ def test_the_bar_shows_a_task_share_and_the_time_left(iface, server, catalog, mo
 
     task = network.run_task("progress", work, lambda *_args: None)
     # The time left counts from the first report, which comes at 1000 s.
-    monkeypatch.setattr(tasks_module.time, "monotonic", lambda: 1000.0)
+    monkeypatch.setattr(time, "monotonic", lambda: 1000.0)
     tasks.follow(task, "Copying")
     wait_for(started.is_set)
     wait_for(lambda: tasks.progress.format() == "Copying 10%")
-    monkeypatch.setattr(tasks_module.time, "monotonic", lambda: 1010.0)
+    monkeypatch.setattr(time, "monotonic", lambda: 1010.0)
     step.set()
     wait_for(lambda: "55%" in tasks.progress.format())
     assert tasks.progress.format() == "Copying 55%, about 10 s left"
@@ -1245,7 +1249,7 @@ def test_a_failed_mosaic_search_does_not_leave_the_window_busy(iface, server, ca
 
 def _held_fetch(monkeypatch):
     """Hold each ``fetch_document`` of the window until the test releases it."""
-    real = downloads_module.fetch_document
+    real = network.fetch_document
     reading, release = threading.Event(), threading.Event()
 
     def held(url):
@@ -1336,7 +1340,7 @@ def test_a_failed_listing_does_not_leave_the_window_busy(
 
     # The question that confirms the download fails.
     monkeypatch.setattr(QMessageBox, "question", broken)
-    logged = []
+    logged: list[str] = []
     monkeypatch.setattr(network, "report_failure", logged.append)
     window.details.download_all.trigger()
     wait_for(lambda: logged, timeout=60)

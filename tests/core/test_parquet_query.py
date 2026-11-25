@@ -41,7 +41,7 @@ def test_status_and_install_command(monkeypatch):
     assert parquet_query.install_command(upgrade=False).startswith("flatpak run")
     assert "--upgrade" in parquet_query.install_command(upgrade=True)
     monkeypatch.delenv("FLATPAK_ID")
-    monkeypatch.setattr(parquet_query.sys, "prefix", "/usr")
+    monkeypatch.setattr(sys, "prefix", "/usr")
     assert "pip install --user 'duckdb>=1.5.0'" in parquet_query.install_command(upgrade=False)
 
 
@@ -396,7 +396,7 @@ def test_watcher_interrupts_once_cancelled():
 
 def test_watcher_reports_the_progress_duckdb_knows():
     stop = threading.Event()
-    reported = []
+    reported: list[float] = []
 
     class Running(_Cursor):
         def __init__(self):
@@ -414,7 +414,7 @@ def test_watcher_reports_the_progress_duckdb_knows():
 
 
 def test_a_cursor_with_progress_turns_the_progress_bar_on(con):
-    reported = []
+    reported: list[float] = []
     with parquet_query.cursor(con, progress=reported.append) as cur:
         setting = "SELECT current_setting('enable_progress_bar')"
         assert cur.execute(setting).fetchone() == (True,)

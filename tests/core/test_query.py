@@ -92,7 +92,9 @@ def test_copy_keeps_only_the_chosen_columns_and_rows():
 
 def test_estimate_applies_the_filter():
     chosen = Selection(None, '"year" = ?', (2020,))
-    sql, params = build_estimate(PLAN, Clip((0, 0, 1, 1)), chosen)
+    estimate = build_estimate(PLAN, Clip((0, 0, 1, 1)), chosen)
+    assert estimate is not None
+    sql, params = estimate
     assert sql.endswith('AND ("year" = ?)')
     assert params == [2020]
     table = plan_read([("id", "BIGINT")], None)
@@ -166,7 +168,7 @@ def test_result_plan_needs_the_geometry_column():
 
 def test_a_filter_value_must_be_text_or_a_number():
     with pytest.raises(QueryError, match="text or a number"):
-        filter_sql(Compare("year", "=", [1, 2]), PLAN)
+        filter_sql(Compare("year", "=", [1, 2]), PLAN)  # type: ignore[arg-type]  # Test an invalid filter value.
 
 
 def test_selection_of_a_filter_alone_keeps_every_column():

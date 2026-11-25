@@ -61,6 +61,7 @@ def test_real_geoparquet_plan():
     assert plan.geometry_type == "MultiPolygon"
     assert [c.name for c in plan.columns] == ["objectid", "c_dig1desc", "year", "Shape__Area"]
     assert [c.kind for c in plan.columns] == ["int", "string", "int", "double"]
+    assert plan.covering is not None
     assert plan.covering.xmin == ("bbox", "xmin")
 
 
@@ -121,10 +122,14 @@ def test_geometry_name():
 
 def test_estimate():
     plan = plan_read(LAND_USE_SCHEMA, LAND_USE_GEO)
-    sql, params = build_estimate(plan)
+    estimate = build_estimate(plan)
+    assert estimate is not None
+    sql, params = estimate
     assert sql == "SELECT count(*) FROM read_parquet(?)"
     assert params == []
-    sql, params = build_estimate(plan, Clip((0, 1, 2, 3)))
+    estimate = build_estimate(plan, Clip((0, 1, 2, 3)))
+    assert estimate is not None
+    sql, params = estimate
     # Only the covering column filters, so DuckDB reads no geometry.
     assert '"bbox"."xmin" <= 2.0 AND "bbox"."xmax" >= 0.0' in sql
     assert '"bbox"."ymin" <= 3.0 AND "bbox"."ymax" >= 1.0' in sql

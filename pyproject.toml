@@ -244,8 +244,26 @@ docstring-code-format = true
 [tool.mypy]
 python_version = "3.11"
 strict = true
-files = ["portolan_registry_qgis", "scripts"]
+files = ["portolan_registry_qgis", "scripts", "tests"]
+explicit_package_bases = true
 exclude = ["^\\.claude/"]
+enable_error_code = [
+    "ignore-without-code",
+    "redundant-expr",
+    "truthy-bool",
+    "possibly-undefined",
+    "redundant-self",
+    "unused-awaitable",
+    "deprecated",
+    "exhaustive-match",
+]
+
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disallow_untyped_calls = false
+disallow_any_generics = false
 
 # PyQGIS, PyQt, and the GDAL bindings come with QGIS and are absent from the
 # uv environment, so mypy cannot read them.

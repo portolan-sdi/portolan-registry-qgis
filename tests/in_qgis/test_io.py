@@ -41,11 +41,12 @@ from portolan_registry_qgis.core.download import (
 )
 from portolan_registry_qgis.core.geoparquet import LAYER
 from portolan_registry_qgis.core.mirror import mirror_href
+from portolan_registry_qgis.core.multihash import file_matches
 from portolan_registry_qgis.core.scope import Everything
 from portolan_registry_qgis.core.stac import Asset, read_document
 from portolan_registry_qgis.core.style import DEFAULT_STYLE_NAME, archive_urls
 from portolan_registry_qgis.qgis_io import downloader, layers, mosaic, network, parquet_layer
-from portolan_registry_qgis.qgis_io.downloader import DownloadJob, target_path
+from portolan_registry_qgis.qgis_io.downloader import DownloadJob, DownloadReport, target_path
 from portolan_registry_qgis.qgis_io.network import (
     NetworkError,
     QtExecutor,
@@ -82,7 +83,9 @@ def server():
 
 
 def test_fetch_json_and_errors(catalog):
-    assert fetch_json(catalog["url"])["id"] == "test"
+    document = fetch_json(catalog["url"])
+    assert isinstance(document, dict)
+    assert document["id"] == "test"
     with pytest.raises(NetworkError):
         fetch_bytes(f"{catalog['base']}/nothing-here.json")
     with pytest.raises(ValueError, match="did not return JSON"):
@@ -93,7 +96,9 @@ def test_run_task_reports_on_main_thread(catalog):
     results = []
     run_task("fetch", lambda _task: fetch_json(catalog["url"]), lambda r, e: results.append((r, e)))
     wait_for(lambda: results)
-    assert results[0][0]["id"] == "test"
+    document = results[0][0]
+    assert isinstance(document, dict)
+    assert document["id"] == "test"
     assert results[0][1] is None
 
     failures = []
@@ -112,7 +117,7 @@ def test_run_task_logs_an_error_in_its_callback(catalog, monkeypatch):
     # to the message log instead, so it does not pass in silence. QGIS 4
     # emits no messageReceived signal without a GUI, so the test reads the
     # report itself.
-    logged = []
+    logged: list[str] = []
     monkeypatch.setattr(network, "report_failure", logged.append)
 
     def broken(_result, _error):
@@ -129,6 +134,7 @@ def test_archive_header_and_tiles(catalog):
     assert archive.min_zoom == 0
     assert archive.max_zoom == 8
     assert archive.vector_layers == ("points",)
+    assert archive.bounds is not None
     west, south, _east, _north = archive.bounds
     assert 10.9 < west < 11.1
     assert 43.9 < south < 44.1
@@ -293,6 +299,7 @@ def test_tiles_report_the_archive_extent(catalog, server):
         layer.crs(), QgsCoordinateReferenceSystem("EPSG:4326"), QgsProject.instance()
     )
     degrees = to_degrees.transformBoundingBox(extent)
+    assert archive.bounds is not None
     west, south, east, north = archive.bounds
     assert degrees.xMinimum() == pytest.approx(west, abs=1e-6)
     assert degrees.yMinimum() == pytest.approx(south, abs=1e-6)
@@ -380,7 +387,7 @@ def test_a_tif_only_setting_still_opens_cogs(catalog, collection, tiles):
     raster = layers.asset_layer(by_key["relief"])
     assert raster.isValid()
     assert raster.source() == f"/vsicurl/{by_key['relief'].href}"
-    shares = []
+    shares: list[float] = []
     path = mosaic.write_vrt([_tile(catalog, "a"), _tile(catalog, "b")], progress=shares.append)
     assert path.exists()
     assert shares[-1] == 1.0
@@ -416,6 +423,7 @@ def test_planner_plans_in_a_task(catalog):
     wait_for(lambda: results)
     planned, error = results[0]
     assert error is None
+    assert isinstance(planned, parquet_layer.Planned)
     assert planned.estimate == 200
 
 
@@ -617,7 +625,7 @@ def test_restore_path(tmp_path, monkeypatch):
 
 
 def _download(folder, files):
-    reports = []
+    reports: list[DownloadReport] = []
     job = DownloadJob(folder, files)
     job.finished.connect(reports.append)
     job.start()
@@ -663,7 +671,7 @@ def test_target_path_stays_inside(tmp_path):
 
 def test_cancel_stops_the_job(catalog, tmp_path):
     files = [PlannedFile(f"{catalog['base']}/points.pmtiles", f"f{i}.pmtiles") for i in range(5)]
-    reports = []
+    reports: list[DownloadReport] = []
     job = DownloadJob(tmp_path, files)
     job.finished.connect(reports.append)
     job.start()
@@ -720,7 +728,7 @@ def test_download_hashes_while_the_next_file_downloads(catalog, collection, tmp_
     relief = next(a for a in collection.assets if a.key == "relief")
     # The query keeps the QGIS network cache from answering an earlier test's copy.
     second = f"{catalog['base']}/points.pmtiles?overlap"
-    real = downloader.file_matches
+    real = file_matches
     overlapped = []
 
     def slow_hash(path, checksum, cancelled=None):
@@ -740,7 +748,7 @@ def test_download_hashes_while_the_next_file_downloads(catalog, collection, tmp_
         PlannedFile(second, "points.pmtiles"),
     ]
     progress = []
-    reports = []
+    reports: list[DownloadReport] = []
     job = DownloadJob(tmp_path, files)
     job.progress.connect(lambda done, total, _message: progress.append((done, total)))
     job.finished.connect(reports.append)
@@ -755,7 +763,7 @@ def test_download_hashes_while_the_next_file_downloads(catalog, collection, tmp_
 
 def test_cancel_frees_every_slot_once(catalog, tmp_path):
     files = [PlannedFile(f"{catalog['base']}/points.pmtiles", f"f{i}.pmtiles") for i in range(9)]
-    reports = []
+    reports: list[DownloadReport] = []
     job = DownloadJob(tmp_path, files)
     job.finished.connect(reports.append)
     job.start()
@@ -853,11 +861,17 @@ def test_download_progress_counts_bytes_when_every_size_is_known(catalog, collec
         PlannedFile(a.href, local_path(a.href, catalog["url"]), a.size, a.checksum)
         for a in collection.assets
     ]
-    shares = []
-    reports = []
+    shares: list[float] = []
+    reports: list[DownloadReport] = []
     job = DownloadJob(tmp_path, files)
     assert job.fraction == 0.0
-    job.progress.connect(lambda *_args: shares.append(job.fraction))
+
+    def progress(*_args):
+        fraction = job.fraction
+        assert fraction is not None
+        shares.append(fraction)
+
+    job.progress.connect(progress)
     job.finished.connect(reports.append)
     job.start()
     wait_for(lambda: reports, timeout=30)
@@ -889,7 +903,7 @@ def test_progress_names_every_busy_slot(catalog, collection, tmp_path, monkeypat
     # slots start their files.
     relief = next(a for a in collection.assets if a.key == "relief")
     release = threading.Event()
-    real = downloader.file_matches
+    real = file_matches
 
     def slow_hash(path, checksum, cancelled=None):
         release.wait(10)
@@ -901,7 +915,7 @@ def test_progress_names_every_busy_slot(catalog, collection, tmp_path, monkeypat
         PlannedFile(f"{catalog['base']}/catalog.json?progress", "catalog.json"),
     ]
     messages = []
-    reports = []
+    reports: list[DownloadReport] = []
     job = DownloadJob(tmp_path, files)
     job.progress.connect(lambda _done, _total, message: messages.append(message))
     job.finished.connect(reports.append)
@@ -1036,6 +1050,7 @@ def test_file_area_transforms_to_the_file_crs():
     assert bbox == pytest.approx(
         (expected.xMinimum(), expected.yMinimum(), expected.xMaximum(), expected.yMaximum())
     )
+    assert bbox is not None
     assert QgsGeometry.fromWkt(wkt).boundingBox().xMinimum() == pytest.approx(bbox[0])
     with pytest.raises(ValueError, match="Not a Polygon"):
         parquet_layer.file_area("LINESTRING(0 0, 1 1)", mercator, context)
@@ -1187,7 +1202,7 @@ def test_build_mosaic_errors(catalog):
 def test_a_mosaic_says_why_gdal_left_a_file_out(catalog, monkeypatch):
     # BuildVRT reports only "Can't open <path>. Skipping it." The mosaic asks
     # GDAL for the reason, such as the HTTP status.
-    logged = []
+    logged: list[str] = []
     monkeypatch.setattr(mosaic, "log", logged.append)
     gone = f"{catalog['base']}/tiles/gone-{id(logged)}.tif"
     with pytest.raises(layers.LayerError) as failure:

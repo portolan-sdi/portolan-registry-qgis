@@ -81,7 +81,7 @@ def test_small_archive(tmp_path):
     path = tmp_path / "a.pmtiles"
     tiles = {(0, 0, 0): b"world", (1, 0, 1): b"south-west", (2, 3, 3): b"corner"}
     build(path, tiles)
-    log = []
+    log: list[tuple[int, int]] = []
     reader = Reader(file_fetcher(path, log))
     header = reader.header()
     assert header.tile_type == "mvt"
@@ -175,7 +175,7 @@ def test_metadata_past_the_first_read(tmp_path):
     # Random hex does not compress, so the metadata ends past 16 KiB.
     noise = random.Random(3).randbytes(24000).hex()
     build(path, {(0, 0, 0): b"w"}, metadata={"description": noise})
-    log = []
+    log: list[tuple[int, int]] = []
     reader = Reader(file_fetcher(path, log))
     assert reader.metadata()["description"] == noise
     header = reader.header()

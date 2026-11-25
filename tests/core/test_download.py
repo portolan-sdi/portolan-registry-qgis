@@ -84,6 +84,7 @@ def test_plan_of_one_collection_keeps_catalog_layout():
     assert result.files[0].path == "indirizzi/collection.json"
     data = next(f for f in result.files if f.path == "anncsu-indirizzi.parquet")
     assert data.size == 1059267903
+    assert data.checksum is not None
     assert data.checksum.startswith("1220")
     assert result.failures == []
 

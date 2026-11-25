@@ -42,12 +42,15 @@ def test_license_cell():
         {"rel": "license", "href": PORTAL, "title": "License"},
     ]
     many = license_cell(_document(links, license="other"))
+    assert many is not None
     assert many.startswith("Custom terms: ")
     assert many.count(PORTAL) == 1
     assert many.count(escape(TERMS)) == 1
     assert ">opendataphilly.org<" in many
     assert ">metadata.phila.gov<" in many
-    assert license_cell(_document(links)).startswith("<a ")
+    linked = license_cell(_document(links))
+    assert linked is not None
+    assert linked.startswith("<a ")
 
 
 def test_facts_are_one_row_each_in_order():

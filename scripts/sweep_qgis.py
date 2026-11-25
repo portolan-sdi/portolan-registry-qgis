@@ -16,11 +16,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-
-from sweep_registry import ROOT, Result, Sweep, registry_entries, write_report
-
-sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from qgis.core import (
     QgsApplication,
@@ -42,6 +38,7 @@ from portolan_registry_qgis.qgis_io import layers
 from portolan_registry_qgis.qgis_io.crs import wgs84
 from portolan_registry_qgis.qgis_io.network import fetch_bytes, fetch_json
 from portolan_registry_qgis.qgis_io.tileserver import TileServer
+from scripts.sweep_registry import Result, Sweep, registry_entries, write_report
 
 if TYPE_CHECKING:
     from portolan_registry_qgis.core import registry
@@ -236,6 +233,7 @@ def main(argv: list[str] | None = None) -> int:
             parser.error("--shard requires 1 <= INDEX <= COUNT")
     entries = registry_entries(args.only)
     if args.shard is not None:
+        index, count = args.shard
         entries = sorted(entries, key=lambda entry: entry.id)[index - 1 :: count]
     catalogs = args.out / "catalogs"
     catalogs.mkdir(parents=True, exist_ok=True)

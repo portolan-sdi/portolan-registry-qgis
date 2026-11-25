@@ -99,6 +99,7 @@ def test_registry_fields_are_kept():
     assert anncsu.total_size_bytes == 1393694428
     assert anncsu.updated == "2026-09-19T15:07:48Z"
     assert anncsu.logo_url is None
+    assert bologna.logo_url is not None
     assert bologna.logo_url.endswith("bologna-open-data.png")
     assert bologna.licenses == ("CC-BY-4.0", "ODbL-1.0")
     assert bologna.failure_reason == "HTTP 503"

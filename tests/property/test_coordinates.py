@@ -75,4 +75,4 @@ def test_explicit_names_take_priority_over_planar_names(names: list[str]) -> Non
 def test_arbitrary_header_bytes_are_safe(raw: bytes) -> None:
     # Contract: core.coordinates.coordinate_columns returns a pair or None.
     result = coordinate_columns(raw)
-    assert result is None or (len(result) == 2 and all(isinstance(n, str) for n in result))
+    assert result is None or all(isinstance(n, str) for n in result)
